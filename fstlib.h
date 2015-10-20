@@ -5,8 +5,8 @@
 //  MIT License
 //
 
-#ifndef _CPPFSTLIB_PEGLIB_H_
-#define _CPPFSTLIB_PEGLIB_H_
+#ifndef _CPPFSTLIB_FSTLIB_H_
+#define _CPPFSTLIB_FSTLIB_H_
 
 #include <unordered_map>
 #include <unordered_set>
@@ -132,11 +132,6 @@ inline bool operator==(const std::shared_ptr<fst::State> & lptr, const std::shar
     return true;
 }
 
-inline bool operator!=(const std::shared_ptr<fst::State> & lptr, const std::shared_ptr<fst::State> & rptr)
-{
-    return operator!=(lptr, rptr);
-}
-
 } // namespace fst
 
 namespace std {
@@ -166,7 +161,7 @@ struct hash<shared_ptr<fst::State>>
 
 namespace fst {
 
-const size_t MAX_WORD_SIZE = 1024;
+const size_t MAX_WORD_SIZE = 1024; // TODO: This limit should be removed.
 
 inline std::shared_ptr<State> make_state_machine(
     const std::vector<std::pair<std::string, std::string>>& input)
