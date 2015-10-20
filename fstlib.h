@@ -21,32 +21,32 @@ public:
         std::string            output;
     };
 
-    const size_t                            id;
-    bool                                    is_final;
-    std::unordered_map<uint8_t, Transition> transitions;
-    std::vector<std::string>                state_output;
+    const size_t                         id;
+    bool                                 is_final;
+    std::unordered_map<char, Transition> transitions;
+    std::vector<std::string>             state_output;
 
     State(size_t id = -1) : id(id), is_final(false) {}
 
-    std::shared_ptr<State> transition(uint8_t arc)
+    std::shared_ptr<State> transition(char arc)
     {
         auto it = transitions.find(arc);
         return it != transitions.end() ? it->second.state : nullptr;
     }
 
-    void set_transition(uint8_t arc, std::shared_ptr<State> state)
+    void set_transition(char arc, std::shared_ptr<State> state)
     {
         transitions[arc].state = state;
     }
 
-    const std::string& output(uint8_t arc)
+    const std::string& output(char arc)
     {
         auto it = transitions.find(arc);
         assert(it != transitions.end());
         return it->second.output;
     }
 
-    void set_output(uint8_t arc, const std::string& output)
+    void set_output(char arc, const std::string& output)
     {
         transitions[arc].output = output;
     }
@@ -273,7 +273,7 @@ inline std::shared_ptr<State> make_state_machine(
     return find_minimized(temp_states[0]);
 }
 
-std::vector<std::string> search(std::shared_ptr<State> state, const std::string s)
+inline std::vector<std::string> search(std::shared_ptr<State> state, const std::string s)
 {
     std::string prefix;
 
@@ -297,6 +297,18 @@ std::vector<std::string> search(std::shared_ptr<State> state, const std::string 
         }
         return ret;
     }
+}
+
+inline std::vector<char> compile(std::shared_ptr<State> state)
+{
+    // TODO:
+    return std::vector<char>();
+}
+
+inline std::vector<std::string> search(const std::vector<char>& byte_code, const std::string s)
+{
+    // TODO:
+    return std::vector<std::string>();
 }
 
 } // namespace fst
