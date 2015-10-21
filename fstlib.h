@@ -106,9 +106,12 @@ inline bool operator==(const std::shared_ptr<fst::State> & lptr, const std::shar
             auto li = lhs.transitions.begin();
             auto ri = rhs.transitions.begin();
             while (li != lhs.transitions.end()) {
+                if (li->first != ri->first) {
+                    return false;
+                }
                 const auto& l = li->second;
                 const auto& r = ri->second;
-                if (l.state != r.state || l.output != r.output) {
+                if (l.output != r.output || l.state != r.state) {
                     return false;
                 }
                 ++li;
