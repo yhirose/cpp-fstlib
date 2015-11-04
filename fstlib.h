@@ -11,12 +11,13 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <numeric>
+#include <set>
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace {
 
@@ -48,15 +49,43 @@ public:
             return state == rhs.state && output == rhs.output;
         }
     };
+    typedef std::map<char, Transition> Transitions;
+    typedef std::vector<std::string> StateOutputs;
 
-    const size_t                         id;
-    bool                                 is_final;
-    std::unordered_map<char, Transition> transitions;
-    std::vector<std::string>             state_outputs;
+    const size_t       id;
+    const bool         final = false;
+    const Transitions  transitions;
+    const StateOutputs state_outputs;
 
-    std::vector<std::weak_ptr<State>>    parent_states;
+    State(size_t id = -1) : id(id), final(false), is_hash_prepared(false), hash_value(-1) {}
 
-    State(size_t id = -1) : id(id), is_final(false) {}
+    State(size_t id, bool final, const Transitions& transitions, const StateOutputs& state_outputs)
+        : id(id)
+        , final(final)
+        , transitions(transitions)
+        , state_outputs(state_outputs)
+        , is_hash_prepared(false)
+        , hash_value(-1)
+    {
+    }
+
+    void set_final(bool is_final)
+    {
+        const_cast<bool&>(final) = is_final;
+        set_modified();
+    }
+
+    void set_transitions(const Transitions& transitions)
+    {
+        const_cast<Transitions&>(this->transitions) = transitions;
+        set_modified();
+    }
+
+    void set_state_outputs(const StateOutputs& state_outputs)
+    {
+        const_cast<StateOutputs&>(this->state_outputs) = state_outputs;
+        set_modified();
+    }
 
     std::shared_ptr<State> transition(char arc)
     {
@@ -66,35 +95,46 @@ public:
 
     void set_transition(char arc, std::shared_ptr<State> state)
     {
-        transitions[arc].state = state;
+        const_cast<Transitions&>(transitions)[arc].state = state;
+        set_modified();
     }
 
     const std::string& output(char arc)
     {
-        return transitions[arc].output;
+        return transitions.at(arc).output;
     }
 
     void set_output(char arc, const std::string& output)
     {
-        transitions[arc].output = output;
+        const_cast<Transitions&>(transitions)[arc].output = output;
+        set_modified();
+    }
+
+    void push_to_state_outputs(const std::string& output)
+    {
+        const_cast<StateOutputs&>(state_outputs).push_back(output);
+        set_modified();
+    }
+
+    void prepend_suffix_to_state_outputs(const std::string& suffix)
+    {
+        for (auto& state_output : state_outputs) {
+            const_cast<std::string&>(state_output).insert(0, suffix);
+        }
+        set_modified();
     }
 
     void clear()
     {
-        is_final = false;
-        transitions.clear();
-        state_outputs.clear();
-        //parent_states.clear();
+        set_final(false);
+        const_cast<Transitions&>(transitions).clear();
+        const_cast<StateOutputs&>(state_outputs).clear();
+        set_modified();
     }
 
     std::shared_ptr<State> copy_state(size_t id) const
     {
-        auto state = std::make_shared<State>(id);
-        state->is_final = is_final;
-        state->state_outputs = state_outputs;
-        state->transitions = transitions;
-        //state->parent_states = parent_states;
-        return state;
+        return std::make_shared<State>(id, final, transitions, state_outputs);
     }
 
     std::vector<char> sorted_arcs() const
@@ -107,128 +147,113 @@ public:
         return arcs;
     }
 
-    void print(std::ostream& os) const
+    void dot(std::ostream& os) const
     {
-        if (is_final) {
-            os << "*** s" << id << " final ***" << std::endl;
-            for (const auto& state_output : state_outputs) {
-                os << state_output << std::endl;
-            }
+        os << "digraph{" << std::endl;
+        os << "  rankdir = LR;" << std::endl;
+        std::set<size_t> check;
+        dot_core(os, check);
+        os << "}" << std::endl;
+    }
+
+    void dot_core(std::ostream& os, std::set<size_t>& check) const
+    {
+        if (check.find(id) != check.end()) {
+            return;
+        }
+        check.insert(id);
+
+        if (final) {
+            os << "  s" << id << " [ shape = doublecircle, xlabel = \"" << join(state_outputs, "|") << "\" ];" << std::endl;
+        } else {
+            os << "  s" << id << " [ shape = circle ];" << std::endl;
         }
 
-        os << "*** s" << id << " ***" << std::endl;
         auto arcs = sorted_arcs();
         for (auto arc : arcs) {
-            os << arc << "/" << transitions.at(arc).output << std::endl;
+            auto t = transitions.at(arc);
+            os << "  s" << id << "->s" << t.state->id << " [ label = \"" << arc;
+            if (!t.output.empty()) {
+                os << "/" << t.output;
+            }
+            os << "\" ];" << std::endl;
         }
         for (auto arc : arcs) {
-            transitions.at(arc).state->print(os);
+            transitions.at(arc).state->dot_core(os, check);
         }
+    }
+
+    size_t hash(size_t next_state_id) const
+    {
+        if (!is_hash_prepared) {
+            is_hash_prepared = true;
+
+            std::string key = std::to_string(next_state_id);
+            key += (final ? "f" : "c");
+            if (final) {
+                for (const auto& state_output : state_outputs) {
+                    key += state_output;
+                }
+            }
+            for (const auto& item : transitions) {
+                key += item.first;
+                key += item.second.output;
+            }
+
+            hash_value = std::hash<std::string>()(key);
+        }
+        return hash_value;
     }
 
 private:
     State(const State&) = delete;
     State(State&&) = delete;
-};
 
-inline bool operator==(const std::shared_ptr<fst::State> & lptr, const std::shared_ptr<fst::State> & rptr)
-{
-    const auto& lhs = *lptr;
-    const auto& rhs = *rptr;
-
-    if (&lhs != &rhs) {
-        if (lhs.is_final != rhs.is_final ||
-            lhs.transitions.size() != rhs.transitions.size() ||
-            lhs.state_outputs.size() != rhs.state_outputs.size()) {
-            return false;
-        }
-
-        /*
-        if (!std::equal(lhs.transitions.begin(), lhs.transitions.end(), rhs.transitions.begin())) {
-            return false;
-        }
-        */
-
-        auto rit = rhs.transitions.begin();
-        for (const auto& l: lhs.transitions) {
-            const auto& r = *rit;
-            if (l.first != r.first) {
-                return false;
-            }
-            if (!lhs.is_final) {
-                if (l.second.output != r.second.output) {
-                    return false;
-                }
-                if (l.second.state != r.second.state) {
-                    return false;
-                }
-            }
-            ++rit;
-        }
-
-        return std::equal(lhs.state_outputs.begin(), lhs.state_outputs.end(), rhs.state_outputs.begin());
+    void set_modified()
+    {
+        assert(id == -1);
+        is_hash_prepared = false;
     }
 
-    return true;
-}
+    mutable bool is_hash_prepared;
+    mutable size_t hash_value;
+};
 
 } // namespace fst
 
-namespace std {
-
-template <>
-struct hash<shared_ptr<fst::State>>
-{
-    size_t operator()(const shared_ptr<fst::State> & state) const
-    {
-        string key;
-        key += (state->is_final ? "f" : "c");
-        if (state->is_final) {
-            for (auto state_output: state->state_outputs) {
-                key += state_output;
-            }
-        } else {
-            for (const auto& item: state->transitions) {
-                key += item.first;
-                key += item.second.output;
-            }
-        }
-        return hash<string>()(key);
-    }
-};
-
-} // namespace std
-
 namespace fst {
 
+// Find common prefix length from 2 strings
+size_t get_prefix_length(const std::string& s1, const std::string& s2)
+{
+    size_t i = 0;
+    while (i < s1.length() && i < s2.length() && s1[i] == s2[i]) {
+        i++;
+    }
+    return i;
+};
+
+// Make fst
 inline std::shared_ptr<State> make_state_machine(
     const std::vector<std::pair<std::string, std::string>>& input)
 {
     // State dictionary
-    std::unordered_set<std::shared_ptr<State>> dictionary;
+    std::unordered_map<size_t, std::shared_ptr<State>> dictionary;
     size_t state_id = 0;
-    auto find_minimized = [&](std::shared_ptr<State> state) -> std::shared_ptr<State>
+
+    auto find_minimized = [&](std::shared_ptr<State> state, std::shared_ptr<State> next_state) -> std::shared_ptr<State>
     {
-        auto it = dictionary.find(state);
+        auto h = state->hash(next_state ? next_state->id : -1);
+        auto it = dictionary.find(h);
         if (it == dictionary.end()) {
             auto r = state->copy_state(state_id++);
-            dictionary.insert(r);
+            dictionary[h] = r;
             return r;
         }
-        return *it;
+        return it->second;
     };
 
-    // Find common prefix length from 2 strings
-    auto get_prefix_length = [](const std::string& s1, const std::string& s2)
-    {
-        size_t i = 0;
-        while (i < s1.length() && i < s2.length() && s1[i] == s2[i]) {
-            i++;
-        }
-        return i;
-    };
-
-    // Make fst
+    // Main algorithm ported from the technical paper
     std::vector<std::shared_ptr<State>> temp_states;
     std::string previous_word;
     temp_states.emplace_back(std::make_shared<State>());
@@ -236,47 +261,21 @@ inline std::shared_ptr<State> make_state_machine(
     for (const auto& item: input) {
         const auto& current_word = item.first;
         auto current_output = item.second;
-        //std::cout << current_word << std::endl;
+        static size_t count = 0;
+        //std::cerr << "word #" << count++ << ": " << current_word << std::endl;
 
-        // The following loop caluculates the length of the longest common prefix of 'current_word' and 'previous_word'
+        // The following loop caluculates the length of the longest common
+        // prefix of 'current_word' and 'previous_word'
         auto prefix_length = get_prefix_length(previous_word, current_word);
 
         // We minimize the states from the suffix of the previous word
-#if 0
-        std::shared_ptr<State> child_state;
-        for (auto i = previous_word.length(); i > prefix_length; i--) {
-            bool found = false;
-            auto arc = previous_word[i - 1];
-            if (child_state) {
-                for (auto state : child_state->parent_states) {
-                    if (state.lock() == temp_states[i]) {
-                        temp_states[i - 1]->set_transition(arc, state.lock());
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if (!found) {
-                child_state = find_minimized(temp_states[i]);
-                temp_states[i - 1]->set_transition(arc, child_state);
-            } else {
-                child_state = temp_states[i];
-            }
-        }
-
-        auto state = temp_states[0];
-        for (auto i = 0u; i < previous_word.length(); i++) {
-            auto arc = previous_word[i];
-            auto child_state = state->transition(arc);
-            child_state->parent_states.push_back(state);
-            state = child_state;
-        }
-#else
+        std::shared_ptr<State> next_state;
         for (auto i = previous_word.length(); i > prefix_length; i--) {
             auto arc = previous_word[i - 1];
-            temp_states[i - 1]->set_transition(arc, find_minimized(temp_states[i]));
+            auto state = find_minimized(temp_states[i], next_state);
+            temp_states[i - 1]->set_transition(arc, state);
+            next_state = state;
         }
-#endif
 
         // This loop initializes the tail states for the current word
         for (auto i = prefix_length + 1; i <= current_word.length(); i++) {
@@ -292,11 +291,11 @@ inline std::shared_ptr<State> make_state_machine(
 
         if (current_word != previous_word) {
             auto state = temp_states[current_word.length()];
-            state->is_final = true;
-            state->state_outputs.push_back("");
+            state->set_final(true);
+            state->push_to_state_outputs("");
         }
 
-        for (auto j = 1u; j < prefix_length + 1; j++) {
+        for (auto j = 1u; j <= prefix_length; j++) {
             auto prev_state = temp_states[j - 1];
             auto arc = current_word[j - 1];
             auto output = prev_state->output(arc);
@@ -309,19 +308,18 @@ inline std::shared_ptr<State> make_state_machine(
             auto state = temp_states[j];
             for (auto& item: state->transitions) {
                 auto arc = item.first;
-                state->set_output(arc, word_suffix + state->output(arc));
+                const auto& output = state->output(arc);
+                state->set_output(arc, word_suffix + output);
             }
-            if (state->is_final) {
-                for (auto& state_output: state->state_outputs) {
-                    state_output.insert(0, word_suffix);
-                }
+            if (state->final) {
+                state->prepend_suffix_to_state_outputs(word_suffix);
             }
             current_output = current_output.substr(common_prefix_length);
         }
 
         if (current_word == previous_word) {
             auto state = temp_states[current_word.length()];
-            state->state_outputs.push_back(current_output);
+            state->push_to_state_outputs(current_output);
         } else {
             auto state = temp_states[prefix_length];
             auto arc = current_word[prefix_length];
@@ -332,16 +330,18 @@ inline std::shared_ptr<State> make_state_machine(
     }
 
     // Here we are minimizing the states of the last word
+    std::shared_ptr<State> next_state;
     for (auto i = previous_word.length(); i > 0; i--) {
-        auto state = temp_states[i - 1];
         auto arc = previous_word[i - 1];
-        state->set_transition(arc, find_minimized(temp_states[i]));
+        auto state = find_minimized(temp_states[i], next_state);
+        temp_states[i - 1]->set_transition(arc, state);
+        next_state = state;
     }
 
-    return find_minimized(temp_states[0]);
+    return find_minimized(temp_states[0], next_state);
 }
 
-inline std::vector<std::string> search(std::shared_ptr<State> state, const std::string s)
+inline State::StateOutputs search(std::shared_ptr<State> state, const std::string s)
 {
     std::string prefix;
 
@@ -350,16 +350,16 @@ inline std::vector<std::string> search(std::shared_ptr<State> state, const std::
         auto arc = *it;
         auto next_state = state->transition(arc);
         if (!next_state) {
-            return std::vector<std::string>();
+            return State::StateOutputs();
         }
         prefix += state->output(arc);
         state = next_state;
         ++it;
     }
-    if (!state->is_final || it != s.end()) {
-        return std::vector<std::string>();
+    if (!state->final || it != s.end()) {
+        return State::StateOutputs();
     } else {
-        std::vector<std::string> ret;
+        State::StateOutputs ret;
         for (const auto& suffix : state->state_outputs) {
             ret.push_back(prefix + suffix);
         }
@@ -369,19 +369,19 @@ inline std::vector<std::string> search(std::shared_ptr<State> state, const std::
 
 struct Command
 {
-    bool                     is_final;
-    bool                     is_last_transition;
-    char                     arc;
-    std::string              output;
-    std::vector<std::string> state_outputs;
-    bool                     has_jump_offset;
-    size_t                   jump_offset;
+    bool                final;
+    bool                last_transition;
+    char                arc;
+    std::string         output;
+    State::StateOutputs state_outputs;
+    bool                has_jump_offset;
+    size_t              jump_offset;
 
     union Ope
     {
         struct {
-            unsigned is_final : 1;
-            unsigned is_last_transition : 1;
+            unsigned final : 1;
+            unsigned last_transition : 1;
             unsigned has_jump_offset : 1;
             unsigned reserved : 5;
         } bits;
@@ -391,7 +391,7 @@ struct Command
 
     Ope ope() const
     {
-        return Ope{ is_final, is_last_transition, has_jump_offset };
+        return Ope{ final, last_transition, has_jump_offset };
     }
 
     size_t byte_code_size() const
@@ -460,8 +460,8 @@ struct Command
         Ope ope;
         ope.byte = bytes[off++];
 
-        is_final = ope.bits.is_final;
-        is_last_transition = ope.bits.is_last_transition;
+        final = ope.bits.final;
+        last_transition = ope.bits.last_transition;
         has_jump_offset = ope.bits.has_jump_offset;
 
         // arc
@@ -494,8 +494,8 @@ struct Command
 
     void print(std::ostream& os) const
     {
-        os << is_final << "\t";
-        os << is_last_transition << "\t";
+        os << final << "\t";
+        os << last_transition << "\t";
         os << arc << "\t";
         os << output << "\t";
         os << join(state_outputs, "/") << "\t";
@@ -510,33 +510,33 @@ inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& c
 
     auto arcs = state->sorted_arcs();
 
-    std::vector<Command> current_commands;
-    std::vector<Command> child_commands;
-    std::vector<size_t> child_commands_size;
+    std::vector<Command>                   current_commands;
+    std::map<size_t, std::vector<Command>> child_commands_list;
 
     for (auto i = 0u; i < arcs.size(); i++) {
         auto arc = arcs[i];
         const auto& trans = state->transitions.at(arc);
+        auto next_state = trans.state;
 
         Command cmd;
-        cmd.is_final = trans.state->is_final;
-        cmd.is_last_transition = (i + 1 == arcs.size());
+        cmd.final = next_state->final;
+        cmd.last_transition = (i + 1 == arcs.size());
         cmd.output = trans.output;
         cmd.arc = arc;
-        cmd.state_outputs = trans.state->state_outputs;
-        cmd.has_jump_offset = !trans.state->transitions.empty();
+        cmd.state_outputs = next_state->state_outputs;
+        cmd.has_jump_offset = !next_state->transitions.empty();
         cmd.jump_offset = -1;
         current_commands.push_back(cmd);
 
         if (cmd.has_jump_offset) {
-            auto size = compile_core(trans.state, child_commands);
-            child_commands_size.push_back(size);
+            if (child_commands_list.find(next_state->id) == child_commands_list.end()) {
+                compile_core(next_state, child_commands_list[next_state->id]);
+            }
         }
     }
 
     for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
         auto& cmd = current_commands[i];
-        const auto& trans = state->transitions.at(arcs[i]);
 
         if (cmd.has_jump_offset) {
             size_t current_offset = 0;
@@ -544,24 +544,41 @@ inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& c
                 current_offset += current_commands[j].byte_code_size();
             }
 
+            auto next_state = state->transitions.at(arcs[i]).state;
+
             size_t child_offset = 0;
-            for (auto j = 0; j < i; j++) {
-                child_offset += child_commands_size[j];
+            auto it = child_commands_list.begin();
+            auto end = child_commands_list.end();
+            while (it != end) {
+                if (it->first == next_state->id) {
+                    break;
+                }
+                for (const auto& cmd: it->second) {
+                    child_offset += cmd.byte_code_size();
+                }
+                ++it;
             }
 
             cmd.jump_offset = current_offset + child_offset;
         }
     }
 
-    commands.insert(commands.end(), current_commands.begin(), current_commands.end());
-    commands.insert(commands.end(), child_commands.begin(), child_commands.end());
-
     size_t current_size = 0;
     for (const auto& cmd: current_commands) {
+        commands.push_back(cmd);
         current_size += cmd.byte_code_size();
     }
 
-    auto child_size = std::accumulate(child_commands_size.begin(), child_commands_size.end(), (size_t)0);
+    size_t child_size = 0;
+    auto it = child_commands_list.begin();
+    auto end = child_commands_list.end();
+    while (it != end) {
+        commands.insert(commands.end(), it->second.begin(), it->second.end());
+        for (const auto& cmd: it->second) {
+            child_size += cmd.byte_code_size();
+        }
+        ++it;
+    }
 
     return current_size + child_size;
 }
@@ -581,7 +598,7 @@ inline std::vector<char> compile(std::shared_ptr<State> state)
     return bytes;
 }
 
-inline std::vector<std::string> search(const std::vector<char>& bytes, const std::string s)
+inline State::StateOutputs search(const std::vector<char>& bytes, const std::string s)
 {
     std::string prefix;
     size_t off = 0;
@@ -596,25 +613,53 @@ inline std::vector<std::string> search(const std::vector<char>& bytes, const std
         if (cmd.arc == arc) {
             prefix += cmd.output;
             i++;
-            if (cmd.is_final && i == s.size()) {
-                std::vector<std::string> ret;
+            if (cmd.final && i == s.size()) {
+                State::StateOutputs ret;
                 for (const auto& suffix : cmd.state_outputs) {
                     ret.push_back(prefix + suffix);
                 }
                 return ret;
             }
             if (!cmd.has_jump_offset) {
-                return std::vector<std::string>();
+                return State::StateOutputs();
             }
             off += cmd.jump_offset;
         } else {
-            if (cmd.is_last_transition) {
-                return std::vector<std::string>();
+            if (cmd.last_transition) {
+                return State::StateOutputs();
             }
         }
     }
 
-    return std::vector<std::string>();
+    return State::StateOutputs();
+}
+
+inline size_t command_count(const std::vector<char>& bytes)
+{
+    size_t count = 0;
+    size_t off = 0;
+    while (off < bytes.size()) {
+        Command cmd;
+        off = cmd.read_byte_code(bytes, off);
+        count++;
+    }
+    return count;
+}
+
+inline size_t dump(const std::vector<char>& bytes, std::ostream& os)
+{
+    std::cerr << "Fin" << "\t" << "Last" << "\t" << "Arc" << "\t" << "Out" << "\t" << "StOut" << "\t" << "Jmp" << "\t" << "Size" << std::endl;
+    std::cerr << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
+
+    size_t count = 0;
+    size_t off = 0;
+    while (off < bytes.size()) {
+        Command cmd;
+        off = cmd.read_byte_code(bytes, off);
+        cmd.print(std::cerr);
+        count++;
+    }
+    return count;
 }
 
 } // namespace fst

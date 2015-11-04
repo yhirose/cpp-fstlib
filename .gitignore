@@ -26,3 +26,11 @@
 *.exe
 *.out
 *.app
+
+build/
+Debug/
+Release/
+tags
+*.*sdf
+*.user
+.vs/
