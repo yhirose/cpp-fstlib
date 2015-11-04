@@ -35,50 +35,36 @@ bool ends_with(string const & value, string const & ending)
 
 vector<pair<string, string>> load_input(istream& fin)
 {
-    cerr << "# loading dictionary..." << endl;
     vector<pair<string, string>> input;
     string word;
     while (getline(fin, word)) {
         input.emplace_back(word, to_string(input.size()));
     }
 
-    cerr << "# sorting dictionary..." << endl;
     sort(input.begin(), input.end(), [](const auto& a, const auto& b) {
         return a.first < b.first;
     });
-
-    for (const auto& item: input) {
-        cout << item.first << ":" << item.second << endl;
-    }
 
     return input;
 }
 
 vector<pair<string, string>> load_input_with_output(istream& fin)
 {
-    cerr << "# loading dictionary..." << endl;
     vector<pair<string, string>> input;
     string line;
     while (getline(fin, line)) {
         auto items = split(line, ',');
+        if (items.size() != 2) {
+            throw runtime_error("invalid csv file...");
+        }
         input.emplace_back(items[0], items[1]);
     }
 
-    cerr << "# sorting dictionary..." << endl;
     sort(input.begin(), input.end(), [](const auto& a, const auto& b) {
         return a.first < b.first;
     });
 
     return input;
-}
-
-shared_ptr<fst::State> get_state_machine(const vector<pair<string, string>>& input)
-{
-    cerr << "# making fst..." << endl;
-    auto initial_state = fst::make_state_machine(input);
-    cerr << "# state count: " << initial_state->id + 1 << endl;
-
-    return initial_state;
 }
 
 vector<char> load_byte_code(istream& is)
@@ -100,127 +86,131 @@ int main(int argc, const char** argv)
         return 1;
     }
 
-    string cmd = argv[argi++];
+    try {
+        string cmd = argv[argi++];
 
-    if (cmd == "compile") {
-        if (argi >= argc) {
-            usage();
-            return 1;
-        }
-
-        string path = (argv[argi++]);
-        ifstream fin(path);
-        if (!fin) {
-            return 1;
-        }
-
-        if (argi >= argc) {
-            usage();
-            return 1;
-        }
-
-        ofstream fout(argv[argi++], ios_base::binary);
-        if (!fout) {
-            return 1;
-        }
-
-        auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
-        auto initial_state = get_state_machine(input);
-
-        cerr << "# compile fst..." << endl;
-        auto byte_code = fst::compile(initial_state);
-        cerr << "# byte code size: " << byte_code.size() << endl;
-
-        fout.write(byte_code.data(), byte_code.size());
-
-    } else if (cmd == "dot") {
-        if (argi >= argc) {
-            usage();
-            return 1;
-        }
-
-        string path = (argv[argi++]);
-        ifstream fin(path);
-        if (!fin) {
-            return 1;
-        }
-
-        auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
-        auto initial_state = get_state_machine(input);
-        initial_state->dot(cout);
-
-    } else if (cmd == "dump") {
-        if (argi >= argc) {
-            usage();
-            return 1;
-        }
-
-        ifstream fin(argv[argi++], ios_base::binary);
-        if (!fin) {
-            return 1;
-        }
-
-        fst::dump(load_byte_code(fin), cout);
-
-    } else if (cmd == "search") {
-        if (argi >= argc) {
-            usage();
-            return 1;
-        }
-
-        ifstream fin(argv[argi++], ios_base::binary);
-        if (!fin) {
-            return 1;
-        }
-
-        fin.seekg(0, ios_base::end);
-        auto size = fin.tellg();
-        fin.seekg(0, ios_base::beg);
-        vector<char> byte_code(size);
-        fin.read(byte_code.data(), size);
-        cerr << "byte code size: " << byte_code.size() << endl;
-
-        for (;;) {
-            string word;
-            cin >> word;
-            auto results = fst::search(byte_code, word);
-            cout << "results: " << results.size() << endl;
-            for (const auto& item : results) {
-                cout << item << endl;
+        if (cmd == "compile") {
+            if (argi >= argc) {
+                usage();
+                return 1;
             }
-        }
-    } else if (cmd == "test") {
-        if (argi >= argc) {
+
+            string path = (argv[argi++]);
+            ifstream fin(path);
+            if (!fin) {
+                return 1;
+            }
+
+            if (argi >= argc) {
+                usage();
+                return 1;
+            }
+
+            ofstream fout(argv[argi++], ios_base::binary);
+            if (!fout) {
+                return 1;
+            }
+
+            auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
+            auto initial_state = fst::make_state_machine(input);
+            auto byte_code = fst::compile(initial_state);
+            fout.write(byte_code.data(), byte_code.size());
+
+        } else if (cmd == "dot") {
+            if (argi >= argc) {
+                usage();
+                return 1;
+            }
+
+            string path = (argv[argi++]);
+            ifstream fin(path);
+            if (!fin) {
+                return 1;
+            }
+
+            auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
+            auto initial_state = fst::make_state_machine(input);
+            initial_state->dot(cout);
+
+        } else if (cmd == "dump") {
+            if (argi >= argc) {
+                usage();
+                return 1;
+            }
+
+            ifstream fin(argv[argi++], ios_base::binary);
+            if (!fin) {
+                return 1;
+            }
+
+            fst::dump(load_byte_code(fin), cout);
+
+        } else if (cmd == "search") {
+            if (argi >= argc) {
+                usage();
+                return 1;
+            }
+
+            ifstream fin(argv[argi++], ios_base::binary);
+            if (!fin) {
+                return 1;
+            }
+
+            fin.seekg(0, ios_base::end);
+            auto size = fin.tellg();
+            fin.seekg(0, ios_base::beg);
+            vector<char> byte_code(size);
+            fin.read(byte_code.data(), size);
+
+            for (;;) {
+                string word;
+                cin >> word;
+                auto results = fst::search(byte_code, word);
+                cout << "results: " << results.size() << endl;
+                for (const auto& item : results) {
+                    cout << item << endl;
+                }
+            }
+        } else if (cmd == "test") {
+            if (argi >= argc) {
+                usage();
+                return 1;
+            }
+
+            string path = (argv[argi++]);
+            ifstream fin(path);
+            if (!fin) {
+                return 1;
+            }
+
+            cerr << "# loading dictionary..." << endl;
+            auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
+
+            cerr << "# making fst..." << endl;
+            auto initial_state = fst::make_state_machine(input);
+            cerr << "# state count: " << initial_state->id + 1 << endl;
+
+            cerr << "# compile fst..." << endl;
+            auto byte_code = fst::compile(initial_state);
+            cerr << "# byte code size: " << byte_code.size() << endl;
+
+            cerr << "# test all words..." << endl;
+            for (const auto& item: input) {
+                auto results = fst::search(initial_state, item.first);
+                if (results.empty()) {
+                    cout << item.first << ": ng" << endl;
+                }
+                results = fst::search(byte_code, item.first);
+                if (results.empty()) {
+                    cout << item.first << ": NG" << endl;
+                }
+            }
+        } else {
             usage();
             return 1;
         }
-
-        string path = (argv[argi++]);
-        ifstream fin(path);
-        if (!fin) {
-            return 1;
-        }
-
-        auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
-        auto initial_state = get_state_machine(input);
-        auto byte_code = fst::compile(initial_state);
-
-        //fst::dump(byte_code, cout);
-
-        for (const auto& item: input) {
-            auto results = fst::search(initial_state, item.first);
-            if (results.empty()) {
-                cout << item.first << ": ng" << endl;
-            }
-            results = fst::search(byte_code, item.first);
-            if (results.empty()) {
-                cout << item.first << ": NG" << endl;
-            }
-        }
-
-    } else {
-        usage();
-        return 1;
+    } catch (const runtime_error& err) {
+        cerr << err.what() << endl;
     }
 
     return 0;
