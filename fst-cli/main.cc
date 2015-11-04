@@ -1,6 +1,7 @@
 
 #include <fstlib.h>
 #include <fstream>
+#include <sstream>
 
 using namespace std;
 
@@ -15,6 +16,23 @@ void usage()
 )";
 }
 
+vector<string> split(const string &s, char delim)
+{
+    vector<string> elems;
+    stringstream ss(s);
+    string item;
+    while (getline(ss, item, delim)) {
+        elems.push_back(item);
+    }
+    return elems;
+}
+
+bool ends_with(string const & value, string const & ending)
+{
+    if (ending.size() > value.size()) return false;
+    return equal(ending.rbegin(), ending.rend(), value.rbegin());
+}
+
 vector<pair<string, string>> load_input(istream& fin)
 {
     cerr << "# loading dictionary..." << endl;
@@ -22,6 +40,28 @@ vector<pair<string, string>> load_input(istream& fin)
     string word;
     while (getline(fin, word)) {
         input.emplace_back(word, to_string(input.size()));
+    }
+
+    cerr << "# sorting dictionary..." << endl;
+    sort(input.begin(), input.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+    });
+
+    for (const auto& item: input) {
+        cout << item.first << ":" << item.second << endl;
+    }
+
+    return input;
+}
+
+vector<pair<string, string>> load_input_with_output(istream& fin)
+{
+    cerr << "# loading dictionary..." << endl;
+    vector<pair<string, string>> input;
+    string line;
+    while (getline(fin, line)) {
+        auto items = split(line, ',');
+        input.emplace_back(items[0], items[1]);
     }
 
     cerr << "# sorting dictionary..." << endl;
@@ -68,7 +108,8 @@ int main(int argc, const char** argv)
             return 1;
         }
 
-        ifstream fin(argv[argi++]);
+        string path = (argv[argi++]);
+        ifstream fin(path);
         if (!fin) {
             return 1;
         }
@@ -83,7 +124,7 @@ int main(int argc, const char** argv)
             return 1;
         }
 
-        auto input = load_input(fin);
+        auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
         auto initial_state = get_state_machine(input);
 
         cerr << "# compile fst..." << endl;
@@ -98,12 +139,13 @@ int main(int argc, const char** argv)
             return 1;
         }
 
-        ifstream fin(argv[argi++]);
+        string path = (argv[argi++]);
+        ifstream fin(path);
         if (!fin) {
             return 1;
         }
 
-        auto input = load_input(fin);
+        auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
         auto initial_state = get_state_machine(input);
         initial_state->dot(cout);
 
@@ -153,12 +195,13 @@ int main(int argc, const char** argv)
             return 1;
         }
 
-        ifstream fin(argv[argi++]);
+        string path = (argv[argi++]);
+        ifstream fin(path);
         if (!fin) {
             return 1;
         }
 
-        auto input = load_input(fin);
+        auto input = ends_with(path, ".csv") ? load_input_with_output(fin) : load_input(fin);
         auto initial_state = get_state_machine(input);
         auto byte_code = fst::compile(initial_state);
 
@@ -168,15 +211,10 @@ int main(int argc, const char** argv)
             auto results = fst::search(initial_state, item.first);
             if (results.empty()) {
                 cout << item.first << ": ng" << endl;
-            } else {
-                //cout << item.first << ": ok" << endl;
             }
-
             results = fst::search(byte_code, item.first);
             if (results.empty()) {
                 cout << item.first << ": NG" << endl;
-            } else {
-                //cout << item.first << ": OK" << endl;
             }
         }
 
