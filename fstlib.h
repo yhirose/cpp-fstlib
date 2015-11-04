@@ -184,6 +184,38 @@ public:
         }
     }
 
+    bool operator==(const fst::State& rhs)
+    {
+        const auto& lhs = *this;
+
+        if (&lhs != &rhs) {
+            if (lhs.final != rhs.final ||
+                lhs.transitions.size() != rhs.transitions.size() ||
+                lhs.state_outputs.size() != rhs.state_outputs.size()) {
+                return false;
+            }
+
+            auto rit = rhs.transitions.begin();
+            for (const auto& l : lhs.transitions) {
+                const auto& r = *rit;
+                if (l.first != r.first) {
+                    return false;
+                }
+                if (l.second.output != r.second.output) {
+                    return false;
+                }
+                if (l.second.state != r.second.state) {
+                    return false;
+                }
+                ++rit;
+            }
+
+            return std::equal(lhs.state_outputs.begin(), lhs.state_outputs.end(), rhs.state_outputs.begin());
+        }
+
+        return true;
+    }
+
     size_t hash(size_t next_state_id) const
     {
         if (!is_hash_prepared) {
@@ -245,13 +277,15 @@ inline std::shared_ptr<State> make_state_machine(
     auto find_minimized = [&](std::shared_ptr<State> state, std::shared_ptr<State> next_state) -> std::shared_ptr<State>
     {
         auto h = state->hash(next_state ? next_state->id : -1);
+
         auto it = dictionary.find(h);
-        if (it == dictionary.end()) {
-            auto r = state->copy_state(state_id++);
-            dictionary[h] = r;
-            return r;
+        if (it != dictionary.end() && (*it->second == *state)) {
+            return it->second;
         }
-        return it->second;
+
+        auto r = state->copy_state(state_id++);
+        dictionary[h] = r;
+        return r;
     };
 
     // Main algorithm ported from the technical paper

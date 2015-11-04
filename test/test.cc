@@ -147,6 +147,29 @@ TEST_CASE("Common prefix test4", "[general]")
     REQUIRE(fst::search(byte_code, "zd")[0] == "1");
 }
 
+TEST_CASE("Common prefix test5", "[general]")
+{
+    vector<pair<string, string>> input = {
+        { "aba", "1" },
+        { "abz", "2" },
+        { "baz", "31" },
+        { "bz",  "32" },
+    };
+
+    auto initial_state = fst::make_state_machine(input);
+    REQUIRE(initial_state->id == 5);
+    REQUIRE(fst::search(initial_state, "aba")[0] == "1");
+    REQUIRE(fst::search(initial_state, "abz")[0] == "2");
+    REQUIRE(fst::search(initial_state, "baz")[0] == "31");
+    REQUIRE(fst::search(initial_state, "bz")[0] == "32");
+
+    auto byte_code = fst::compile(initial_state);
+    REQUIRE(fst::search(byte_code, "aba")[0] == "1");
+    REQUIRE(fst::search(byte_code, "abz")[0] == "2");
+    REQUIRE(fst::search(byte_code, "baz")[0] == "31");
+    REQUIRE(fst::search(byte_code, "bz")[0] == "32");
+}
+
 TEST_CASE("Duplicate final states test", "[general]")
 {
     vector<pair<string, string>> input = {
