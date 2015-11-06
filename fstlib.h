@@ -139,15 +139,6 @@ public:
         return std::make_shared<State>(id, final, transitions, state_outputs);
     }
 
-    std::vector<char> get_arcs() const
-    {
-        std::vector<char> arcs;
-        for (const auto& item : transitions) {
-            arcs.push_back(item.first);
-        }
-        return arcs;
-    }
-
     void dot(std::ostream& os) const
     {
         os << "digraph{" << std::endl;
@@ -170,17 +161,18 @@ public:
             os << "  s" << id << " [ shape = circle ];" << std::endl;
         }
 
-        auto arcs = get_arcs();
-        for (auto arc : arcs) {
-            auto t = transitions.at(arc);
+        for (const auto& item : transitions) {
+            auto arc = item.first;
+            auto t = item.second;
             os << "  s" << id << "->s" << t.state->id << " [ label = \"" << arc;
             if (!t.output.empty()) {
                 os << "/" << t.output;
             }
             os << "\" ];" << std::endl;
         }
-        for (auto arc : arcs) {
-            transitions.at(arc).state->dot_core(os, check);
+        for (const auto& item : transitions) {
+            auto t = item.second;
+            t.state->dot_core(os, check);
         }
     }
 
@@ -254,12 +246,7 @@ private:
     mutable size_t hash_value;
 };
 
-} // namespace fst
-
-namespace fst {
-
-// Find common prefix length from 2 strings
-size_t get_prefix_length(const std::string& s1, const std::string& s2)
+inline size_t get_prefix_length(const std::string& s1, const std::string& s2)
 {
     size_t i = 0;
     while (i < s1.length() && i < s2.length() && s1[i] == s2[i]) {
@@ -268,7 +255,6 @@ size_t get_prefix_length(const std::string& s1, const std::string& s2)
     return i;
 };
 
-// Make fst
 inline std::shared_ptr<State> make_state_machine(
     const std::vector<std::pair<std::string, std::string>>& input)
 {
@@ -563,8 +549,8 @@ struct Command
 
     void print(std::ostream& os) const
     {
-        os << (int)id << "\t";
-        os << (int)next_id << "\t";
+        os << (id == -1 ? "" : std::to_string(id)) << "\t";
+        os << (next_id == -1 ? "" : std::to_string(next_id)) << "\t";
         os << arc << "\t";
         os << last_transition << "\t";
         os << final << "\t";
@@ -587,7 +573,10 @@ inline size_t compile_core(
         return position;
     }
 
-    auto arcs = state->get_arcs();
+    std::vector<char> arcs;
+    for (const auto& item : state->transitions) {
+        arcs.push_back(item.first);
+    }
 
     for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
         auto arc = arcs[i];
@@ -681,22 +670,10 @@ inline State::StateOutputs search(const std::vector<char>& bytes, const std::str
     return State::StateOutputs();
 }
 
-inline size_t command_count(const std::vector<char>& bytes)
-{
-    size_t count = 0;
-    size_t off = 0;
-    while (off < bytes.size()) {
-        Command cmd;
-        off = cmd.read_byte_code(bytes, off);
-        count++;
-    }
-    return count;
-}
-
 inline void print_header(std::ostream& os)
 {
-    os << "ID" << "\t" << "NextID" << "\t" << "Arc" << "\t" << "Last" << "\t" << "Final" << "\t" << "Output" << "\t" << "StOuts" << "\t" << "Jump" << "\t" << "Size" << std::endl;
-    os << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
+    os << "Pos" << "\t" << "JmpPos" << "\t" << "ID" << "\t" << "NextID" << "\t" << "Arc" << "\t" << "Last" << "\t" << "Final" << "\t" << "Output" << "\t" << "StOuts" << "\t" << "JmpOff" << "\t" << "Size" << std::endl;
+    os << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
 }
 
 inline size_t print(std::shared_ptr<State> state, std::ostream& os)
@@ -705,9 +682,17 @@ inline size_t print(std::shared_ptr<State> state, std::ostream& os)
     std::vector<size_t> offsets(state->id + 1);
     compile_core(state, commands, offsets, 0);
 
+    size_t off = 0;
     print_header(os);
     for (const auto& cmd: commands) {
+        os << off << "\t";
+        if (cmd.jump_offset == -1) {
+            os << "-" << "\t";
+        } else {
+            os << off + cmd.byte_code_size() + cmd.jump_offset << "\t";
+        }
         cmd.print(os);
+        off += cmd.byte_code_size();
     }
     return commands.size();
 }
@@ -718,8 +703,14 @@ inline size_t print(const std::vector<char>& bytes, std::ostream& os)
     size_t count = 0;
     size_t off = 0;
     while (off < bytes.size()) {
+        os << off << "\t";
         Command cmd;
         off = cmd.read_byte_code(bytes, off);
+        if (cmd.jump_offset == -1) {
+            os << "-" << "\t";
+        } else {
+            os << off + cmd.jump_offset << "\t";
+        }
         cmd.print(os);
         count++;
     }
