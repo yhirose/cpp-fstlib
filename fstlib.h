@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <list>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -410,9 +411,7 @@ struct Command
     char                arc;
     std::string         output;
     State::StateOutputs state_outputs;
-    bool                has_jump_offset;
-    bool                is_jump_offset_zero;
-    size_t              jump_offset;
+    int                 jump_offset;
 
     union Ope
     {
@@ -431,7 +430,14 @@ struct Command
 
     Ope ope() const
     {
-        return Ope{ final, last_transition, !output.empty(), has_state_outputs(), has_jump_offset, is_jump_offset_zero };
+        return Ope {
+            final,
+            last_transition,
+            !output.empty(),
+            has_state_outputs(),
+            jump_offset != -1,
+            jump_offset == 0
+        };
     }
 
     bool has_state_outputs() const
@@ -440,7 +446,7 @@ struct Command
         return !(state_outputs.empty() || (state_outputs.size() == 1 && state_outputs.front().empty()));
     }
 
-    size_t byte_code_size() const
+    size_t byte_code_size(bool need_jump_offset = true) const
     {
         // ope
         auto size = sizeof(uint8_t);
@@ -464,8 +470,10 @@ struct Command
         }
 
         // jump_offset
-        if (has_jump_offset && !is_jump_offset_zero) {
-            size += sizeof(uint32_t);
+        if (need_jump_offset) {
+            if (jump_offset > 0) {
+                size += sizeof(uint32_t);
+            }
         }
 
         return size;
@@ -499,7 +507,7 @@ struct Command
         }
 
         // jump_offset
-        if (has_jump_offset && !is_jump_offset_zero) {
+        if (jump_offset > 0) {
             auto data = (uint32_t)jump_offset;
             const char* p = (const char*)&data;
             bytes.insert(bytes.end(), p, p + sizeof(data));
@@ -516,8 +524,6 @@ struct Command
 
         final = ope.bits.final;
         last_transition = ope.bits.last_transition;
-        has_jump_offset = ope.bits.has_jump_offset;
-        is_jump_offset_zero = ope.bits.is_jump_offset_zero;
 
         // arc
         arc = bytes[off++];
@@ -541,8 +547,8 @@ struct Command
 
         // jump_offset
         jump_offset = -1;
-        if (has_jump_offset) {
-            if (is_jump_offset_zero) {
+        if (ope.bits.has_jump_offset) {
+            if (ope.bits.is_jump_offset_zero) {
                 jump_offset = 0;
             } else {
                 uint32_t data;
@@ -569,16 +575,31 @@ struct Command
     }
 };
 
-inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& commands)
+inline size_t compile_core(
+    std::shared_ptr<State> state,
+    std::list<Command>&    commands,
+    std::vector<size_t>&   offsets,
+    size_t                 position)
 {
     assert(!state->transitions.empty());
 
+    if (offsets[state->id]) {
+        return position;
+    }
+
     auto arcs = state->get_arcs();
 
-    std::vector<Command>                   current_commands;
-    std::map<size_t, std::vector<Command>> child_commands_list;
+    for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
+        auto arc = arcs[i];
+        const auto& trans = state->transitions.at(arc);
+        auto next_state = trans.state;
 
-    for (auto i = 0u; i < arcs.size(); i++) {
+        if (!next_state->transitions.empty()) {
+            position = compile_core(next_state, commands, offsets, position);
+        }
+    }
+
+    for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
         auto arc = arcs[i];
         const auto& trans = state->transitions.at(arc);
         auto next_state = trans.state;
@@ -591,86 +612,32 @@ inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& c
         cmd.output = trans.output;
         cmd.arc = arc;
         cmd.state_outputs = next_state->state_outputs;
-        cmd.has_jump_offset = !next_state->transitions.empty();
-        cmd.is_jump_offset_zero = false;
-        cmd.jump_offset = -1;
-        current_commands.push_back(cmd);
-    }
-
-    for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
-        auto arc = arcs[i];
-        const auto& trans = state->transitions.at(arc);
-        auto next_state = trans.state;
-
-        const auto& cmd = current_commands[i];
-
-        if (cmd.has_jump_offset) {
-            if (child_commands_list.find(next_state->id) == child_commands_list.end()) {
-                compile_core(next_state, child_commands_list[next_state->id]);
-            }
+        if (next_state->transitions.empty()) {
+            cmd.jump_offset = -1;
+        } else {
+            auto offset = offsets[next_state->id];
+            cmd.jump_offset = position - offset;
         }
+        commands.push_front(cmd);
+
+        position += cmd.byte_code_size();
     }
 
-    for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
-        auto& cmd = current_commands[i];
-
-        if (cmd.has_jump_offset) {
-            size_t current_offset = 0;
-            for (auto j = i + 1; j < (int)arcs.size(); j++) {
-                current_offset += current_commands[j].byte_code_size();
-            }
-
-            auto next_state = state->transitions.at(arcs[i]).state;
-
-            size_t child_offset = 0;
-            auto it = child_commands_list.begin();
-            while (it != child_commands_list.end()) {
-                if (it->first == next_state->id) {
-                    break;
-                }
-                for (const auto& cmd: it->second) {
-                    child_offset += cmd.byte_code_size();
-                }
-                ++it;
-            }
-
-            cmd.jump_offset = current_offset + child_offset;
-            if (cmd.jump_offset == 0) {
-                cmd.is_jump_offset_zero = true;
-            }
-        }
-    }
-
-    size_t current_size = 0;
-    for (const auto& cmd: current_commands) {
-        commands.push_back(cmd);
-        current_size += cmd.byte_code_size();
-    }
-
-    size_t child_size = 0;
-    auto it = child_commands_list.begin();
-    while (it != child_commands_list.end()) {
-        commands.insert(commands.end(), it->second.begin(), it->second.end());
-        for (const auto& cmd: it->second) {
-            child_size += cmd.byte_code_size();
-        }
-        ++it;
-    }
-
-    return current_size + child_size;
+    offsets[state->id] = position;;
+    return position;
 }
 
 inline std::vector<char> compile(std::shared_ptr<State> state)
 {
-    std::vector<Command> commands;
-    compile_core(state, commands);
-
-    std::vector<char> bytes;
+    std::list<Command> commands;
+    std::vector<size_t> offsets(state->id + 1);
+    compile_core(state, commands, offsets, 0);
+    std::vector<char> byte;
     for (const auto& cmd: commands) {
         const auto& b = cmd.write_byte_code();
-        bytes.insert(bytes.end(), b.begin(), b.end());
+        byte.insert(byte.end(), b.begin(), b.end());
     }
-    return bytes;
+    return byte;
 }
 
 inline State::StateOutputs search(const std::vector<char>& bytes, const std::string s)
@@ -700,7 +667,7 @@ inline State::StateOutputs search(const std::vector<char>& bytes, const std::str
                 }
                 return ret;
             }
-            if (!cmd.has_jump_offset) {
+            if (cmd.jump_offset == -1) {
                 return State::StateOutputs();
             }
             off += cmd.jump_offset;
@@ -734,8 +701,9 @@ inline void print_header(std::ostream& os)
 
 inline size_t print(std::shared_ptr<State> state, std::ostream& os)
 {
-    std::vector<Command> commands;
-    compile_core(state, commands);
+    std::list<Command> commands;
+    std::vector<size_t> offsets(state->id + 1);
+    compile_core(state, commands, offsets, 0);
 
     print_header(os);
     for (const auto& cmd: commands) {

@@ -195,6 +195,32 @@ TEST_CASE("Duplicate final states test", "[general]")
     REQUIRE(fst::search(byte_code, "dz")[0] == "3");
 }
 
+TEST_CASE("Duplicate final states test2", "[general]")
+{
+    vector<pair<string, string>> input = {
+        { "a_a", "0" },
+        { "ab", "1" },
+        { "ab_a", "2" },
+        { "b_a", "3" },
+    };
+
+    auto initial_state = fst::make_state_machine(input);
+    auto byte_code = fst::compile(initial_state);
+
+    REQUIRE(byte_code.size() == 39);
+    REQUIRE(fst::command_count(byte_code) == 7);
+
+    REQUIRE(fst::search(initial_state, "a_a")[0] == "0");
+    REQUIRE(fst::search(initial_state, "ab")[0] == "1");
+    REQUIRE(fst::search(initial_state, "ab_a")[0] == "2");
+    REQUIRE(fst::search(initial_state, "b_a")[0] == "3");
+
+    REQUIRE(fst::search(byte_code, "a_a")[0] == "0");
+    REQUIRE(fst::search(byte_code, "ab")[0] == "1");
+    REQUIRE(fst::search(byte_code, "ab_a")[0] == "2");
+    REQUIRE(fst::search(byte_code, "b_a")[0] == "3");
+}
+
 TEST_CASE("UTF-8 test", "[general]")
 {
     vector<pair<string, string>> input = {
