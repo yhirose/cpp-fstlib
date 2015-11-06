@@ -138,13 +138,12 @@ public:
         return std::make_shared<State>(id, final, transitions, state_outputs);
     }
 
-    std::vector<char> sorted_arcs() const
+    std::vector<char> get_arcs() const
     {
         std::vector<char> arcs;
         for (const auto& item : transitions) {
             arcs.push_back(item.first);
         }
-        std::sort(arcs.begin(), arcs.end(), [](char a, char b) { return (uint8_t)a < (uint8_t)b; });
         return arcs;
     }
 
@@ -170,7 +169,7 @@ public:
             os << "  s" << id << " [ shape = circle ];" << std::endl;
         }
 
-        auto arcs = sorted_arcs();
+        auto arcs = get_arcs();
         for (auto arc : arcs) {
             auto t = transitions.at(arc);
             os << "  s" << id << "->s" << t.state->id << " [ label = \"" << arc;
@@ -221,7 +220,9 @@ public:
         if (!is_hash_prepared) {
             is_hash_prepared = true;
 
+            // NOTE: `next_state_id` is used for better hash value
             std::string key = std::to_string(next_state_id);
+
             key += (final ? "f" : "c");
             if (final) {
                 for (const auto& state_output : state_outputs) {
@@ -296,8 +297,6 @@ inline std::shared_ptr<State> make_state_machine(
     for (const auto& item: input) {
         const auto& current_word = item.first;
         auto current_output = item.second;
-        static size_t count = 0;
-        //std::cerr << "word #" << count++ << ": " << current_word << std::endl;
 
         // The following loop caluculates the length of the longest common
         // prefix of 'current_word' and 'previous_word'
@@ -404,12 +403,15 @@ inline State::StateOutputs search(std::shared_ptr<State> state, const std::strin
 
 struct Command
 {
+    size_t              id = -1;
+    size_t              next_id = -1;
     bool                final;
     bool                last_transition;
     char                arc;
     std::string         output;
     State::StateOutputs state_outputs;
     bool                has_jump_offset;
+    bool                is_jump_offset_zero;
     size_t              jump_offset;
 
     union Ope
@@ -417,8 +419,11 @@ struct Command
         struct {
             unsigned final : 1;
             unsigned last_transition : 1;
+            unsigned has_output : 1;
+            unsigned has_state_outputs : 1;
             unsigned has_jump_offset : 1;
-            unsigned reserved : 5;
+            unsigned is_jump_offset_zero : 1;
+            unsigned reserved : 2;
         } bits;
 
         uint8_t byte;
@@ -426,7 +431,13 @@ struct Command
 
     Ope ope() const
     {
-        return Ope{ final, last_transition, has_jump_offset };
+        return Ope{ final, last_transition, !output.empty(), has_state_outputs(), has_jump_offset, is_jump_offset_zero };
+    }
+
+    bool has_state_outputs() const
+    {
+        // NOTE: for better state_outputs compression
+        return !(state_outputs.empty() || (state_outputs.size() == 1 && state_outputs.front().empty()));
     }
 
     size_t byte_code_size() const
@@ -438,18 +449,22 @@ struct Command
         size += sizeof(uint8_t);
 
         // output
-        size += sizeof(uint8_t);
-        size += output.length();
+        if (!output.empty()) {
+            size += sizeof(uint8_t);
+            size += output.length();
+        }
 
         // state_outputs
-        size += sizeof(uint8_t);
-        for (const auto& state_output: state_outputs) {
+        if (has_state_outputs()) {
             size += sizeof(uint8_t);
-            size += state_output.length();
+            for (const auto& state_output : state_outputs) {
+                size += sizeof(uint8_t);
+                size += state_output.length();
+            }
         }
 
         // jump_offset
-        if (has_jump_offset) {
+        if (has_jump_offset && !is_jump_offset_zero) {
             size += sizeof(uint32_t);
         }
 
@@ -467,20 +482,24 @@ struct Command
         bytes.push_back(arc);
 
         // output
-        bytes.push_back((char)output.length());
-        for (auto ch: output) {
-            bytes.push_back(ch);
+        if (!output.empty()) {
+            bytes.push_back((char)output.length());
+            for (auto ch: output) {
+                bytes.push_back(ch);
+            }
         }
 
         // state_outputs
-        bytes.push_back((char)state_outputs.size());
-        for (const auto& state_output : state_outputs) {
-            bytes.push_back((char)state_output.length());
-            bytes.insert(bytes.end(), state_output.data(), state_output.data() + state_output.length());
+        if (has_state_outputs()) {
+            bytes.push_back((char)state_outputs.size());
+            for (const auto& state_output : state_outputs) {
+                bytes.push_back((char)state_output.length());
+                bytes.insert(bytes.end(), state_output.data(), state_output.data() + state_output.length());
+            }
         }
 
         // jump_offset
-        if (has_jump_offset) {
+        if (has_jump_offset && !is_jump_offset_zero) {
             auto data = (uint32_t)jump_offset;
             const char* p = (const char*)&data;
             bytes.insert(bytes.end(), p, p + sizeof(data));
@@ -498,30 +517,39 @@ struct Command
         final = ope.bits.final;
         last_transition = ope.bits.last_transition;
         has_jump_offset = ope.bits.has_jump_offset;
+        is_jump_offset_zero = ope.bits.is_jump_offset_zero;
 
         // arc
         arc = bytes[off++];
 
         // output
-        size_t output_len = bytes[off++];
-        output.assign(bytes.data() + off, output_len);
-        off += output_len;
+        if (ope.bits.has_output) {
+            size_t output_len = bytes[off++];
+            output.assign(bytes.data() + off, output_len);
+            off += output_len;
+        }
 
         // state_outputs
-        state_outputs.resize(bytes[off++]);
-        for (auto i = 0u; i < state_outputs.size(); i++) {
-            size_t state_output_len = bytes[off++];
-            state_outputs[i].assign(bytes.data() + off, state_output_len);
-            off += state_output_len;
+        if (ope.bits.has_state_outputs) {
+            state_outputs.resize(bytes[off++]);
+            for (auto i = 0u; i < state_outputs.size(); i++) {
+                size_t state_output_len = bytes[off++];
+                state_outputs[i].assign(bytes.data() + off, state_output_len);
+                off += state_output_len;
+            }
         }
 
         // jump_offset
         jump_offset = -1;
         if (has_jump_offset) {
-            uint32_t data;
-            memcpy(&data, bytes.data() + off, sizeof(data));
-            off += sizeof(data);
-            jump_offset = data;
+            if (is_jump_offset_zero) {
+                jump_offset = 0;
+            } else {
+                uint32_t data;
+                memcpy(&data, bytes.data() + off, sizeof(data));
+                off += sizeof(data);
+                jump_offset = data;
+            }
         }
 
         return off;
@@ -529,9 +557,11 @@ struct Command
 
     void print(std::ostream& os) const
     {
-        os << final << "\t";
-        os << last_transition << "\t";
+        os << (int)id << "\t";
+        os << (int)next_id << "\t";
         os << arc << "\t";
+        os << last_transition << "\t";
+        os << final << "\t";
         os << output << "\t";
         os << join(state_outputs, "/") << "\t";
         os << (int)jump_offset << "\t";
@@ -543,7 +573,7 @@ inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& c
 {
     assert(!state->transitions.empty());
 
-    auto arcs = state->sorted_arcs();
+    auto arcs = state->get_arcs();
 
     std::vector<Command>                   current_commands;
     std::map<size_t, std::vector<Command>> child_commands_list;
@@ -554,14 +584,25 @@ inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& c
         auto next_state = trans.state;
 
         Command cmd;
+        cmd.id = state->id;
+        cmd.next_id = next_state->id;
         cmd.final = next_state->final;
         cmd.last_transition = (i + 1 == arcs.size());
         cmd.output = trans.output;
         cmd.arc = arc;
         cmd.state_outputs = next_state->state_outputs;
         cmd.has_jump_offset = !next_state->transitions.empty();
+        cmd.is_jump_offset_zero = false;
         cmd.jump_offset = -1;
         current_commands.push_back(cmd);
+    }
+
+    for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
+        auto arc = arcs[i];
+        const auto& trans = state->transitions.at(arc);
+        auto next_state = trans.state;
+
+        const auto& cmd = current_commands[i];
 
         if (cmd.has_jump_offset) {
             if (child_commands_list.find(next_state->id) == child_commands_list.end()) {
@@ -583,8 +624,7 @@ inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& c
 
             size_t child_offset = 0;
             auto it = child_commands_list.begin();
-            auto end = child_commands_list.end();
-            while (it != end) {
+            while (it != child_commands_list.end()) {
                 if (it->first == next_state->id) {
                     break;
                 }
@@ -595,6 +635,9 @@ inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& c
             }
 
             cmd.jump_offset = current_offset + child_offset;
+            if (cmd.jump_offset == 0) {
+                cmd.is_jump_offset_zero = true;
+            }
         }
     }
 
@@ -606,8 +649,7 @@ inline size_t compile_core(std::shared_ptr<State> state, std::vector<Command>& c
 
     size_t child_size = 0;
     auto it = child_commands_list.begin();
-    auto end = child_commands_list.end();
-    while (it != end) {
+    while (it != child_commands_list.end()) {
         commands.insert(commands.end(), it->second.begin(), it->second.end());
         for (const auto& cmd: it->second) {
             child_size += cmd.byte_code_size();
@@ -624,12 +666,10 @@ inline std::vector<char> compile(std::shared_ptr<State> state)
     compile_core(state, commands);
 
     std::vector<char> bytes;
-
     for (const auto& cmd: commands) {
         const auto& b = cmd.write_byte_code();
         bytes.insert(bytes.end(), b.begin(), b.end());
     }
-
     return bytes;
 }
 
@@ -649,9 +689,14 @@ inline State::StateOutputs search(const std::vector<char>& bytes, const std::str
             prefix += cmd.output;
             i++;
             if (cmd.final && i == s.size()) {
+                // NOTE: for better state_outputs compression
                 State::StateOutputs ret;
-                for (const auto& suffix : cmd.state_outputs) {
-                    ret.push_back(prefix + suffix);
+                if (!cmd.state_outputs.empty()) {
+                    for (const auto& suffix : cmd.state_outputs) {
+                        ret.push_back(prefix + suffix);
+                    }
+                } else if (!prefix.empty()) {
+                    ret.push_back(prefix);
                 }
                 return ret;
             }
@@ -681,17 +726,33 @@ inline size_t command_count(const std::vector<char>& bytes)
     return count;
 }
 
-inline size_t dump(const std::vector<char>& bytes, std::ostream& os)
+inline void print_header(std::ostream& os)
 {
-    std::cerr << "Fin" << "\t" << "Last" << "\t" << "Arc" << "\t" << "Out" << "\t" << "StOut" << "\t" << "Jmp" << "\t" << "Size" << std::endl;
-    std::cerr << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
+    os << "ID" << "\t" << "NextID" << "\t" << "Arc" << "\t" << "Last" << "\t" << "Final" << "\t" << "Output" << "\t" << "StOuts" << "\t" << "Jump" << "\t" << "Size" << std::endl;
+    os << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
+}
 
+inline size_t print(std::shared_ptr<State> state, std::ostream& os)
+{
+    std::vector<Command> commands;
+    compile_core(state, commands);
+
+    print_header(os);
+    for (const auto& cmd: commands) {
+        cmd.print(os);
+    }
+    return commands.size();
+}
+
+inline size_t print(const std::vector<char>& bytes, std::ostream& os)
+{
+    print_header(os);
     size_t count = 0;
     size_t off = 0;
     while (off < bytes.size()) {
         Command cmd;
         off = cmd.read_byte_code(bytes, off);
-        cmd.print(std::cerr);
+        cmd.print(os);
         count++;
     }
     return count;
@@ -700,6 +761,5 @@ inline size_t dump(const std::vector<char>& bytes, std::ostream& os)
 } // namespace fst
 
 #endif
-
 // vim: et ts=4 sw=4 cin cino={1s ff=unix
 

@@ -143,7 +143,7 @@ int main(int argc, const char** argv)
                 return 1;
             }
 
-            fst::dump(load_byte_code(fin), cout);
+            fst::print(load_byte_code(fin), cout);
 
         } else if (cmd == "search") {
             if (argi >= argc) {
@@ -190,6 +190,8 @@ int main(int argc, const char** argv)
             auto initial_state = fst::make_state_machine(input);
             cerr << "# state count: " << initial_state->id + 1 << endl;
 
+            fst::print(initial_state, cout);
+
             cerr << "# compile fst..." << endl;
             auto byte_code = fst::compile(initial_state);
             cerr << "# byte code size: " << byte_code.size() << endl;
@@ -198,11 +200,11 @@ int main(int argc, const char** argv)
             for (const auto& item: input) {
                 auto results = fst::search(initial_state, item.first);
                 if (results.empty()) {
-                    cout << item.first << ": ng" << endl;
+                    cout << item.first << ": NG (state machine)" << endl;
                 }
                 results = fst::search(byte_code, item.first);
                 if (results.empty()) {
-                    cout << item.first << ": NG" << endl;
+                    cout << item.first << ": NG (byte code)" << endl;
                 }
             }
         } else {
