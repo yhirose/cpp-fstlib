@@ -9,13 +9,14 @@ void usage()
 {
     cout << R"(usage: fst-cli <command> [<args>]
 
-    compile     DictionaryFile FstFile
-    search      FstFile
+    compile     DictionaryFile FstFile     - make fst byte code
 
-    dot         DictionaryFile
-    assembly    DictionaryFile
+    search      FstFile                    - exact match search
+    prefix      FstFile                    - common prefix search
 
-    dump        FstFile
+    dot         DictionaryFile             - convert to dot format
+    assembly    DictionaryFile             - convert to assembly format
+    dump        FstFile                    - dump byte code in assembly format
 )";
 }
 
@@ -75,7 +76,7 @@ int main(int argc, const char** argv)
             auto byte_code = fst::compile(initial_state);
             fout.write(byte_code.data(), byte_code.size());
 
-        } else if (cmd == "search") {
+        } else if (cmd == "search" || cmd == "prefix") {
             if (argi >= argc) { usage(); return 1; }
 
             ifstream fin(argv[argi++], ios_base::binary);
@@ -87,13 +88,21 @@ int main(int argc, const char** argv)
             vector<char> byte_code(size);
             fin.read(byte_code.data(), size);
 
-            for (;;) {
-                string word;
-                cin >> word;
-                auto results = fst::search(byte_code, word);
-                cout << "results: " << results.size() << endl;
-                for (const auto& item : results) {
-                    cout << item << endl;
+            string line;
+            while (getline(cin, line)) {
+                if (cmd == "search") {
+                    auto outputs = fst::exact_match_search(byte_code, line);
+                    for (const auto& item : outputs) {
+                        cout << item << endl;
+                    }
+                } else { // "prefix"
+                    auto results = fst::common_prefix_search(byte_code, line);
+                    for (const auto& result : results) {
+                        cout << "length: " << result.length << endl;
+                        for (const auto& item : result.outputs) {
+                            cout << item << endl;
+                        }
+                    }
                 }
             }
 
@@ -113,8 +122,7 @@ int main(int argc, const char** argv)
             if (!fin) { usage(); return 1; }
 
             auto initial_state = fst::make_state_machine(load_input(fin));
-            auto byte_code = fst::compile(initial_state);
-            fst::print(byte_code, cout);
+            fst::print(initial_state, cout);
 
         } else if (cmd == "dump") {
             if (argi >= argc) { usage(); return 1; }
@@ -143,11 +151,11 @@ int main(int argc, const char** argv)
 
             cerr << "# test all words..." << endl;
             for (const auto& item: input) {
-                auto results = fst::search(initial_state, item.first);
+                auto results = fst::exact_match_search(initial_state, item.first);
                 if (results.empty()) {
                     cout << item.first << ": NG (state machine)" << endl;
                 }
-                results = fst::search(byte_code, item.first);
+                results = fst::exact_match_search(byte_code, item.first);
                 if (results.empty()) {
                     cout << item.first << ": NG (byte code)" << endl;
                 }

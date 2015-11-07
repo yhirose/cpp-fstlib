@@ -40,6 +40,14 @@ inline std::string join(const Cont& cont, const char* delm)
 
 namespace fst {
 
+typedef std::vector<std::string> Outputs;
+
+struct CommonPrefixSearchResult
+{
+    size_t  length;
+    Outputs outputs;
+};
+
 class State
 {
 public:
@@ -52,16 +60,15 @@ public:
         }
     };
     typedef std::map<char, Transition> Transitions;
-    typedef std::vector<std::string> StateOutputs;
 
-    const size_t       id;
-    const bool         final = false;
-    const Transitions  transitions;
-    const StateOutputs state_outputs;
+    const size_t      id;
+    const bool        final = false;
+    const Transitions transitions;
+    const Outputs     state_outputs;
 
     State(size_t id = -1) : id(id), final(false), is_hash_prepared(false), hash_value(-1) {}
 
-    State(size_t id, bool final, const Transitions& transitions, const StateOutputs& state_outputs)
+    State(size_t id, bool final, const Transitions& transitions, const Outputs& state_outputs)
         : id(id)
         , final(final)
         , transitions(transitions)
@@ -83,9 +90,9 @@ public:
         set_modified();
     }
 
-    void set_state_outputs(const StateOutputs& state_outputs)
+    void set_state_outputs(const Outputs& state_outputs)
     {
-        const_cast<StateOutputs&>(this->state_outputs) = state_outputs;
+        const_cast<Outputs&>(this->state_outputs) = state_outputs;
         set_modified();
     }
 
@@ -114,7 +121,7 @@ public:
 
     void push_to_state_outputs(const std::string& output)
     {
-        const_cast<StateOutputs&>(state_outputs).push_back(output);
+        const_cast<Outputs&>(state_outputs).push_back(output);
         set_modified();
     }
 
@@ -130,7 +137,7 @@ public:
     {
         set_final(false);
         const_cast<Transitions&>(transitions).clear();
-        const_cast<StateOutputs&>(state_outputs).clear();
+        const_cast<Outputs&>(state_outputs).clear();
         set_modified();
     }
 
@@ -362,7 +369,8 @@ inline std::shared_ptr<State> make_state_machine(
     return find_minimized(temp_states[0], next_state);
 }
 
-inline State::StateOutputs search(std::shared_ptr<State> state, const std::string s)
+inline Outputs exact_match_search(
+    std::shared_ptr<State> state, const std::string s)
 {
     std::string prefix;
 
@@ -371,33 +379,72 @@ inline State::StateOutputs search(std::shared_ptr<State> state, const std::strin
         auto arc = *it;
         auto next_state = state->transition(arc);
         if (!next_state) {
-            return State::StateOutputs();
+            return Outputs();
         }
         prefix += state->output(arc);
         state = next_state;
         ++it;
     }
     if (!state->final || it != s.end()) {
-        return State::StateOutputs();
+        return Outputs();
     } else {
-        State::StateOutputs ret;
-        for (const auto& suffix : state->state_outputs) {
-            ret.push_back(prefix + suffix);
+        // NOTE: for better state_outputs compression
+        Outputs ret;
+        if (!state->state_outputs.empty()) {
+            for (const auto& suffix : state->state_outputs) {
+                ret.push_back(prefix + suffix);
+            }
+        } else if (!prefix.empty()) {
+            ret.push_back(prefix);
         }
         return ret;
     }
 }
 
+inline std::vector<CommonPrefixSearchResult> common_prefix_search(
+    std::shared_ptr<State> state, const std::string s)
+{
+    std::vector<CommonPrefixSearchResult> ret;
+    std::string prefix;
+
+    auto it = s.begin();
+    while (it != s.end()) {
+        auto arc = *it;
+        auto next_state = state->transition(arc);
+        if (!next_state) {
+            break;
+        }
+        if (next_state->final) {
+            // NOTE: for better state_outputs compression
+            CommonPrefixSearchResult result;
+            result.length = it - s.begin() + 1;
+            if (!next_state->state_outputs.empty()) {
+                for (const auto& suffix : next_state->state_outputs) {
+                    result.outputs.push_back(prefix + suffix);
+                }
+            } else if (!prefix.empty()) {
+                result.outputs.push_back(prefix);
+            }
+            ret.push_back(result);
+        }
+        prefix += state->output(arc);
+        state = next_state;
+        ++it;
+    }
+
+    return ret;
+}
+
 struct Command
 {
-    size_t              id = -1;
-    size_t              next_id = -1;
-    bool                final;
-    bool                last_transition;
-    char                arc;
-    std::string         output;
-    State::StateOutputs state_outputs;
-    int                 jump_offset;
+    size_t      id = -1;
+    size_t      next_id = -1;
+    bool        final;
+    bool        last_transition;
+    char        arc;
+    std::string output;
+    Outputs     state_outputs;
+    int         jump_offset;
 
     union Ope
     {
@@ -629,7 +676,8 @@ inline std::vector<char> compile(std::shared_ptr<State> state)
     return byte;
 }
 
-inline State::StateOutputs search(const std::vector<char>& bytes, const std::string s)
+inline Outputs exact_match_search(
+    const std::vector<char>& bytes, const std::string s)
 {
     std::string prefix;
     size_t off = 0;
@@ -646,7 +694,7 @@ inline State::StateOutputs search(const std::vector<char>& bytes, const std::str
             i++;
             if (cmd.final && i == s.size()) {
                 // NOTE: for better state_outputs compression
-                State::StateOutputs ret;
+                Outputs ret;
                 if (!cmd.state_outputs.empty()) {
                     for (const auto& suffix : cmd.state_outputs) {
                         ret.push_back(prefix + suffix);
@@ -657,17 +705,62 @@ inline State::StateOutputs search(const std::vector<char>& bytes, const std::str
                 return ret;
             }
             if (cmd.jump_offset == -1) {
-                return State::StateOutputs();
+                return Outputs();
             }
             off += cmd.jump_offset;
         } else {
             if (cmd.last_transition) {
-                return State::StateOutputs();
+                return Outputs();
             }
         }
     }
 
-    return State::StateOutputs();
+    return Outputs();
+}
+
+inline std::vector<CommonPrefixSearchResult> common_prefix_search(
+    const std::vector<char>& bytes, const std::string s)
+{
+    std::vector<CommonPrefixSearchResult> ret;
+    std::string prefix;
+    size_t off = 0;
+
+    size_t i = 0;
+    while (i < s.size()) {
+        auto arc = s[i];
+
+        Command cmd;
+        off = cmd.read_byte_code(bytes, off);
+
+        if (cmd.arc == arc) {
+            prefix += cmd.output;
+            i++;
+            if (cmd.final) {
+                // NOTE: for better state_outputs compression
+                CommonPrefixSearchResult result;
+                result.length = i;
+                if (!cmd.state_outputs.empty()) {
+                    for (const auto& suffix : cmd.state_outputs) {
+                        result.outputs.push_back(prefix + suffix);
+                    }
+                } else if (!prefix.empty()) {
+                    result.outputs.push_back(prefix);
+                }
+                //return ret;
+                ret.push_back(result);
+            }
+            if (cmd.jump_offset == -1) {
+                return ret;
+            }
+            off += cmd.jump_offset;
+        } else {
+            if (cmd.last_transition) {
+                return ret;
+            }
+        }
+    }
+
+    return ret;
 }
 
 inline void print_header(std::ostream& os)
