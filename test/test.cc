@@ -56,21 +56,23 @@ TEST_CASE("Simple virtual machine test", "[general]")
     REQUIRE(initial_state->id == 12);
 
     auto byte_code = fst::compile(initial_state);
+    auto d = byte_code.data();
+    auto s = byte_code.size();
 
-    REQUIRE(fst::exact_match_search(byte_code, "apr")[0] == "30");
-    REQUIRE(fst::exact_match_search(byte_code, "aug")[0] == "31");
-    REQUIRE(fst::exact_match_search(byte_code, "dec")[0] == "31");
-    REQUIRE(fst::exact_match_search(byte_code, "feb")[0] == "28");
-    REQUIRE(fst::exact_match_search(byte_code, "feb")[1] == "29");
-    REQUIRE(fst::exact_match_search(byte_code, "jul")[0] == "31");
-    REQUIRE(fst::exact_match_search(byte_code, "jun")[0] == "30");
+    REQUIRE(fst::exact_match_search(d, s, "apr")[0] == "30");
+    REQUIRE(fst::exact_match_search(d, s, "aug")[0] == "31");
+    REQUIRE(fst::exact_match_search(d, s, "dec")[0] == "31");
+    REQUIRE(fst::exact_match_search(d, s, "feb")[0] == "28");
+    REQUIRE(fst::exact_match_search(d, s, "feb")[1] == "29");
+    REQUIRE(fst::exact_match_search(d, s, "jul")[0] == "31");
+    REQUIRE(fst::exact_match_search(d, s, "jun")[0] == "30");
 
-    REQUIRE(fst::exact_match_search(byte_code, "").empty());
-    REQUIRE(fst::exact_match_search(byte_code, "_").empty());
-    REQUIRE(fst::exact_match_search(byte_code, "a").empty());
-    REQUIRE(fst::exact_match_search(byte_code, "ap").empty());
-    REQUIRE(fst::exact_match_search(byte_code, "ap_").empty());
-    REQUIRE(fst::exact_match_search(byte_code, "apr_").empty());
+    REQUIRE(fst::exact_match_search(d, s, "").empty());
+    REQUIRE(fst::exact_match_search(d, s, "_").empty());
+    REQUIRE(fst::exact_match_search(d, s, "a").empty());
+    REQUIRE(fst::exact_match_search(d, s, "ap").empty());
+    REQUIRE(fst::exact_match_search(d, s, "ap_").empty());
+    REQUIRE(fst::exact_match_search(d, s, "apr_").empty());
 }
 
 TEST_CASE("Edge case test1", "[general]")
@@ -86,8 +88,10 @@ TEST_CASE("Edge case test1", "[general]")
     REQUIRE(fst::exact_match_search(initial_state, "ab")[0] == "1");
 
     auto byte_code = fst::compile(initial_state);
-    REQUIRE(fst::exact_match_search(byte_code, "a")[0] == "0");
-    REQUIRE(fst::exact_match_search(byte_code, "ab")[0] == "1");
+    auto d = byte_code.data();
+    auto s = byte_code.size();
+    REQUIRE(fst::exact_match_search(d, s, "a")[0] == "0");
+    REQUIRE(fst::exact_match_search(d, s, "ab")[0] == "1");
 }
 
 TEST_CASE("Edge case test2", "[general]")
@@ -103,8 +107,10 @@ TEST_CASE("Edge case test2", "[general]")
     REQUIRE(fst::exact_match_search(initial_state, "abb")[0] == "1");
 
     auto byte_code = fst::compile(initial_state);
-    REQUIRE(fst::exact_match_search(byte_code, "aa")[0] == "0");
-    REQUIRE(fst::exact_match_search(byte_code, "abb")[0] == "1");
+    auto d = byte_code.data();
+    auto s = byte_code.size();
+    REQUIRE(fst::exact_match_search(d, s, "aa")[0] == "0");
+    REQUIRE(fst::exact_match_search(d, s, "abb")[0] == "1");
 }
 
 TEST_CASE("Edge case test3", "[general]")
@@ -120,8 +126,10 @@ TEST_CASE("Edge case test3", "[general]")
     REQUIRE(fst::exact_match_search(initial_state, "bc")[0] == "1");
 
     auto byte_code = fst::compile(initial_state);
-    REQUIRE(fst::exact_match_search(byte_code, "abc")[0] == "0");
-    REQUIRE(fst::exact_match_search(byte_code, "bc")[0] == "1");
+    auto d = byte_code.data();
+    auto s = byte_code.size();
+    REQUIRE(fst::exact_match_search(d, s, "abc")[0] == "0");
+    REQUIRE(fst::exact_match_search(d, s, "bc")[0] == "1");
 }
 
 TEST_CASE("Edge case test4", "[general]")
@@ -141,10 +149,12 @@ TEST_CASE("Edge case test4", "[general]")
     REQUIRE(fst::exact_match_search(initial_state, "zd")[0] == "1");
 
     auto byte_code = fst::compile(initial_state);
-    REQUIRE(fst::exact_match_search(byte_code, "z")[0] == "0");
-    REQUIRE(fst::exact_match_search(byte_code, "zc")[0] == "10");
-    REQUIRE(fst::exact_match_search(byte_code, "zcd")[0] == "11");
-    REQUIRE(fst::exact_match_search(byte_code, "zd")[0] == "1");
+    auto d = byte_code.data();
+    auto s = byte_code.size();
+    REQUIRE(fst::exact_match_search(d, s, "z")[0] == "0");
+    REQUIRE(fst::exact_match_search(d, s, "zc")[0] == "10");
+    REQUIRE(fst::exact_match_search(d, s, "zcd")[0] == "11");
+    REQUIRE(fst::exact_match_search(d, s, "zd")[0] == "1");
 }
 
 TEST_CASE("Edge case test5", "[general]")
@@ -164,10 +174,12 @@ TEST_CASE("Edge case test5", "[general]")
     REQUIRE(fst::exact_match_search(initial_state, "bz")[0] == "32");
 
     auto byte_code = fst::compile(initial_state);
-    REQUIRE(fst::exact_match_search(byte_code, "aba")[0] == "1");
-    REQUIRE(fst::exact_match_search(byte_code, "abz")[0] == "2");
-    REQUIRE(fst::exact_match_search(byte_code, "baz")[0] == "31");
-    REQUIRE(fst::exact_match_search(byte_code, "bz")[0] == "32");
+    auto d = byte_code.data();
+    auto s = byte_code.size();
+    REQUIRE(fst::exact_match_search(d, s, "aba")[0] == "1");
+    REQUIRE(fst::exact_match_search(d, s, "abz")[0] == "2");
+    REQUIRE(fst::exact_match_search(d, s, "baz")[0] == "31");
+    REQUIRE(fst::exact_match_search(d, s, "bz")[0] == "32");
 }
 
 TEST_CASE("Duplicate final states test", "[general]")
@@ -181,16 +193,18 @@ TEST_CASE("Duplicate final states test", "[general]")
 
     auto initial_state = fst::make_state_machine(input);
     auto byte_code = fst::compile(initial_state);
+    auto d = byte_code.data();
+    auto s = byte_code.size();
 
     REQUIRE(fst::exact_match_search(initial_state, "az")[0] == "0");
     REQUIRE(fst::exact_match_search(initial_state, "bz")[0] == "1");
     REQUIRE(fst::exact_match_search(initial_state, "cy")[0] == "2");
     REQUIRE(fst::exact_match_search(initial_state, "dz")[0] == "3");
 
-    REQUIRE(fst::exact_match_search(byte_code, "az")[0] == "0");
-    REQUIRE(fst::exact_match_search(byte_code, "bz")[0] == "1");
-    REQUIRE(fst::exact_match_search(byte_code, "cy")[0] == "2");
-    REQUIRE(fst::exact_match_search(byte_code, "dz")[0] == "3");
+    REQUIRE(fst::exact_match_search(d, s, "az")[0] == "0");
+    REQUIRE(fst::exact_match_search(d, s, "bz")[0] == "1");
+    REQUIRE(fst::exact_match_search(d, s, "cy")[0] == "2");
+    REQUIRE(fst::exact_match_search(d, s, "dz")[0] == "3");
 }
 
 TEST_CASE("Duplicate final states test2", "[general]")
@@ -204,6 +218,8 @@ TEST_CASE("Duplicate final states test2", "[general]")
 
     auto initial_state = fst::make_state_machine(input);
     auto byte_code = fst::compile(initial_state);
+    auto d = byte_code.data();
+    auto s = byte_code.size();
 
     REQUIRE(byte_code.size() == 39);
 
@@ -212,10 +228,10 @@ TEST_CASE("Duplicate final states test2", "[general]")
     REQUIRE(fst::exact_match_search(initial_state, "ab_a")[0] == "2");
     REQUIRE(fst::exact_match_search(initial_state, "b_a")[0] == "3");
 
-    REQUIRE(fst::exact_match_search(byte_code, "a_a")[0] == "0");
-    REQUIRE(fst::exact_match_search(byte_code, "ab")[0] == "1");
-    REQUIRE(fst::exact_match_search(byte_code, "ab_a")[0] == "2");
-    REQUIRE(fst::exact_match_search(byte_code, "b_a")[0] == "3");
+    REQUIRE(fst::exact_match_search(d, s, "a_a")[0] == "0");
+    REQUIRE(fst::exact_match_search(d, s, "ab")[0] == "1");
+    REQUIRE(fst::exact_match_search(d, s, "ab_a")[0] == "2");
+    REQUIRE(fst::exact_match_search(d, s, "b_a")[0] == "3");
 }
 
 TEST_CASE("UTF-8 test", "[general]")
@@ -232,8 +248,10 @@ TEST_CASE("UTF-8 test", "[general]")
     REQUIRE(fst::exact_match_search(initial_state, u8"あい")[0] == "1");
 
     auto byte_code = fst::compile(initial_state);
-    REQUIRE(fst::exact_match_search(byte_code, u8"あ")[0] == "0");
-    REQUIRE(fst::exact_match_search(byte_code, u8"あい")[0] == "1");
+    auto d = byte_code.data();
+    auto s = byte_code.size();
+    REQUIRE(fst::exact_match_search(d, s, u8"あ")[0] == "0");
+    REQUIRE(fst::exact_match_search(d, s, u8"あい")[0] == "1");
 }
 
 TEST_CASE("Common prefix search test", "[general]")
@@ -273,8 +291,10 @@ TEST_CASE("Common prefix search test2", "[general]")
 
     auto initial_state = fst::make_state_machine(input);
     auto byte_code = fst::compile(initial_state);
+    auto d = byte_code.data();
+    auto s = byte_code.size();
 
-    auto ret = fst::common_prefix_search(byte_code, "android phone");
+    auto ret = fst::common_prefix_search(d, s, "android phone");
 
     REQUIRE(ret.size() == 3);
 

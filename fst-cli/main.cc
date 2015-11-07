@@ -91,12 +91,12 @@ int main(int argc, const char** argv)
             string line;
             while (getline(cin, line)) {
                 if (cmd == "search") {
-                    auto outputs = fst::exact_match_search(byte_code, line);
+                    auto outputs = fst::exact_match_search(byte_code.data(), byte_code.size(), line);
                     for (const auto& item : outputs) {
                         cout << item << endl;
                     }
                 } else { // "prefix"
-                    auto results = fst::common_prefix_search(byte_code, line);
+                    auto results = fst::common_prefix_search(byte_code.data(), byte_code.size(), line);
                     for (const auto& result : results) {
                         cout << "length: " << result.length << endl;
                         for (const auto& item : result.outputs) {
@@ -130,7 +130,8 @@ int main(int argc, const char** argv)
             ifstream fin(argv[argi++], ios_base::binary);
             if (!fin) { return 1; }
 
-            fst::print(load_byte_code(fin), cout);
+            auto byte_code = load_byte_code(fin);
+            fst::print(byte_code.data(), byte_code.size(), cout);
 
         } else if (cmd == "test") {
             if (argi >= argc) { usage(); return 1; }
@@ -155,7 +156,7 @@ int main(int argc, const char** argv)
                 if (results.empty()) {
                     cout << item.first << ": NG (state machine)" << endl;
                 }
-                results = fst::exact_match_search(byte_code, item.first);
+                results = fst::exact_match_search(byte_code.data(), byte_code.size(), item.first);
                 if (results.empty()) {
                     cout << item.first << ": NG (byte code)" << endl;
                 }

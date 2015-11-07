@@ -369,8 +369,7 @@ inline std::shared_ptr<State> make_state_machine(
     return find_minimized(temp_states[0], next_state);
 }
 
-inline Outputs exact_match_search(
-    std::shared_ptr<State> state, const std::string s)
+inline Outputs exact_match_search(std::shared_ptr<State> state, const std::string s)
 {
     std::string prefix;
 
@@ -437,8 +436,13 @@ inline std::vector<CommonPrefixSearchResult> common_prefix_search(
 
 struct Command
 {
+    enum Type { Arc = 0, Jmp = 1 };
+
+    Type        type;
     size_t      id = -1;
     size_t      next_id = -1;
+
+    // Arc
     bool        final;
     bool        last_transition;
     char        arc;
@@ -446,24 +450,13 @@ struct Command
     Outputs     state_outputs;
     int         jump_offset;
 
-    union Ope
-    {
-        struct {
-            unsigned final : 1;
-            unsigned last_transition : 1;
-            unsigned has_output : 1;
-            unsigned has_state_outputs : 1;
-            unsigned has_jump_offset : 1;
-            unsigned is_jump_offset_zero : 1;
-            unsigned reserved : 2;
-        } bits;
+    // Jmp
+    std::vector<int16_t> arc_jump_offsets;
 
-        uint8_t byte;
-    };
-
-    Ope ope() const
+    uint8_t ope_arc() const
     {
-        return Ope {
+        Ope ope = {
+            Command::Arc,
             final,
             last_transition,
             !output.empty(),
@@ -471,12 +464,16 @@ struct Command
             jump_offset != -1,
             jump_offset == 0
         };
+        return ope.byte;
     }
 
-    bool has_state_outputs() const
+    uint8_t ope_jmp() const
     {
-        // NOTE: for better state_outputs compression
-        return !(state_outputs.empty() || (state_outputs.size() == 1 && state_outputs.front().empty()));
+        Ope ope = {
+            Command::Jmp,
+            0
+        };
+        return ope.byte;
     }
 
     size_t byte_code_size(bool need_jump_offset = true) const
@@ -484,29 +481,35 @@ struct Command
         // ope
         auto size = sizeof(uint8_t);
 
-        // arc
-        size += sizeof(uint8_t);
-
-        // output
-        if (!output.empty()) {
+        if (type == Arc) {
+            // arc
             size += sizeof(uint8_t);
-            size += output.length();
-        }
 
-        // state_outputs
-        if (has_state_outputs()) {
-            size += sizeof(uint8_t);
-            for (const auto& state_output : state_outputs) {
+            // output
+            if (!output.empty()) {
                 size += sizeof(uint8_t);
-                size += state_output.length();
+                size += output.length();
             }
-        }
 
-        // jump_offset
-        if (need_jump_offset) {
-            if (jump_offset > 0) {
-                size += sizeof(uint32_t);
+            // state_outputs
+            if (has_state_outputs()) {
+                size += sizeof(uint8_t);
+                for (const auto& state_output : state_outputs) {
+                    size += sizeof(uint8_t);
+                    size += state_output.length();
+                }
             }
+
+            // jump_offset
+            if (need_jump_offset) {
+                if (jump_offset > 0) {
+                    size += sizeof(uint32_t);
+                }
+            }
+        } else { // type == Jmp
+            // arc_jump_offsets
+            auto table_size = sizeof(int16_t) * arc_jump_offsets.size();
+            size += table_size;
         }
 
         return size;
@@ -514,109 +517,163 @@ struct Command
 
     std::vector<char> write_byte_code() const
     {
-        std::vector<char> bytes;
+        std::vector<char> byte_code;
 
-        // ope
-        bytes.push_back(ope().byte);
+        if (type == Arc) {
+            // ope
+            byte_code.push_back(ope_arc());
 
-        // arc
-        bytes.push_back(arc);
+            // arc
+            byte_code.push_back(arc);
 
-        // output
-        if (!output.empty()) {
-            bytes.push_back((char)output.length());
-            for (auto ch: output) {
-                bytes.push_back(ch);
+            // output
+            if (!output.empty()) {
+                byte_code.push_back((char)output.length());
+                for (auto ch: output) {
+                    byte_code.push_back(ch);
+                }
             }
-        }
 
-        // state_outputs
-        if (has_state_outputs()) {
-            bytes.push_back((char)state_outputs.size());
-            for (const auto& state_output : state_outputs) {
-                bytes.push_back((char)state_output.length());
-                bytes.insert(bytes.end(), state_output.data(), state_output.data() + state_output.length());
+            // state_outputs
+            if (has_state_outputs()) {
+                byte_code.push_back((char)state_outputs.size());
+                for (const auto& state_output : state_outputs) {
+                    byte_code.push_back((char)state_output.length());
+                    byte_code.insert(byte_code.end(), state_output.data(), state_output.data() + state_output.length());
+                }
             }
+
+            // jump_offset
+            if (jump_offset > 0) {
+                auto data = (uint32_t)jump_offset;
+                const char* p = (const char*)&data;
+                byte_code.insert(byte_code.end(), p, p + sizeof(data));
+            }
+        } else { // type == Jmp
+            // ope
+            byte_code.push_back(ope_jmp());
+
+            // arc_jump_offsets
+            const char* p = (const char*)arc_jump_offsets.data();
+            auto table_size = sizeof(int16_t) * arc_jump_offsets.size();
+            byte_code.insert(byte_code.end(), p, p + table_size);
         }
 
-        // jump_offset
-        if (jump_offset > 0) {
-            auto data = (uint32_t)jump_offset;
-            const char* p = (const char*)&data;
-            bytes.insert(bytes.end(), p, p + sizeof(data));
-        }
-
-        assert(bytes.size() == byte_code_size());
-        return bytes;
+        assert(byte_code.size() == byte_code_size());
+        return byte_code;
     }
 
-    size_t read_byte_code(const std::vector<char>& bytes, size_t off)
+    size_t read_byte_code(const char* byte_code, size_t pos)
     {
         Ope ope;
-        ope.byte = bytes[off++];
+        ope.byte = byte_code[pos++];
+        type = ope.type();
 
-        final = ope.bits.final;
-        last_transition = ope.bits.last_transition;
+        if (type == Arc) {
+            final = ope.arc.final;
+            last_transition = ope.arc.last_transition;
 
-        // arc
-        arc = bytes[off++];
+            // arc
+            arc = byte_code[pos++];
 
-        // output
-        if (ope.bits.has_output) {
-            size_t output_len = bytes[off++];
-            output.assign(bytes.data() + off, output_len);
-            off += output_len;
-        }
-
-        // state_outputs
-        if (ope.bits.has_state_outputs) {
-            state_outputs.resize(bytes[off++]);
-            for (auto i = 0u; i < state_outputs.size(); i++) {
-                size_t state_output_len = bytes[off++];
-                state_outputs[i].assign(bytes.data() + off, state_output_len);
-                off += state_output_len;
+            // output
+            if (ope.arc.has_output) {
+                size_t output_len = byte_code[pos++];
+                output.assign(byte_code + pos, output_len);
+                pos += output_len;
             }
-        }
 
-        // jump_offset
-        jump_offset = -1;
-        if (ope.bits.has_jump_offset) {
-            if (ope.bits.is_jump_offset_zero) {
-                jump_offset = 0;
-            } else {
-                uint32_t data;
-                memcpy(&data, bytes.data() + off, sizeof(data));
-                off += sizeof(data);
-                jump_offset = data;
+            // state_outputs
+            if (ope.arc.has_state_outputs) {
+                state_outputs.resize(byte_code[pos++]);
+                for (auto i = 0u; i < state_outputs.size(); i++) {
+                    size_t state_output_len = byte_code[pos++];
+                    state_outputs[i].assign(byte_code + pos, state_output_len);
+                    pos += state_output_len;
+                }
             }
+
+            // jump_offset
+            jump_offset = -1;
+            if (ope.arc.has_jump_offset) {
+                if (ope.arc.is_jump_offset_zero) {
+                    jump_offset = 0;
+                } else {
+                    uint32_t data;
+                    memcpy(&data, byte_code + pos, sizeof(data));
+                    pos += sizeof(data);
+                    jump_offset = data;
+                }
+            }
+        } else if (type == Jmp) {
+            // arc_jump_offsets
+            arc_jump_offsets.resize(256);
+            auto table_size = sizeof(int16_t) * 256;
+            memcpy(arc_jump_offsets.data(), byte_code + pos, table_size);
+            pos += table_size;
         }
 
-        return off;
+        return pos;
     }
 
     void print(std::ostream& os) const
     {
-        os << (id == -1 ? "" : std::to_string(id)) << "\t";
-        os << (next_id == -1 ? "" : std::to_string(next_id)) << "\t";
-        os << arc << "\t";
-        os << last_transition << "\t";
-        os << final << "\t";
-        os << output << "\t";
-        os << join(state_outputs, "/") << "\t";
-        os << (int)jump_offset << "\t";
-        os << byte_code_size() << std::endl;
+        if (type == Command::Arc) {
+            os << "Arc" << "\t";
+            os << byte_code_size() << "\t";
+            os << (id == -1 ? "" : std::to_string(id)) << "\t";
+            os << (next_id == -1 ? "" : std::to_string(next_id)) << "\t";
+            os << (int)(uint8_t)arc << "\t";
+            os << last_transition << "\t";
+            os << final << "\t";
+            os << output << "\t";
+            os << join(state_outputs, "/") << "\t";
+            os << (int)jump_offset << std::endl;
+        } else { // Jmp
+            os << "Jmp" << "\t";
+            os << byte_code_size() << "\t";
+            os << (id == -1 ? "" : std::to_string(id)) << std::endl;
+        }
+    }
+
+private:
+    union Ope {
+        struct {
+            unsigned tag : 2;
+            unsigned final : 1;
+            unsigned last_transition : 1;
+            unsigned has_output : 1;
+            unsigned has_state_outputs : 1;
+            unsigned has_jump_offset : 1;
+            unsigned is_jump_offset_zero : 1;
+        } arc;
+
+        struct {
+            unsigned tag : 2;
+            unsigned reserve : 6;
+        } jmp;
+
+        uint8_t byte;
+
+        Type type() const { return (Type)(byte & 0x3); }
+    };
+
+    // NOTE: for better state_outputs compression
+    bool has_state_outputs() const
+    {
+        return !(state_outputs.empty() || (state_outputs.size() == 1 && state_outputs.front().empty()));
     }
 };
 
 inline size_t compile_core(
     std::shared_ptr<State> state,
     std::list<Command>&    commands,
-    std::vector<size_t>&   offsets,
+    std::vector<size_t>&   state_positions,
     size_t                 position)
 {
     assert(!state->transitions.empty());
 
-    if (offsets[state->id]) {
+    if (state_positions[state->id]) {
         return position;
     }
 
@@ -631,9 +688,11 @@ inline size_t compile_core(
         auto next_state = trans.state;
 
         if (!next_state->transitions.empty()) {
-            position = compile_core(next_state, commands, offsets, position);
+            position = compile_core(next_state, commands, state_positions, position);
         }
     }
+
+    std::vector<int16_t> arc_positions(256, -1);
 
     for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
         auto arc = arcs[i];
@@ -641,6 +700,7 @@ inline size_t compile_core(
         auto next_state = trans.state;
 
         Command cmd;
+        cmd.type = Command::Arc;
         cmd.id = state->id;
         cmd.next_id = next_state->id;
         cmd.final = next_state->final;
@@ -651,67 +711,91 @@ inline size_t compile_core(
         if (next_state->transitions.empty()) {
             cmd.jump_offset = -1;
         } else {
-            auto offset = offsets[next_state->id];
-            cmd.jump_offset = position - offset;
+            cmd.jump_offset = position - state_positions[next_state->id];
+        }
+        commands.push_front(cmd);
+
+        position += cmd.byte_code_size();
+        arc_positions[(uint8_t)arc] = position;
+    }
+
+    if (arcs.size() >= 16) {
+        Command cmd;
+        cmd.type = Command::Jmp;
+        cmd.id = state->id;
+        cmd.next_id = -1;
+        cmd.arc_jump_offsets.assign(arc_positions.size(), -1);
+        for (auto i = 0u; i < arc_positions.size(); i++) {
+            if (arc_positions[i] != -1) {
+                cmd.arc_jump_offsets[i] = position - arc_positions[i];
+            }
         }
         commands.push_front(cmd);
 
         position += cmd.byte_code_size();
     }
 
-    offsets[state->id] = position;;
+    state_positions[state->id] = position;;
     return position;
 }
 
 inline std::vector<char> compile(std::shared_ptr<State> state)
 {
+    std::vector<char> byte_code;
     std::list<Command> commands;
-    std::vector<size_t> offsets(state->id + 1);
-    compile_core(state, commands, offsets, 0);
-    std::vector<char> byte;
+    std::vector<size_t> state_positions(state->id + 1);
+    compile_core(state, commands, state_positions, 0);
     for (const auto& cmd: commands) {
         const auto& b = cmd.write_byte_code();
-        byte.insert(byte.end(), b.begin(), b.end());
+        byte_code.insert(byte_code.end(), b.begin(), b.end());
     }
-    return byte;
+    return byte_code;
 }
 
-inline Outputs exact_match_search(
-    const std::vector<char>& bytes, const std::string s)
+inline Outputs exact_match_search(const char* byte_code, size_t size, const std::string s)
 {
     std::string prefix;
-    size_t off = 0;
+    size_t pos = 0;
 
     size_t i = 0;
-    while (i < s.size()) {
+    while (i < s.size() && pos < size) {
         auto arc = s[i];
 
         Command cmd;
-        off = cmd.read_byte_code(bytes, off);
+        pos = cmd.read_byte_code(byte_code, pos);
+        if (cmd.type == Command::Arc) {
+            //std::cout << arc << ":" << cmd.arc << std::endl;
 
-        if (cmd.arc == arc) {
-            prefix += cmd.output;
-            i++;
-            if (cmd.final && i == s.size()) {
-                // NOTE: for better state_outputs compression
-                Outputs ret;
-                if (!cmd.state_outputs.empty()) {
-                    for (const auto& suffix : cmd.state_outputs) {
-                        ret.push_back(prefix + suffix);
+            if (cmd.arc == arc) {
+                prefix += cmd.output;
+                i++;
+                if (cmd.final && i == s.size()) {
+                    // NOTE: for better state_outputs compression
+                    Outputs ret;
+                    if (!cmd.state_outputs.empty()) {
+                        for (const auto& suffix : cmd.state_outputs) {
+                            ret.push_back(prefix + suffix);
+                        }
+                    } else if (!prefix.empty()) {
+                        ret.push_back(prefix);
                     }
-                } else if (!prefix.empty()) {
-                    ret.push_back(prefix);
+                    return ret;
                 }
-                return ret;
+                if (cmd.jump_offset == -1) {
+                    return Outputs();
+                }
+                pos += cmd.jump_offset;
+            } else {
+                if (cmd.last_transition) {
+                    return Outputs();
+                }
             }
-            if (cmd.jump_offset == -1) {
+        } else { // Jmp
+            auto off = cmd.arc_jump_offsets[(uint8_t)arc];
+            if (off == -1) {
                 return Outputs();
             }
-            off += cmd.jump_offset;
-        } else {
-            if (cmd.last_transition) {
-                return Outputs();
-            }
+            pos += off;
         }
     }
 
@@ -719,44 +803,46 @@ inline Outputs exact_match_search(
 }
 
 inline std::vector<CommonPrefixSearchResult> common_prefix_search(
-    const std::vector<char>& bytes, const std::string s)
+    const char* byte_code, size_t size, const std::string s)
 {
     std::vector<CommonPrefixSearchResult> ret;
     std::string prefix;
-    size_t off = 0;
+    size_t pos = 0;
 
     size_t i = 0;
-    while (i < s.size()) {
+    while (i < s.size() && pos < size) {
         auto arc = s[i];
 
         Command cmd;
-        off = cmd.read_byte_code(bytes, off);
-
-        if (cmd.arc == arc) {
-            prefix += cmd.output;
-            i++;
-            if (cmd.final) {
-                // NOTE: for better state_outputs compression
-                CommonPrefixSearchResult result;
-                result.length = i;
-                if (!cmd.state_outputs.empty()) {
-                    for (const auto& suffix : cmd.state_outputs) {
-                        result.outputs.push_back(prefix + suffix);
+        pos = cmd.read_byte_code(byte_code, pos);
+        if (cmd.type == Command::Arc) {
+            if (cmd.arc == arc) {
+                prefix += cmd.output;
+                i++;
+                if (cmd.final) {
+                    // NOTE: for better state_outputs compression
+                    CommonPrefixSearchResult result;
+                    result.length = i;
+                    if (!cmd.state_outputs.empty()) {
+                        for (const auto& suffix : cmd.state_outputs) {
+                            result.outputs.push_back(prefix + suffix);
+                        }
+                    } else if (!prefix.empty()) {
+                        result.outputs.push_back(prefix);
                     }
-                } else if (!prefix.empty()) {
-                    result.outputs.push_back(prefix);
+                    //return ret;
+                    ret.push_back(result);
                 }
-                //return ret;
-                ret.push_back(result);
+                if (cmd.jump_offset == -1) {
+                    return ret;
+                }
+                pos += cmd.jump_offset;
+            } else {
+                if (cmd.last_transition) {
+                    return ret;
+                }
             }
-            if (cmd.jump_offset == -1) {
-                return ret;
-            }
-            off += cmd.jump_offset;
-        } else {
-            if (cmd.last_transition) {
-                return ret;
-            }
+        } else { // Jmp
         }
     }
 
@@ -765,46 +851,48 @@ inline std::vector<CommonPrefixSearchResult> common_prefix_search(
 
 inline void print_header(std::ostream& os)
 {
-    os << "Pos" << "\t" << "JmpPos" << "\t" << "ID" << "\t" << "NextID" << "\t" << "Arc" << "\t" << "Last" << "\t" << "Final" << "\t" << "Output" << "\t" << "StOuts" << "\t" << "JmpOff" << "\t" << "Size" << std::endl;
-    os << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
+    os << "Ope" << "\t" << "Size" << "\t" << "ID" << "\t" << "NextID" << "\t" << "Arc" << "\t" << "Last" << "\t" << "Final" << "\t" << "Output" << "\t" << "StOuts" << "\t" << "JmpOff" << std::endl;
+    os << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
 }
 
 inline size_t print(std::shared_ptr<State> state, std::ostream& os)
 {
     std::list<Command> commands;
-    std::vector<size_t> offsets(state->id + 1);
-    compile_core(state, commands, offsets, 0);
+    std::vector<size_t> state_positions(state->id + 1);
+    compile_core(state, commands, state_positions, 0);
 
-    size_t off = 0;
+    size_t pos = 0;
     print_header(os);
     for (const auto& cmd: commands) {
-        os << off << "\t";
-        if (cmd.jump_offset == -1) {
-            os << "-" << "\t";
-        } else {
-            os << off + cmd.byte_code_size() + cmd.jump_offset << "\t";
-        }
         cmd.print(os);
-        off += cmd.byte_code_size();
+        pos += cmd.byte_code_size();
     }
     return commands.size();
 }
 
-inline size_t print(const std::vector<char>& bytes, std::ostream& os)
+inline size_t print(const char* byte_code, size_t size, std::ostream& os)
 {
     print_header(os);
     size_t count = 0;
-    size_t off = 0;
-    while (off < bytes.size()) {
-        os << off << "\t";
+    size_t pos = 0;
+    while (pos < size) {
         Command cmd;
-        off = cmd.read_byte_code(bytes, off);
-        if (cmd.jump_offset == -1) {
-            os << "-" << "\t";
-        } else {
-            os << off + cmd.jump_offset << "\t";
-        }
+        pos = cmd.read_byte_code(byte_code, pos);
         cmd.print(os);
+        count++;
+    }
+    return count;
+}
+
+template <typename Fn>
+inline size_t scan_byte_code(const char* byte_code, size_t size, Fn fn)
+{
+    size_t count = 0;
+    size_t pos = 0;
+    while (pos < size) {
+        Command cmd;
+        pos = cmd.read_byte_code(byte_code, pos);
+        fn(cmd);
         count++;
     }
     return count;
