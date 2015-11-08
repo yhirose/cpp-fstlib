@@ -40,7 +40,8 @@ inline std::string join(const Cont& cont, const char* delm)
 
 namespace fst {
 
-typedef std::vector<std::string> Outputs;
+typedef std::string Output;
+typedef std::vector<Output> Outputs;
 
 struct CommonPrefixSearchResult
 {
@@ -53,7 +54,7 @@ class State
 public:
     struct Transition {
         std::shared_ptr<State> state;
-        std::string            output;
+        Output                 output;
 
         bool operator==(const Transition& rhs) const {
             return state == rhs.state && output == rhs.output;
@@ -108,27 +109,27 @@ public:
         set_modified();
     }
 
-    const std::string& output(char arc)
+    const Output& output(char arc)
     {
         return transitions.at(arc).output;
     }
 
-    void set_output(char arc, const std::string& output)
+    void set_output(char arc, const Output& output)
     {
         const_cast<Transitions&>(transitions)[arc].output = output;
         set_modified();
     }
 
-    void push_to_state_outputs(const std::string& output)
+    void push_to_state_outputs(const Output& output)
     {
         const_cast<Outputs&>(state_outputs).push_back(output);
         set_modified();
     }
 
-    void prepend_suffix_to_state_outputs(const std::string& suffix)
+    void prepend_suffix_to_state_outputs(const Output& suffix)
     {
         for (auto& state_output : state_outputs) {
-            const_cast<std::string&>(state_output).insert(0, suffix);
+            const_cast<Output&>(state_output).insert(0, suffix);
         }
         set_modified();
     }
@@ -263,7 +264,7 @@ inline size_t get_prefix_length(const std::string& s1, const std::string& s2)
 };
 
 inline std::shared_ptr<State> make_state_machine(
-    const std::vector<std::pair<std::string, std::string>>& input)
+    const std::vector<std::pair<std::string, Output>>& input)
 {
     // State dictionary
     std::unordered_map<size_t, std::shared_ptr<State>> dictionary;
@@ -369,119 +370,52 @@ inline std::shared_ptr<State> make_state_machine(
     return find_minimized(temp_states[0], next_state);
 }
 
-inline Outputs exact_match_search(std::shared_ptr<State> state, const std::string s)
-{
-    std::string prefix;
+union Ope {
+    enum Type { Arc = 0, Jmp = 1 };
 
-    auto it = s.begin();
-    while (it != s.end()) {
-        auto arc = *it;
-        auto next_state = state->transition(arc);
-        if (!next_state) {
-            return Outputs();
-        }
-        prefix += state->output(arc);
-        state = next_state;
-        ++it;
-    }
-    if (!state->final || it != s.end()) {
-        return Outputs();
-    } else {
-        // NOTE: for better state_outputs compression
-        Outputs ret;
-        if (!state->state_outputs.empty()) {
-            for (const auto& suffix : state->state_outputs) {
-                ret.push_back(prefix + suffix);
-            }
-        } else if (!prefix.empty()) {
-            ret.push_back(prefix);
-        }
-        return ret;
-    }
-}
+    struct {
+        unsigned tag : 2;
+        unsigned final : 1;
+        unsigned last_transition : 1;
+        unsigned has_output : 1;
+        unsigned has_state_outputs : 1;
+        unsigned has_jump_offset : 1;
+        unsigned is_jump_offset_zero : 1;
+    } arc;
 
-inline std::vector<CommonPrefixSearchResult> common_prefix_search(
-    std::shared_ptr<State> state, const std::string s)
-{
-    std::vector<CommonPrefixSearchResult> ret;
-    std::string prefix;
+    struct {
+        unsigned tag : 2;
+        unsigned reserve : 6;
+    } jmp;
 
-    auto it = s.begin();
-    while (it != s.end()) {
-        auto arc = *it;
-        auto next_state = state->transition(arc);
-        if (!next_state) {
-            break;
-        }
-        if (next_state->final) {
-            // NOTE: for better state_outputs compression
-            CommonPrefixSearchResult result;
-            result.length = it - s.begin() + 1;
-            if (!next_state->state_outputs.empty()) {
-                for (const auto& suffix : next_state->state_outputs) {
-                    result.outputs.push_back(prefix + suffix);
-                }
-            } else if (!prefix.empty()) {
-                result.outputs.push_back(prefix);
-            }
-            ret.push_back(result);
-        }
-        prefix += state->output(arc);
-        state = next_state;
-        ++it;
-    }
+    uint8_t byte;
 
-    return ret;
-}
+    Type type() const { return (Type)(byte & 0x3); }
+};
 
 struct Command
 {
-    enum Type { Arc = 0, Jmp = 1 };
-
-    Type        type;
-    size_t      id = -1;
-    size_t      next_id = -1;
+    Ope::Type type;
+    size_t    id = -1;
+    size_t    next_id = -1;
 
     // Arc
-    bool        final;
-    bool        last_transition;
-    char        arc;
-    std::string output;
-    Outputs     state_outputs;
-    int         jump_offset;
+    bool      final;
+    bool      last_transition;
+    char      arc;
+    Output    output;
+    Outputs   state_outputs;
+    int       jump_offset;
 
     // Jmp
     std::vector<int16_t> arc_jump_offsets;
-
-    uint8_t ope_arc() const
-    {
-        Ope ope = {
-            Command::Arc,
-            final,
-            last_transition,
-            !output.empty(),
-            has_state_outputs(),
-            jump_offset != -1,
-            jump_offset == 0
-        };
-        return ope.byte;
-    }
-
-    uint8_t ope_jmp() const
-    {
-        Ope ope = {
-            Command::Jmp,
-            0
-        };
-        return ope.byte;
-    }
 
     size_t byte_code_size(bool need_jump_offset = true) const
     {
         // ope
         auto size = sizeof(uint8_t);
 
-        if (type == Arc) {
+        if (type == Ope::Arc) {
             // arc
             size += sizeof(uint8_t);
 
@@ -519,9 +453,18 @@ struct Command
     {
         std::vector<char> byte_code;
 
-        if (type == Arc) {
+        if (type == Ope::Arc) {
             // ope
-            byte_code.push_back(ope_arc());
+            Ope ope = {
+                Ope::Arc,
+                final,
+                last_transition,
+                !output.empty(),
+                has_state_outputs(),
+                jump_offset != -1,
+                jump_offset == 0
+            };
+            byte_code.push_back(ope.byte);
 
             // arc
             byte_code.push_back(arc);
@@ -551,7 +494,8 @@ struct Command
             }
         } else { // type == Jmp
             // ope
-            byte_code.push_back(ope_jmp());
+            Ope ope = { Ope::Jmp, 0 };
+            byte_code.push_back(ope.byte);
 
             // arc_jump_offsets
             const char* p = (const char*)arc_jump_offsets.data();
@@ -563,62 +507,9 @@ struct Command
         return byte_code;
     }
 
-    size_t read_byte_code(const char* byte_code, size_t pos)
-    {
-        Ope ope;
-        ope.byte = byte_code[pos++];
-        type = ope.type();
-
-        if (type == Arc) {
-            final = ope.arc.final;
-            last_transition = ope.arc.last_transition;
-
-            // arc
-            arc = byte_code[pos++];
-
-            // output
-            if (ope.arc.has_output) {
-                size_t output_len = byte_code[pos++];
-                output.assign(byte_code + pos, output_len);
-                pos += output_len;
-            }
-
-            // state_outputs
-            if (ope.arc.has_state_outputs) {
-                state_outputs.resize(byte_code[pos++]);
-                for (auto i = 0u; i < state_outputs.size(); i++) {
-                    size_t state_output_len = byte_code[pos++];
-                    state_outputs[i].assign(byte_code + pos, state_output_len);
-                    pos += state_output_len;
-                }
-            }
-
-            // jump_offset
-            jump_offset = -1;
-            if (ope.arc.has_jump_offset) {
-                if (ope.arc.is_jump_offset_zero) {
-                    jump_offset = 0;
-                } else {
-                    uint32_t data;
-                    memcpy(&data, byte_code + pos, sizeof(data));
-                    pos += sizeof(data);
-                    jump_offset = data;
-                }
-            }
-        } else if (type == Jmp) {
-            // arc_jump_offsets
-            arc_jump_offsets.resize(256);
-            auto table_size = sizeof(int16_t) * 256;
-            memcpy(arc_jump_offsets.data(), byte_code + pos, table_size);
-            pos += table_size;
-        }
-
-        return pos;
-    }
-
     void print(std::ostream& os) const
     {
-        if (type == Command::Arc) {
+        if (type == Ope::Arc) {
             os << "Arc" << "\t";
             os << byte_code_size() << "\t";
             os << (id == -1 ? "" : std::to_string(id)) << "\t";
@@ -637,27 +528,6 @@ struct Command
     }
 
 private:
-    union Ope {
-        struct {
-            unsigned tag : 2;
-            unsigned final : 1;
-            unsigned last_transition : 1;
-            unsigned has_output : 1;
-            unsigned has_state_outputs : 1;
-            unsigned has_jump_offset : 1;
-            unsigned is_jump_offset_zero : 1;
-        } arc;
-
-        struct {
-            unsigned tag : 2;
-            unsigned reserve : 6;
-        } jmp;
-
-        uint8_t byte;
-
-        Type type() const { return (Type)(byte & 0x3); }
-    };
-
     // NOTE: for better state_outputs compression
     bool has_state_outputs() const
     {
@@ -700,7 +570,7 @@ inline size_t compile_core(
         auto next_state = trans.state;
 
         Command cmd;
-        cmd.type = Command::Arc;
+        cmd.type = Ope::Arc;
         cmd.id = state->id;
         cmd.next_id = next_state->id;
         cmd.final = next_state->final;
@@ -721,7 +591,7 @@ inline size_t compile_core(
 
     if (arcs.size() >= 16) {
         Command cmd;
-        cmd.type = Command::Jmp;
+        cmd.type = Ope::Jmp;
         cmd.id = state->id;
         cmd.next_id = -1;
         cmd.arc_jump_offsets.assign(arc_positions.size(), -1);
@@ -752,101 +622,259 @@ inline std::vector<char> compile(std::shared_ptr<State> state)
     return byte_code;
 }
 
-inline Outputs exact_match_search(const char* byte_code, size_t size, const std::string s)
+inline std::vector<char> build(const std::vector<std::pair<std::string, Output>>& input)
 {
-    std::string prefix;
+    return compile(make_state_machine(input));
+}
+
+size_t read_byte_code_arc(
+    const char*  byte_code,
+    size_t       pos,
+    uint8_t&     arc,
+    size_t&      output_len,
+    const char*& output,
+    size_t&      state_outputs_size,
+    const char*& state_output,
+    size_t&      jump_offset)
+{
+    auto p = byte_code + pos;
+
+    Ope ope;
+    ope.byte = *p++;
+    assert(ope.type() == Ope::Arc);
+
+    // arc
+    arc = *p++;
+
+    // output
+    output_len = 0;
+    output = nullptr;
+    if (ope.arc.has_output) {
+        output_len = *p++;
+        output = p;
+        p += output_len;
+    }
+
+    // state_outputs
+    state_outputs_size = 0;
+    state_output = nullptr;
+    if (ope.arc.has_state_outputs) {
+        state_outputs_size = *p++;
+        state_output = p;
+        if (state_outputs_size == 1) {
+            auto len = *p++;
+            p += len;
+        } else {
+            for (auto i = 0u; i < state_outputs_size; i++) {
+                auto len = *p++;
+                p += len;
+            }
+        }
+    }
+
+    // jump_offset
+    jump_offset = -1;
+    if (ope.arc.has_jump_offset) {
+        if (ope.arc.is_jump_offset_zero) {
+            jump_offset = 0;
+        } else {
+            jump_offset = *(const uint32_t*)p;
+            p += sizeof(uint32_t);
+        }
+    }
+
+    return p - byte_code;
+}
+
+size_t read_byte_code_jmp(
+    const char*     byte_code,
+    size_t          pos,
+    const int16_t*& arc_jump_offsets)
+{
+    auto p = byte_code + pos;
+
+    Ope ope;
+    ope.byte = *p++;
+    assert(ope.type() == Ope::Jmp);
+
+    arc_jump_offsets = (const int16_t*)p;
+
+    // arc_jump_offsets
+    p += sizeof(int16_t) * 256;
+
+    return p - byte_code;
+}
+
+inline bool exact_match_search(
+    const char* byte_code, size_t size, const std::string& s, Outputs& outputs)
+{
+    outputs.clear();
+    Output prefix;
     size_t pos = 0;
 
     size_t i = 0;
     while (i < s.size() && pos < size) {
-        auto arc = s[i];
+        uint8_t arc = s[i];
 
-        Command cmd;
-        pos = cmd.read_byte_code(byte_code, pos);
-        if (cmd.type == Command::Arc) {
-            //std::cout << arc << ":" << cmd.arc << std::endl;
+        Ope ope;
+        ope.byte = *(byte_code + pos);
 
-            if (cmd.arc == arc) {
-                prefix += cmd.output;
+        if (ope.type() == Ope::Arc) {
+            uint8_t     arc2;
+            size_t      output_len;
+            const char* output;
+            size_t      state_outputs_size;
+            const char* state_output;
+            size_t      jump_offset;
+
+            pos = read_byte_code_arc(
+                byte_code, pos,
+                arc2, output_len,
+                output, state_outputs_size,
+                state_output,
+                jump_offset);
+
+            if (arc2 == arc) {
+                 if (output_len) {
+                     prefix.append(output, output_len);;
+                 }
+
                 i++;
-                if (cmd.final && i == s.size()) {
+                if (ope.arc.final && i == s.size()) {
                     // NOTE: for better state_outputs compression
-                    Outputs ret;
-                    if (!cmd.state_outputs.empty()) {
-                        for (const auto& suffix : cmd.state_outputs) {
-                            ret.push_back(prefix + suffix);
+                    if (state_outputs_size) {
+                        if (state_outputs_size == 1) {
+                            size_t len = *state_output++;
+                            auto suffix = Output(state_output, len);
+                            outputs.push_back(prefix + suffix);
+                        } else {
+                            for (auto i = 0u; i < state_outputs_size; i++) {
+                                size_t len = *state_output++;
+                                auto suffix = Output(state_output, len);
+                                outputs.push_back(prefix + suffix);
+                                state_output += len;
+                            }
                         }
                     } else if (!prefix.empty()) {
-                        ret.push_back(prefix);
+                        outputs.push_back(prefix);
                     }
-                    return ret;
+                    return true;
                 }
-                if (cmd.jump_offset == -1) {
-                    return Outputs();
+
+                if (jump_offset == -1) {
+                    return false;
                 }
-                pos += cmd.jump_offset;
+                pos += jump_offset;
+
             } else {
-                if (cmd.last_transition) {
-                    return Outputs();
+                if (ope.arc.last_transition) {
+                    return false;
                 }
             }
         } else { // Jmp
-            auto off = cmd.arc_jump_offsets[(uint8_t)arc];
+            const int16_t* arc_jump_offsets;
+            pos = read_byte_code_jmp(byte_code, pos, arc_jump_offsets);
+
+            auto off = arc_jump_offsets[arc];
             if (off == -1) {
-                return Outputs();
+                return false;
             }
             pos += off;
         }
     }
 
-    return Outputs();
+    return false;
+}
+
+inline Outputs exact_match_search(const std::vector<char>& byte_code, const std::string& s)
+{
+    Outputs outputs;
+    exact_match_search(byte_code.data(), byte_code.size(), s, outputs);
+    return outputs;
 }
 
 inline std::vector<CommonPrefixSearchResult> common_prefix_search(
-    const char* byte_code, size_t size, const std::string s)
+    const char* byte_code, size_t size, const std::string& s)
 {
     std::vector<CommonPrefixSearchResult> ret;
-    std::string prefix;
+    Output prefix;
     size_t pos = 0;
 
     size_t i = 0;
     while (i < s.size() && pos < size) {
-        auto arc = s[i];
+        uint8_t arc = s[i];
 
-        Command cmd;
-        pos = cmd.read_byte_code(byte_code, pos);
-        if (cmd.type == Command::Arc) {
-            if (cmd.arc == arc) {
-                prefix += cmd.output;
+        Ope ope;
+        ope.byte = *(byte_code + pos);
+
+        if (ope.type() == Ope::Arc) {
+            uint8_t     arc2;
+            size_t      output_len;
+            const char* output;
+            size_t      state_outputs_size;
+            const char* state_output;
+            size_t      jump_offset;
+
+            pos = read_byte_code_arc(
+                byte_code, pos,
+                arc2, output_len,
+                output, state_outputs_size,
+                state_output,
+                jump_offset);
+
+            if (arc2 == arc) {
+                prefix.append(output, output_len);
                 i++;
-                if (cmd.final) {
+                if (ope.arc.final) {
                     // NOTE: for better state_outputs compression
                     CommonPrefixSearchResult result;
                     result.length = i;
-                    if (!cmd.state_outputs.empty()) {
-                        for (const auto& suffix : cmd.state_outputs) {
+                    if (state_outputs_size) {
+                        if (state_outputs_size == 1) {
+                            size_t len = *state_output++;
+                            auto suffix = Output(state_output, len);
                             result.outputs.push_back(prefix + suffix);
+                        } else {
+                            for (auto i = 0u; i < state_outputs_size; i++) {
+                                size_t len = *state_output++;
+                                auto suffix = Output(state_output, len);
+                                result.outputs.push_back(prefix + suffix);
+                                state_output += len;
+                            }
                         }
                     } else if (!prefix.empty()) {
                         result.outputs.push_back(prefix);
                     }
-                    //return ret;
                     ret.push_back(result);
                 }
-                if (cmd.jump_offset == -1) {
+                if (jump_offset == -1) {
                     return ret;
                 }
-                pos += cmd.jump_offset;
+                pos += jump_offset;
             } else {
-                if (cmd.last_transition) {
+                if (ope.arc.last_transition) {
                     return ret;
                 }
             }
         } else { // Jmp
+            const int16_t* arc_jump_offsets;
+            pos = read_byte_code_jmp(byte_code, pos, arc_jump_offsets);
+
+            auto off = arc_jump_offsets[arc];
+            if (off == -1) {
+                return ret;
+            }
+            pos += off;
         }
     }
 
     return ret;
+}
+
+inline std::vector<CommonPrefixSearchResult> common_prefix_search(
+    const std::vector<char>& byte_code, const std::string& s)
+{
+    return common_prefix_search(byte_code.data(), byte_code.size(), s);
 }
 
 inline void print_header(std::ostream& os)
@@ -868,34 +896,6 @@ inline size_t print(std::shared_ptr<State> state, std::ostream& os)
         pos += cmd.byte_code_size();
     }
     return commands.size();
-}
-
-inline size_t print(const char* byte_code, size_t size, std::ostream& os)
-{
-    print_header(os);
-    size_t count = 0;
-    size_t pos = 0;
-    while (pos < size) {
-        Command cmd;
-        pos = cmd.read_byte_code(byte_code, pos);
-        cmd.print(os);
-        count++;
-    }
-    return count;
-}
-
-template <typename Fn>
-inline size_t scan_byte_code(const char* byte_code, size_t size, Fn fn)
-{
-    size_t count = 0;
-    size_t pos = 0;
-    while (pos < size) {
-        Command cmd;
-        pos = cmd.read_byte_code(byte_code, pos);
-        fn(cmd);
-        count++;
-    }
-    return count;
 }
 
 } // namespace fst

@@ -16,7 +16,6 @@ void usage()
 
     dot         DictionaryFile             - convert to dot format
     assembly    DictionaryFile             - convert to assembly format
-    dump        FstFile                    - dump byte code in assembly format
 )";
 }
 
@@ -91,12 +90,12 @@ int main(int argc, const char** argv)
             string line;
             while (getline(cin, line)) {
                 if (cmd == "search") {
-                    auto outputs = fst::exact_match_search(byte_code.data(), byte_code.size(), line);
+                    auto outputs = fst::exact_match_search(byte_code, line);
                     for (const auto& item : outputs) {
                         cout << item << endl;
                     }
                 } else { // "prefix"
-                    auto results = fst::common_prefix_search(byte_code.data(), byte_code.size(), line);
+                    auto results = fst::common_prefix_search(byte_code, line);
                     for (const auto& result : results) {
                         cout << "length: " << result.length << endl;
                         for (const auto& item : result.outputs) {
@@ -124,15 +123,6 @@ int main(int argc, const char** argv)
             auto initial_state = fst::make_state_machine(load_input(fin));
             fst::print(initial_state, cout);
 
-        } else if (cmd == "dump") {
-            if (argi >= argc) { usage(); return 1; }
-
-            ifstream fin(argv[argi++], ios_base::binary);
-            if (!fin) { return 1; }
-
-            auto byte_code = load_byte_code(fin);
-            fst::print(byte_code.data(), byte_code.size(), cout);
-
         } else if (cmd == "test") {
             if (argi >= argc) { usage(); return 1; }
 
@@ -152,13 +142,9 @@ int main(int argc, const char** argv)
 
             cerr << "# test all words..." << endl;
             for (const auto& item: input) {
-                auto results = fst::exact_match_search(initial_state, item.first);
+                auto results = fst::exact_match_search(byte_code, item.first);
                 if (results.empty()) {
-                    cout << item.first << ": NG (state machine)" << endl;
-                }
-                results = fst::exact_match_search(byte_code.data(), byte_code.size(), item.first);
-                if (results.empty()) {
-                    cout << item.first << ": NG (byte code)" << endl;
+                    cout << item.first << ": NG" << endl;
                 }
             }
         } else {
