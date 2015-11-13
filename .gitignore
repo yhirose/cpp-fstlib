@@ -27,6 +27,7 @@
 *.out
 *.app
 
+*.swp
 build/
 Debug/
 Release/
@@ -34,3 +35,5 @@ tags
 *.*sdf
 *.user
 .vs/
+out/
+sample/
