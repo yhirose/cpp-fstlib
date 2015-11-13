@@ -371,7 +371,7 @@ inline std::shared_ptr<State> make_state_machine(
 }
 
 union Ope {
-    enum Type { Arc = 0, Jmp = 1 };
+    enum Type { Arc = 0, Jmp };
 
     struct {
         unsigned tag : 2;
@@ -385,7 +385,8 @@ union Ope {
 
     struct {
         unsigned tag : 2;
-        unsigned reserve : 6;
+        unsigned need_2byte : 1;
+        unsigned reserve : 5;
     } jmp;
 
     uint8_t byte;
@@ -408,7 +409,7 @@ struct Command
     int       jump_offset;
 
     // Jmp
-    std::vector<int16_t> arc_jump_offsets;
+    std::vector<uint16_t> arc_jump_offsets;
 
     size_t byte_code_size(bool need_jump_offset = true) const
     {
@@ -442,8 +443,18 @@ struct Command
             }
         } else { // type == Jmp
             // arc_jump_offsets
-            auto table_size = sizeof(int16_t) * arc_jump_offsets.size();
-            size += table_size;
+            bool need_2byte = false;
+            for (int16_t offset : arc_jump_offsets) {
+                if (offset != -1 && offset >= 0xff) {
+                    need_2byte = true;
+                    break;
+                }
+            }
+            if (need_2byte) {
+                size += sizeof(uint16_t) * 256;
+            } else {
+                size += sizeof(uint8_t) * 256;
+            }
         }
 
         return size;
@@ -493,14 +504,28 @@ struct Command
                 byte_code.insert(byte_code.end(), p, p + sizeof(data));
             }
         } else { // type == Jmp
+            bool need_2byte = false;
+            for (int16_t offset : arc_jump_offsets) {
+                if (offset != -1 && offset >= 0xff) {
+                    need_2byte = true;
+                    break;
+                }
+            }
+
             // ope
-            Ope ope = { Ope::Jmp, 0 };
+            Ope ope = { Ope::Jmp, need_2byte, 0 };
             byte_code.push_back(ope.byte);
 
             // arc_jump_offsets
-            const char* p = (const char*)arc_jump_offsets.data();
-            auto table_size = sizeof(int16_t) * arc_jump_offsets.size();
-            byte_code.insert(byte_code.end(), p, p + table_size);
+            if (need_2byte) {
+                const char* p = (const char*)arc_jump_offsets.data();
+                auto table_size = sizeof(uint16_t) * 256;
+                byte_code.insert(byte_code.end(), p, p + table_size);
+            } else {
+                for (auto offset : arc_jump_offsets) {
+                    byte_code.push_back(offset);
+                }
+            }
         }
 
         assert(byte_code.size() == byte_code_size());
@@ -562,7 +587,7 @@ inline size_t compile_core(
         }
     }
 
-    std::vector<int16_t> arc_positions(256, -1);
+    std::vector<size_t> arc_positions(256, -1);
 
     for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
         auto arc = arcs[i];
@@ -594,10 +619,11 @@ inline size_t compile_core(
         cmd.type = Ope::Jmp;
         cmd.id = state->id;
         cmd.next_id = -1;
-        cmd.arc_jump_offsets.assign(arc_positions.size(), -1);
-        for (auto i = 0u; i < arc_positions.size(); i++) {
+        cmd.arc_jump_offsets.assign(256, -1);
+        for (auto i = 0; i < 256; i++) {
             if (arc_positions[i] != -1) {
-                cmd.arc_jump_offsets[i] = position - arc_positions[i];
+                auto offset = position - arc_positions[i];
+                cmd.arc_jump_offsets[i] = offset;
             }
         }
         commands.push_front(cmd);
@@ -627,29 +653,19 @@ inline std::vector<char> build(const std::vector<std::pair<std::string, Output>>
     return compile(make_state_machine(input));
 }
 
-size_t read_byte_code_arc(
-    const char*  byte_code,
-    size_t       pos,
-    uint8_t&     arc,
+inline const char* read_byte_code_arc(
+    uint8_t      ope,
+    const char*  p,
     size_t&      output_len,
     const char*& output,
     size_t&      state_outputs_size,
     const char*& state_output,
     size_t&      jump_offset)
 {
-    auto p = byte_code + pos;
-
-    Ope ope;
-    ope.byte = *p++;
-    assert(ope.type() == Ope::Arc);
-
-    // arc
-    arc = *p++;
-
     // output
     output_len = 0;
     output = nullptr;
-    if (ope.arc.has_output) {
+    if (ope & 0x10) { // has_output
         output_len = *p++;
         output = p;
         p += output_len;
@@ -658,24 +674,22 @@ size_t read_byte_code_arc(
     // state_outputs
     state_outputs_size = 0;
     state_output = nullptr;
-    if (ope.arc.has_state_outputs) {
+    if (ope & 0x20) { // has_state_outputs
         state_outputs_size = *p++;
         state_output = p;
         if (state_outputs_size == 1) {
-            auto len = *p++;
-            p += len;
+            p += 1 + *p;
         } else {
             for (auto i = 0u; i < state_outputs_size; i++) {
-                auto len = *p++;
-                p += len;
+                p += 1 + *p;
             }
         }
     }
 
     // jump_offset
     jump_offset = -1;
-    if (ope.arc.has_jump_offset) {
-        if (ope.arc.is_jump_offset_zero) {
+    if (ope & 0x40) { // has_jump_offset
+        if (ope & 0x80) { // is_jump_offset_zero
             jump_offset = 0;
         } else {
             jump_offset = *(const uint32_t*)p;
@@ -683,80 +697,85 @@ size_t read_byte_code_arc(
         }
     }
 
-    return p - byte_code;
+    return p;
 }
 
-size_t read_byte_code_jmp(
-    const char*     byte_code,
-    size_t          pos,
-    const int16_t*& arc_jump_offsets)
+inline const char* read_byte_code_jmp(
+    uint8_t      ope,
+    uint8_t      arc,
+    const char*  p,
+    size_t&      jump_offset)
 {
-    auto p = byte_code + pos;
-
-    Ope ope;
-    ope.byte = *p++;
-    assert(ope.type() == Ope::Jmp);
-
-    arc_jump_offsets = (const int16_t*)p;
-
-    // arc_jump_offsets
-    p += sizeof(int16_t) * 256;
-
-    return p - byte_code;
+    if (ope & 0x04) { // need_2byte
+        auto table = (const uint16_t*)p;
+        jump_offset = table[arc];
+        p += 512;
+    } else {
+        auto table = (const uint8_t*)p;
+        jump_offset = table[arc];
+        p += 256;
+    }
+    return p;
 }
 
 inline bool exact_match_search(
     const char* byte_code, size_t size, const std::string& s, Outputs& outputs)
 {
-    outputs.clear();
-    Output prefix;
-    size_t pos = 0;
+    char prefix[BUFSIZ];
+    size_t prefix_len = 0;
 
-    size_t i = 0;
-    while (i < s.size() && pos < size) {
-        uint8_t arc = s[i];
+    auto p = byte_code;
+    auto end = byte_code + size;
+    auto pstr = s.c_str();
 
-        Ope ope;
-        ope.byte = *(byte_code + pos);
+    while (*pstr && p < end) {
+        uint8_t arc = *pstr;
+        auto ope = *p++;
 
-        if (ope.type() == Ope::Arc) {
-            uint8_t     arc2;
+        if ((ope & 0x03) == Ope::Arc) {
+            // arc
+            uint8_t arc2 = *p++;
+
             size_t      output_len;
             const char* output;
             size_t      state_outputs_size;
             const char* state_output;
             size_t      jump_offset;
-
-            pos = read_byte_code_arc(
-                byte_code, pos,
-                arc2, output_len,
-                output, state_outputs_size,
-                state_output,
+            p = read_byte_code_arc(
+                ope, p,
+                output_len, output,
+                state_outputs_size, state_output,
                 jump_offset);
 
             if (arc2 == arc) {
-                 if (output_len) {
-                     prefix.append(output, output_len);;
-                 }
+                if (output_len == 0) {
+                    ;
+                } else if (output_len == 1) {
+                    prefix[prefix_len++] = *output;
+                } else {
+                    memcpy(&prefix[prefix_len], output, output_len);
+                    prefix_len += output_len;
+                }
 
-                i++;
-                if (ope.arc.final && i == s.size()) {
+                pstr++;
+                if ((ope & 0x04) && *pstr == '\0') { // final
                     // NOTE: for better state_outputs compression
-                    if (state_outputs_size) {
-                        if (state_outputs_size == 1) {
-                            size_t len = *state_output++;
-                            auto suffix = Output(state_output, len);
-                            outputs.push_back(prefix + suffix);
-                        } else {
-                            for (auto i = 0u; i < state_outputs_size; i++) {
-                                size_t len = *state_output++;
-                                auto suffix = Output(state_output, len);
-                                outputs.push_back(prefix + suffix);
-                                state_output += len;
-                            }
+                    if (state_outputs_size == 0) {
+                        outputs.emplace_back(prefix, prefix_len);
+                    } else if (state_outputs_size == 1) {
+                        size_t state_output_len = *state_output++;
+                        memcpy(&prefix[prefix_len], state_output, state_output_len);
+                        prefix_len += state_output_len;
+                        outputs.emplace_back(prefix, prefix_len);
+                    } else {
+                        for (auto i = 0u; i < state_outputs_size; i++) {
+                            size_t state_output_len = *state_output++;
+                            char final_state_output[BUFSIZ];
+                            memcpy(&final_state_output[0], prefix, prefix_len);
+                            memcpy(&final_state_output[prefix_len], state_output, state_output_len);
+                            outputs.emplace_back(final_state_output, prefix_len + state_output_len);
+                            state_output += state_output_len;
                         }
-                    } else if (!prefix.empty()) {
-                        outputs.push_back(prefix);
                     }
                     return true;
                 }
@@ -764,22 +783,20 @@ inline bool exact_match_search(
                 if (jump_offset == -1) {
                     return false;
                 }
-                pos += jump_offset;
+                p += jump_offset;
 
             } else {
-                if (ope.arc.last_transition) {
+                if (ope & 0x08) { // last_transition
                     return false;
                 }
             }
         } else { // Jmp
-            const int16_t* arc_jump_offsets;
-            pos = read_byte_code_jmp(byte_code, pos, arc_jump_offsets);
-
-            auto off = arc_jump_offsets[arc];
-            if (off == -1) {
+            size_t jump_offset;
+            p = read_byte_code_jmp(ope, arc, p, jump_offset);
+            if (jump_offset == -1) {
                 return false;
             }
-            pos += off;
+            p += jump_offset;
         }
     }
 
@@ -797,40 +814,39 @@ inline size_t common_prefix_search(
     const char* byte_code, size_t size, const std::string& s,
     std::vector<CommonPrefixSearchResult>& ret)
 {
-    ret.clear();
-
     Output prefix;
-    size_t pos = 0;
 
-    size_t i = 0;
-    while (i < s.size() && pos < size) {
-        uint8_t arc = s[i];
+    auto p = byte_code;
+    auto end = byte_code + size;
+    auto pstr = s.c_str();
 
-        Ope ope;
-        ope.byte = *(byte_code + pos);
+    while (*pstr && p < end) {
+        uint8_t arc = *pstr;
+        auto ope = *p++;
 
-        if (ope.type() == Ope::Arc) {
-            uint8_t     arc2;
+        if ((ope & 0x03) == Ope::Arc) {
+            // arc
+            uint8_t arc2 = *p++;
+
             size_t      output_len;
             const char* output;
             size_t      state_outputs_size;
             const char* state_output;
             size_t      jump_offset;
-
-            pos = read_byte_code_arc(
-                byte_code, pos,
-                arc2, output_len,
-                output, state_outputs_size,
-                state_output,
+            p = read_byte_code_arc(
+                ope, p,
+                output_len, output,
+                state_outputs_size, state_output,
                 jump_offset);
 
             if (arc2 == arc) {
                 prefix.append(output, output_len);
-                i++;
-                if (ope.arc.final) {
+
+                pstr++;
+                if (ope & 0x04) { // final
                     // NOTE: for better state_outputs compression
                     CommonPrefixSearchResult result;
-                    result.length = i;
+                    result.length = (pstr - s.c_str());
                     if (state_outputs_size) {
                         if (state_outputs_size == 1) {
                             size_t len = *state_output++;
@@ -852,21 +868,19 @@ inline size_t common_prefix_search(
                 if (jump_offset == -1) {
                     return ret.size();
                 }
-                pos += jump_offset;
+                p += jump_offset;
             } else {
-                if (ope.arc.last_transition) {
+                if (ope & 0x08) { // last_transition
                     return ret.size();
                 }
             }
         } else { // Jmp
-            const int16_t* arc_jump_offsets;
-            pos = read_byte_code_jmp(byte_code, pos, arc_jump_offsets);
-
-            auto off = arc_jump_offsets[arc];
-            if (off == -1) {
-                return ret.size();
+            size_t jump_offset;
+            p = read_byte_code_jmp(ope, arc, p, jump_offset);
+            if (jump_offset == -1) {
+                return false;
             }
-            pos += off;
+            p += jump_offset;
         }
     }
 
