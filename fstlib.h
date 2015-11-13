@@ -793,10 +793,12 @@ inline Outputs exact_match_search(const std::vector<char>& byte_code, const std:
     return outputs;
 }
 
-inline std::vector<CommonPrefixSearchResult> common_prefix_search(
-    const char* byte_code, size_t size, const std::string& s)
+inline size_t common_prefix_search(
+    const char* byte_code, size_t size, const std::string& s,
+    std::vector<CommonPrefixSearchResult>& ret)
 {
-    std::vector<CommonPrefixSearchResult> ret;
+    ret.clear();
+
     Output prefix;
     size_t pos = 0;
 
@@ -848,12 +850,12 @@ inline std::vector<CommonPrefixSearchResult> common_prefix_search(
                     ret.push_back(result);
                 }
                 if (jump_offset == -1) {
-                    return ret;
+                    return ret.size();
                 }
                 pos += jump_offset;
             } else {
                 if (ope.arc.last_transition) {
-                    return ret;
+                    return ret.size();
                 }
             }
         } else { // Jmp
@@ -862,19 +864,21 @@ inline std::vector<CommonPrefixSearchResult> common_prefix_search(
 
             auto off = arc_jump_offsets[arc];
             if (off == -1) {
-                return ret;
+                return ret.size();
             }
             pos += off;
         }
     }
 
-    return ret;
+    return ret.size();
 }
 
 inline std::vector<CommonPrefixSearchResult> common_prefix_search(
     const std::vector<char>& byte_code, const std::string& s)
 {
-    return common_prefix_search(byte_code.data(), byte_code.size(), s);
+    std::vector<CommonPrefixSearchResult> ret;
+    common_prefix_search(byte_code.data(), byte_code.size(), s, ret);
+    return ret;
 }
 
 inline void print_header(std::ostream& os)
