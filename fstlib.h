@@ -424,23 +424,22 @@ inline std::shared_ptr<State> make_state_machine(
 
 union Ope {
     enum OpeType { Arc = 0, Jmp };
-    enum JumpOffsetType { None = 0, Zero, Current, Begin };
+    enum JumpOffsetType { JumpOffsetNone = 0, JumpOffsetZero, JumpOffsetCurrent, JumpOffsetBegin };
+    enum OutputType { OutputNone = 0, OutputOne, OutputTwo, OutputLength };
 
     struct {
-        unsigned tag : 2;
+        unsigned tag : 1;
         unsigned final : 1;
         unsigned last_transition : 1;
-        unsigned has_output : 1;
+        unsigned output_type : 2;
         unsigned has_state_outputs : 1;
-        //unsigned has_jump_offset : 1;
-        //unsigned is_jump_offset_zero : 1;
         unsigned jump_offset_type : 2;
     } arc;
 
     struct {
-        unsigned tag : 2;
+        unsigned tag : 1;
         unsigned need_2byte : 1;
-        unsigned reserve : 5;
+        unsigned reserve : 6;
     } jmp;
 
     uint8_t byte;
@@ -457,6 +456,7 @@ struct Command
     bool                  final;
     bool                  last_transition;
     char                  arc;
+    Ope::OutputType       output_type;
     Output                output;
     Outputs               state_outputs;
     Ope::JumpOffsetType   jump_offset_type;
@@ -478,10 +478,10 @@ struct Command
             }
 
             // output
-            if (!output.empty()) {
+            if (output.length() > 2) {
                 size += sizeof(uint8_t);
-                size += output.length();
             }
+            size += output.length();
 
             // state_outputs
             if (has_state_outputs()) {
@@ -494,7 +494,6 @@ struct Command
 
             // jump_offset
             if (jump_offset > 0) {
-                //size += sizeof(uint32_t);
                 size += vb_encode_value_length<uint32_t>(jump_offset);
             }
         } else { // type == Jmp
@@ -536,10 +535,8 @@ struct Command
                 Ope::Arc,
                 final,
                 last_transition,
-                !output.empty(),
+                output_type,
                 has_state_outputs(),
-                //jump_offset != -1,
-                //jump_offset == 0
                 jump_offset_type
             };
             byte_code.push_back(ope.byte);
@@ -550,11 +547,11 @@ struct Command
             }
 
             // output
-            if (!output.empty()) {
+            if (output.length() > 2) {
                 byte_code.push_back((char)output.length());
-                for (auto ch: output) {
-                    byte_code.push_back(ch);
-                }
+            }
+            for (auto ch: output) {
+                byte_code.push_back(ch);
             }
 
             // state_outputs
@@ -568,9 +565,6 @@ struct Command
 
             // jump_offset
             if (jump_offset > 0) {
-                //auto data = (uint32_t)jump_offset;
-                //const char* p = (const char*)&data;
-                //byte_code.insert(byte_code.end(), p, p + sizeof(data));
                 std::vector<char> vb;
                 vb_encode_value<uint32_t>(jump_offset, vb);
                 byte_code.insert(byte_code.end(), vb.data(), vb.data() + vb.size());
@@ -687,23 +681,32 @@ inline size_t compile_core(
         cmd.final = next_state->final;
         cmd.last_transition = (i + 1 == arcs.size());
         cmd.output = trans.output;
+        if (trans.output.empty()) {
+            cmd.output_type = Ope::OutputNone;
+        } else if (trans.output.length() == 1) {
+            cmd.output_type = Ope::OutputOne;
+        } else if (trans.output.length() == 2) {
+            cmd.output_type = Ope::OutputTwo;
+        } else {
+            cmd.output_type = Ope::OutputLength;
+        }
         cmd.arc = arc;
         cmd.state_outputs = next_state->state_outputs;
         if (next_state->transitions.empty()) {
-            cmd.jump_offset_type = Ope::None;
+            cmd.jump_offset_type = Ope::JumpOffsetNone;
             cmd.jump_offset = -1;
         } else {
             auto offset = position - state_positions[next_state->id];
             if (offset == 0) {
-                cmd.jump_offset_type = Ope::Zero;
+                cmd.jump_offset_type = Ope::JumpOffsetZero;
             } else {
                 auto cur_byte = vb_encode_value_length(offset);
                 auto beg_byte = vb_encode_value_length(state_positions[next_state->id]);
                 if (beg_byte < cur_byte) {
                     offset = state_positions[next_state->id];
-                    cmd.jump_offset_type = Ope::Begin;
+                    cmd.jump_offset_type = Ope::JumpOffsetBegin;
                 } else {
-                    cmd.jump_offset_type = Ope::Current;
+                    cmd.jump_offset_type = Ope::JumpOffsetCurrent;
                 }
             }
             cmd.jump_offset = offset;
@@ -767,9 +770,18 @@ inline const char* read_byte_code_arc(
     // output
     output_len = 0;
     output = nullptr;
-    if (ope & 0x10) { // has_output
-        output_len = *p++;
-        output = p;
+    auto output_type = (Ope::OutputType)((ope & 0x18) >> 3);
+    if (output_type != Ope::OutputNone) {
+        if (output_type == Ope::OutputOne) {
+            output_len = 1;
+            output = p;
+        } else if (output_type == Ope::OutputTwo) {
+            output_len = 2;
+            output = p;
+        } else { // Ope::OutputLength
+            output_len = *p++;
+            output = p;
+        }
         p += output_len;
     }
 
@@ -790,7 +802,7 @@ inline const char* read_byte_code_arc(
 
     // jump_offset
     jump_offset_type = (Ope::JumpOffsetType)((ope & 0xC0) >> 6);
-    if (jump_offset_type == Ope::Current || jump_offset_type == Ope::Begin) {
+    if (jump_offset_type == Ope::JumpOffsetCurrent || jump_offset_type == Ope::JumpOffsetBegin) {
         p = vb_decode_value(p, jump_offset);
     }
 
@@ -808,7 +820,7 @@ inline const char* read_byte_code_jmp(
     uint8_t start = *p++;
     uint8_t count = *p++;
 
-    if (ope & 0x04) { // need_2byte
+    if (ope & 0x02) { // need_2byte
         if (start <= arc && arc < start + count) {
             auto table = (const uint16_t*)p;
             jump_offset = table[arc - start];
@@ -840,7 +852,7 @@ inline bool exact_match_search(const char* byte_code, size_t size, const std::st
         uint8_t arc = *pstr;
         auto ope = *p++;
 
-        if ((ope & 0x03) == Ope::Arc) {
+        if ((ope & 0x01) == Ope::Arc) {
             // arc
             uint8_t arc2 = use_jump_table ? arc : *p++;
 
@@ -867,10 +879,9 @@ inline bool exact_match_search(const char* byte_code, size_t size, const std::st
                 }
 
                 pstr++;
-                if ((ope & 0x04) && *pstr == '\0') { // final
+                if ((ope & 0x02) && *pstr == '\0') { // final
                     // NOTE: for better state_outputs compression
                     if (state_outputs_size == 0) {
-                        //outputs.emplace_back(prefix, prefix_len);
                         callback(prefix, prefix_len);
                     } else if (state_outputs_size == 1) {
                         size_t state_output_len = *state_output++;
@@ -880,7 +891,6 @@ inline bool exact_match_search(const char* byte_code, size_t size, const std::st
                             memcpy(&prefix[prefix_len], state_output, state_output_len);
                         }
                         prefix_len += state_output_len;
-                        //outputs.emplace_back(prefix, prefix_len);
                         callback(prefix, prefix_len);
                     } else {
                         for (auto i = 0u; i < state_outputs_size; i++) {
@@ -888,7 +898,6 @@ inline bool exact_match_search(const char* byte_code, size_t size, const std::st
                             char final_state_output[BUFSIZ];
                             memcpy(&final_state_output[0], prefix, prefix_len);
                             memcpy(&final_state_output[prefix_len], state_output, state_output_len);
-                            //outputs.emplace_back(final_state_output, prefix_len + state_output_len);
                             callback(final_state_output, prefix_len + state_output_len);
                             state_output += state_output_len;
                         }
@@ -896,17 +905,17 @@ inline bool exact_match_search(const char* byte_code, size_t size, const std::st
                     return true;
                 }
 
-                if (jump_offset_type == Ope::None) {
+                if (jump_offset_type == Ope::JumpOffsetNone) {
                     return false;
-                } else if (jump_offset_type == Ope::Zero) {
+                } else if (jump_offset_type == Ope::JumpOffsetZero) {
                     ;
-                } else if (jump_offset_type == Ope::Current) {
+                } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
                     p += jump_offset;
-                } else { // Begin
+                } else { // Ope::JumpOffsetBegin
                     p = end - jump_offset;
                 }
             } else {
-                if (ope & 0x08) { // last_transition
+                if (ope & 0x04) { // last_transition
                     return false;
                 }
             }
@@ -949,7 +958,7 @@ inline void common_prefix_search(const char* byte_code, size_t size, const std::
         uint8_t arc = *pstr;
         auto ope = *p++;
 
-        if ((ope & 0x03) == Ope::Arc) {
+        if ((ope & 0x01) == Ope::Arc) {
             // arc
             uint8_t arc2 = *p++;
 
@@ -969,7 +978,7 @@ inline void common_prefix_search(const char* byte_code, size_t size, const std::
                 prefix.append(output, output_len);
 
                 pstr++;
-                if (ope & 0x04) { // final
+                if (ope & 0x02) { // final
                     // NOTE: for better state_outputs compression
                     CommonPrefixSearchResult result;
                     result.length = (pstr - s.c_str());
@@ -992,17 +1001,17 @@ inline void common_prefix_search(const char* byte_code, size_t size, const std::
                     callback(result);
                 }
 
-                if (jump_offset_type == Ope::None) {
+                if (jump_offset_type == Ope::JumpOffsetNone) {
                     return;
-                } else if (jump_offset_type == Ope::Zero) {
+                } else if (jump_offset_type == Ope::JumpOffsetZero) {
                     ;
-                } else if (jump_offset_type == Ope::Current) {
+                } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
                     p += jump_offset;
-                } else { // Begin
+                } else { // Ope::JumpOffsetBegin
                     p = end - jump_offset;
                 }
             } else {
-                if (ope & 0x08) { // last_transition
+                if (ope & 0x04) { // last_transition
                     return;
                 }
             }
