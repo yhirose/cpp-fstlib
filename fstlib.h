@@ -498,21 +498,11 @@ struct Command
             }
         } else { // type == Jmp
             // arc_jump_offsets
-            bool need_2byte = false;
-            auto start = -1;
-            auto end = -1;
-            for (auto i = 0; i < 256; i++) {
-                int16_t offset = arc_jump_offsets[i];
-                if (offset != -1) {
-                    if (offset >= 0xff) {
-                        need_2byte = true;
-                    }
-                    if (start == -1) {
-                        start = i;
-                    }
-                    end = i + 1;
-                }
-            }
+            bool   need_2byte;
+            size_t start;
+            size_t end;
+            scan_arc_jump_offsets(need_2byte, start, end);
+
             auto count = end - start;
 
             if (need_2byte) {
@@ -570,28 +560,17 @@ struct Command
                 byte_code.insert(byte_code.end(), vb.data(), vb.data() + vb.size());
             }
         } else { // type == Jmp
-            bool need_2byte = false;
-            auto start = -1;
-            auto end = -1;
-            for (auto i = 0; i < 256; i++) {
-                int16_t offset = arc_jump_offsets[i];
-                if (offset != -1) {
-                    if (offset >= 0xff) {
-                        need_2byte = true;
-                    }
-                    if (start == -1) {
-                        start = i;
-                    }
-                    end = i + 1;
-                }
-            }
-            auto count = end - start;
+            bool   need_2byte;
+            size_t start;
+            size_t end;
+            scan_arc_jump_offsets(need_2byte, start, end);
 
             // ope
             Ope ope = { Ope::Jmp, need_2byte, 0 };
             byte_code.push_back(ope.byte);
 
             // arc_jump_offsets
+            auto count = end - start;
             byte_code.push_back(start);
             byte_code.push_back(count);
             if (need_2byte) {
@@ -635,6 +614,25 @@ private:
     bool has_state_outputs() const
     {
         return !(state_outputs.empty() || (state_outputs.size() == 1 && state_outputs.front().empty()));
+    }
+
+    void scan_arc_jump_offsets(bool& need_2byte, size_t& start, size_t& end) const
+    {
+        need_2byte = false;
+        start = -1;
+        end = -1;
+        for (auto i = 0; i < 256; i++) {
+            int16_t offset = arc_jump_offsets[i];
+            if (offset != -1) {
+                if (offset >= 0xff) {
+                    need_2byte = true;
+                }
+                if (start == -1) {
+                    start = i;
+                }
+                end = i + 1;
+            }
+        }
     }
 };
 
@@ -768,22 +766,21 @@ inline const char* read_byte_code_arc(
     size_t&              jump_offset)
 {
     // output
-    output_len = 0;
-    output = nullptr;
     auto output_type = (Ope::OutputType)((ope & 0x18) >> 3);
-    if (output_type != Ope::OutputNone) {
-        if (output_type == Ope::OutputOne) {
-            output_len = 1;
-            output = p;
-        } else if (output_type == Ope::OutputTwo) {
-            output_len = 2;
-            output = p;
-        } else { // Ope::OutputLength
-            output_len = *p++;
-            output = p;
-        }
-        p += output_len;
+    if (output_type == Ope::OutputNone) {
+        output_len = 0;
+        output = nullptr;
+    } else if (output_type == Ope::OutputOne) {
+        output_len = 1;
+        output = p;
+    } else if (output_type == Ope::OutputTwo) {
+        output_len = 2;
+        output = p;
+    } else { // Ope::OutputLength
+        output_len = *p++;
+        output = p;
     }
+    p += output_len;
 
     // state_outputs
     state_outputs_size = 0;
