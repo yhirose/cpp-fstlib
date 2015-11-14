@@ -90,18 +90,26 @@ int main(int argc, const char** argv)
             string line;
             while (getline(cin, line)) {
                 if (cmd == "search") {
-                    auto outputs = fst::exact_match_search(byte_code, line);
+                    auto outputs = fst::exact_match_search(byte_code.data(), byte_code.size(), line.c_str());
                     for (const auto& item : outputs) {
                         cout << item << endl;
                     }
+                    if (outputs.empty()) {
+                        cout << "not found..." << endl;
+                    }
+                    cout << endl;
                 } else { // "prefix"
-                    auto results = fst::common_prefix_search(byte_code, line);
+                    auto results = fst::common_prefix_search(byte_code.data(), byte_code.size(), line.c_str());
                     for (const auto& result : results) {
                         cout << "length: " << result.length << endl;
                         for (const auto& item : result.outputs) {
                             cout << item << endl;
                         }
                     }
+                    if (results.empty()) {
+                        cout << "not found..." << endl;
+                    }
+                    cout << endl;
                 }
             }
 
@@ -142,7 +150,7 @@ int main(int argc, const char** argv)
 
             cerr << "# test all words..." << endl;
             for (const auto& item: input) {
-                auto results = fst::exact_match_search(byte_code, item.first);
+                auto results = fst::exact_match_search(byte_code.data(), byte_code.size(), item.first.c_str());
                 if (results.empty()) {
                     cout << item.first << ": NG" << endl;
                 }

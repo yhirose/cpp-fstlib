@@ -812,21 +812,21 @@ inline const char* read_byte_code_jmp(
     const char*  p,
     size_t&      jump_offset)
 {
-    jump_offset = -1;
-
-    uint8_t start = *p++;
-    uint8_t count = *p++;
+    int start = *p++;
+    int count = *p++;
 
     if (ope & 0x02) { // need_2byte
         if (start <= arc && arc < start + count) {
-            auto table = (const uint16_t*)p;
-            jump_offset = table[arc - start];
+            jump_offset = *(((const uint16_t*)p) + (arc - start));
+        } else {
+            jump_offset = -1;
         }
         p += sizeof(uint16_t) * count;
     } else {
         if (start <= arc && arc < start + count) {
-            auto table = (const uint8_t*)p;
-            jump_offset = table[arc - start];
+            jump_offset = *(((const uint8_t*)p) + (arc - start));
+        } else {
+            jump_offset = -1;
         }
         p += count;
     }
@@ -835,23 +835,22 @@ inline const char* read_byte_code_jmp(
 }
 
 template <typename Fn>
-inline bool exact_match_search(const char* byte_code, size_t size, const std::string& s, Fn callback)
+inline bool exact_match_search(const char* byte_code, size_t size, const char* str, Fn callback)
 {
     char prefix[BUFSIZ];
     size_t prefix_len = 0;
 
     auto p = byte_code;
     auto end = byte_code + size;
-    auto pstr = s.c_str();
+    auto pstr = str;
     auto use_jump_table = false;
 
     while (*pstr && p < end) {
-        uint8_t arc = *pstr;
+        auto arc = (uint8_t)*pstr;
         auto ope = *p++;
 
         if ((ope & 0x01) == Ope::Arc) {
-            // arc
-            uint8_t arc2 = use_jump_table ? arc : *p++;
+            auto arc2 = use_jump_table ? arc : (uint8_t)*p++;
 
             size_t              output_len;
             const char*         output;
@@ -859,6 +858,7 @@ inline bool exact_match_search(const char* byte_code, size_t size, const std::st
             const char*         state_output;
             Ope::JumpOffsetType jump_offset_type;
             size_t              jump_offset;
+
             p = read_byte_code_arc(
                 ope, p,
                 output_len, output,
@@ -933,31 +933,30 @@ inline bool exact_match_search(const char* byte_code, size_t size, const std::st
     return false;
 }
 
-inline Outputs exact_match_search(const std::vector<char>& byte_code, const std::string& s)
+inline Outputs exact_match_search(const char* byte_code, size_t size, const char* str)
 {
     Outputs outputs;
-    exact_match_search(byte_code.data(), byte_code.size(), s, [&](const char* s, size_t l) {
+    fst::exact_match_search(byte_code, size, str, [&](const char* s, size_t l) {
         outputs.emplace_back(s, l);
     });
     return outputs;
 }
 
 template <typename Fn>
-inline void common_prefix_search(const char* byte_code, size_t size, const std::string& s, Fn callback)
+inline void common_prefix_search(const char* byte_code, size_t size, const char* str, Fn callback)
 {
     Output prefix;
 
     auto p = byte_code;
     auto end = byte_code + size;
-    auto pstr = s.c_str();
+    auto pstr = str;
 
     while (*pstr && p < end) {
-        uint8_t arc = *pstr;
+        auto arc = (uint8_t)*pstr;
         auto ope = *p++;
 
         if ((ope & 0x01) == Ope::Arc) {
-            // arc
-            uint8_t arc2 = *p++;
+            auto arc2 = (uint8_t)*p++;
 
             size_t              output_len;
             const char*         output;
@@ -965,6 +964,7 @@ inline void common_prefix_search(const char* byte_code, size_t size, const std::
             const char*         state_output;
             Ope::JumpOffsetType jump_offset_type;
             size_t              jump_offset;
+
             p = read_byte_code_arc(
                 ope, p,
                 output_len, output,
@@ -978,7 +978,7 @@ inline void common_prefix_search(const char* byte_code, size_t size, const std::
                 if (ope & 0x02) { // final
                     // NOTE: for better state_outputs compression
                     CommonPrefixSearchResult result;
-                    result.length = (pstr - s.c_str());
+                    result.length = pstr - str;
                     if (state_outputs_size) {
                         if (state_outputs_size == 1) {
                             size_t len = *state_output++;
@@ -1026,10 +1026,10 @@ inline void common_prefix_search(const char* byte_code, size_t size, const std::
 }
 
 inline std::vector<CommonPrefixSearchResult> common_prefix_search(
-    const std::vector<char>& byte_code, const std::string& s)
+    const char* byte_code, size_t size, const char* str)
 {
     std::vector<CommonPrefixSearchResult> ret;
-    common_prefix_search(byte_code.data(), byte_code.size(), s, [&](const auto& result) {
+    fst::common_prefix_search(byte_code, size, str, [&](const auto& result) {
         ret.emplace_back(result);
     });
     return ret;
