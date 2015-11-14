@@ -36,7 +36,59 @@ inline std::string join(const Cont& cont, const char* delm)
     return s;
 }
 
-};
+template <typename Val>
+inline size_t vb_encode_value_length(Val n)
+{
+    size_t len = 0;
+    while (n >= 128) {
+        len++;
+        n >>= 7;
+    }
+    len++;
+    return len;
+}
+
+template <typename Val, typename Cont>
+inline size_t vb_encode_value(Val n, Cont& out)
+{
+    size_t len = 0;
+    while (n >= 128) {
+        out.push_back((typename Cont::value_type)(n & 0x7f));
+        len++;
+        n >>= 7;
+    }
+    out.push_back((typename Cont::value_type)(n + 128));
+    len++;
+    return len;
+}
+
+template <typename Val>
+inline const char*  vb_decode_value(const char* byte, Val& n)
+{
+    auto p = (const uint8_t *)byte;
+
+    auto b1 = *p++;
+    if (b1 & 0x80) {
+        n = b1 - 128;
+    } else {
+        auto b2 = *p++;
+        if (b2 & 0x80) {
+            n = b1 + ((b2 - 128) << 7);
+        } else {
+            auto b3 = *p++;
+            if (b3 & 0x80) {
+                n = b1 + (b2 << 7) + ((b3 - 128) << 14);
+            } else {
+                auto b4 = *p++;
+                n = b1 + (b2 << 7) + (b3 << 14) + ((b4 - 128) << 21);
+            }
+        }
+    }
+
+    return (const char*)p;
+}
+
+}
 
 namespace fst {
 
@@ -390,8 +442,6 @@ union Ope {
     } jmp;
 
     uint8_t byte;
-
-    Type type() const { return (Type)(byte & 0x3); }
 };
 
 struct Command
@@ -407,18 +457,21 @@ struct Command
     Output    output;
     Outputs   state_outputs;
     int       jump_offset;
+    bool      use_jump_table;
 
     // Jmp
     std::vector<uint16_t> arc_jump_offsets;
 
-    size_t byte_code_size(bool need_jump_offset = true) const
+    size_t byte_code_size() const
     {
         // ope
         auto size = sizeof(uint8_t);
 
         if (type == Ope::Arc) {
             // arc
-            size += sizeof(uint8_t);
+            if (!use_jump_table) {
+                size += sizeof(uint8_t);
+            }
 
             // output
             if (!output.empty()) {
@@ -436,24 +489,33 @@ struct Command
             }
 
             // jump_offset
-            if (need_jump_offset) {
-                if (jump_offset > 0) {
-                    size += sizeof(uint32_t);
-                }
+            if (jump_offset > 0) {
+                //size += sizeof(uint32_t);
+                size += vb_encode_value_length<uint32_t>(jump_offset);
             }
         } else { // type == Jmp
             // arc_jump_offsets
             bool need_2byte = false;
-            for (int16_t offset : arc_jump_offsets) {
-                if (offset != -1 && offset >= 0xff) {
-                    need_2byte = true;
-                    break;
+            auto start = -1;
+            auto end = -1;
+            for (auto i = 0; i < 256; i++) {
+                int16_t offset = arc_jump_offsets[i];
+                if (offset != -1) {
+                    if (offset >= 0xff) {
+                        need_2byte = true;
+                    }
+                    if (start == -1) {
+                        start = i;
+                    }
+                    end = i + 1;
                 }
             }
+            auto count = end - start;
+
             if (need_2byte) {
-                size += sizeof(uint16_t) * 256;
+                size += 2 + sizeof(uint16_t) * count;
             } else {
-                size += sizeof(uint8_t) * 256;
+                size += 2 + sizeof(uint8_t) * count;
             }
         }
 
@@ -478,7 +540,9 @@ struct Command
             byte_code.push_back(ope.byte);
 
             // arc
-            byte_code.push_back(arc);
+            if (!use_jump_table) {
+                byte_code.push_back(arc);
+            }
 
             // output
             if (!output.empty()) {
@@ -499,30 +563,45 @@ struct Command
 
             // jump_offset
             if (jump_offset > 0) {
-                auto data = (uint32_t)jump_offset;
-                const char* p = (const char*)&data;
-                byte_code.insert(byte_code.end(), p, p + sizeof(data));
+                //auto data = (uint32_t)jump_offset;
+                //const char* p = (const char*)&data;
+                //byte_code.insert(byte_code.end(), p, p + sizeof(data));
+                std::vector<char> vb;
+                vb_encode_value<uint32_t>(jump_offset, vb);
+                byte_code.insert(byte_code.end(), vb.data(), vb.data() + vb.size());
             }
         } else { // type == Jmp
             bool need_2byte = false;
-            for (int16_t offset : arc_jump_offsets) {
-                if (offset != -1 && offset >= 0xff) {
-                    need_2byte = true;
-                    break;
+            auto start = -1;
+            auto end = -1;
+            for (auto i = 0; i < 256; i++) {
+                int16_t offset = arc_jump_offsets[i];
+                if (offset != -1) {
+                    if (offset >= 0xff) {
+                        need_2byte = true;
+                    }
+                    if (start == -1) {
+                        start = i;
+                    }
+                    end = i + 1;
                 }
             }
+            auto count = end - start;
 
             // ope
             Ope ope = { Ope::Jmp, need_2byte, 0 };
             byte_code.push_back(ope.byte);
 
             // arc_jump_offsets
+            byte_code.push_back(start);
+            byte_code.push_back(count);
             if (need_2byte) {
-                const char* p = (const char*)arc_jump_offsets.data();
-                auto table_size = sizeof(uint16_t) * 256;
+                const char* p = (const char*)arc_jump_offsets.data() + (sizeof(uint16_t) * start);
+                auto table_size = sizeof(uint16_t) * count;
                 byte_code.insert(byte_code.end(), p, p + table_size);
             } else {
-                for (auto offset : arc_jump_offsets) {
+                for (auto i = start; i < end; i++) {
+                    auto offset = arc_jump_offsets[i];
                     byte_code.push_back(offset);
                 }
             }
@@ -544,7 +623,7 @@ struct Command
             os << final << "\t";
             os << output << "\t";
             os << join(state_outputs, "/") << "\t";
-            os << (int)jump_offset << std::endl;
+            os << (jump_offset > 0 ? vb_encode_value_length(jump_offset) : 0) << ":" << (int)jump_offset << std::endl;
         } else { // Jmp
             os << "Jmp" << "\t";
             os << byte_code_size() << "\t";
@@ -587,6 +666,8 @@ inline size_t compile_core(
         }
     }
 
+    auto use_jump_table = (arcs.size() > 4);
+
     std::vector<size_t> arc_positions(256, -1);
 
     for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
@@ -606,15 +687,17 @@ inline size_t compile_core(
         if (next_state->transitions.empty()) {
             cmd.jump_offset = -1;
         } else {
-            cmd.jump_offset = position - state_positions[next_state->id];
+            auto offset = position - state_positions[next_state->id];
+            cmd.jump_offset = offset;
         }
+        cmd.use_jump_table = use_jump_table;
         commands.push_front(cmd);
 
         position += cmd.byte_code_size();
         arc_positions[(uint8_t)arc] = position;
     }
 
-    if (arcs.size() >= 16) {
+    if (use_jump_table) {
         Command cmd;
         cmd.type = Ope::Jmp;
         cmd.id = state->id;
@@ -631,7 +714,7 @@ inline size_t compile_core(
         position += cmd.byte_code_size();
     }
 
-    state_positions[state->id] = position;;
+    state_positions[state->id] = position;
     return position;
 }
 
@@ -692,8 +775,7 @@ inline const char* read_byte_code_arc(
         if (ope & 0x80) { // is_jump_offset_zero
             jump_offset = 0;
         } else {
-            jump_offset = *(const uint32_t*)p;
-            p += sizeof(uint32_t);
+            p = vb_decode_value(p, jump_offset);
         }
     }
 
@@ -706,20 +788,30 @@ inline const char* read_byte_code_jmp(
     const char*  p,
     size_t&      jump_offset)
 {
+    jump_offset = -1;
+
+    uint8_t start = *p++;
+    uint8_t count = *p++;
+
     if (ope & 0x04) { // need_2byte
-        auto table = (const uint16_t*)p;
-        jump_offset = table[arc];
-        p += 512;
+        if (start <= arc && arc < start + count) {
+            auto table = (const uint16_t*)p;
+            jump_offset = table[arc - start];
+        }
+        p += sizeof(uint16_t) * count;
     } else {
-        auto table = (const uint8_t*)p;
-        jump_offset = table[arc];
-        p += 256;
+        if (start <= arc && arc < start + count) {
+            auto table = (const uint8_t*)p;
+            jump_offset = table[arc - start];
+        }
+        p += count;
     }
+
     return p;
 }
 
-inline bool exact_match_search(
-    const char* byte_code, size_t size, const std::string& s, Outputs& outputs)
+template <typename Fn>
+inline bool exact_match_search(const char* byte_code, size_t size, const std::string& s, Fn callback)
 {
     char prefix[BUFSIZ];
     size_t prefix_len = 0;
@@ -727,6 +819,7 @@ inline bool exact_match_search(
     auto p = byte_code;
     auto end = byte_code + size;
     auto pstr = s.c_str();
+    auto use_jump_table = false;
 
     while (*pstr && p < end) {
         uint8_t arc = *pstr;
@@ -734,7 +827,7 @@ inline bool exact_match_search(
 
         if ((ope & 0x03) == Ope::Arc) {
             // arc
-            uint8_t arc2 = *p++;
+            uint8_t arc2 = use_jump_table ? arc : *p++;
 
             size_t      output_len;
             const char* output;
@@ -761,19 +854,26 @@ inline bool exact_match_search(
                 if ((ope & 0x04) && *pstr == '\0') { // final
                     // NOTE: for better state_outputs compression
                     if (state_outputs_size == 0) {
-                        outputs.emplace_back(prefix, prefix_len);
+                        //outputs.emplace_back(prefix, prefix_len);
+                        callback(prefix, prefix_len);
                     } else if (state_outputs_size == 1) {
                         size_t state_output_len = *state_output++;
-                        memcpy(&prefix[prefix_len], state_output, state_output_len);
+                        if (state_output_len == 1) {
+                            prefix[prefix_len] = *state_output;
+                        } else {
+                            memcpy(&prefix[prefix_len], state_output, state_output_len);
+                        }
                         prefix_len += state_output_len;
-                        outputs.emplace_back(prefix, prefix_len);
+                        //outputs.emplace_back(prefix, prefix_len);
+                        callback(prefix, prefix_len);
                     } else {
                         for (auto i = 0u; i < state_outputs_size; i++) {
                             size_t state_output_len = *state_output++;
                             char final_state_output[BUFSIZ];
                             memcpy(&final_state_output[0], prefix, prefix_len);
                             memcpy(&final_state_output[prefix_len], state_output, state_output_len);
-                            outputs.emplace_back(final_state_output, prefix_len + state_output_len);
+                            //outputs.emplace_back(final_state_output, prefix_len + state_output_len);
+                            callback(final_state_output, prefix_len + state_output_len);
                             state_output += state_output_len;
                         }
                     }
@@ -790,6 +890,8 @@ inline bool exact_match_search(
                     return false;
                 }
             }
+
+            use_jump_table = false;
         } else { // Jmp
             size_t jump_offset;
             p = read_byte_code_jmp(ope, arc, p, jump_offset);
@@ -797,6 +899,8 @@ inline bool exact_match_search(
                 return false;
             }
             p += jump_offset;
+
+            use_jump_table = true;
         }
     }
 
@@ -806,13 +910,14 @@ inline bool exact_match_search(
 inline Outputs exact_match_search(const std::vector<char>& byte_code, const std::string& s)
 {
     Outputs outputs;
-    exact_match_search(byte_code.data(), byte_code.size(), s, outputs);
+    exact_match_search(byte_code.data(), byte_code.size(), s, [&](const char* s, size_t l) {
+        outputs.emplace_back(s, l);
+    });
     return outputs;
 }
 
-inline size_t common_prefix_search(
-    const char* byte_code, size_t size, const std::string& s,
-    std::vector<CommonPrefixSearchResult>& ret)
+template <typename Fn>
+inline void common_prefix_search(const char* byte_code, size_t size, const std::string& s, Fn callback)
 {
     Output prefix;
 
@@ -863,35 +968,37 @@ inline size_t common_prefix_search(
                     } else if (!prefix.empty()) {
                         result.outputs.push_back(prefix);
                     }
-                    ret.push_back(result);
+                    callback(result);
                 }
                 if (jump_offset == -1) {
-                    return ret.size();
+                    return;
                 }
                 p += jump_offset;
             } else {
                 if (ope & 0x08) { // last_transition
-                    return ret.size();
+                    return;
                 }
             }
         } else { // Jmp
             size_t jump_offset;
             p = read_byte_code_jmp(ope, arc, p, jump_offset);
             if (jump_offset == -1) {
-                return false;
+                return;
             }
             p += jump_offset;
         }
     }
 
-    return ret.size();
+    return;
 }
 
 inline std::vector<CommonPrefixSearchResult> common_prefix_search(
     const std::vector<char>& byte_code, const std::string& s)
 {
     std::vector<CommonPrefixSearchResult> ret;
-    common_prefix_search(byte_code.data(), byte_code.size(), s, ret);
+    common_prefix_search(byte_code.data(), byte_code.size(), s, [&](const auto& result) {
+        ret.emplace_back(result);
+    });
     return ret;
 }
 
@@ -901,19 +1008,16 @@ inline void print_header(std::ostream& os)
     os << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
 }
 
-inline size_t print(std::shared_ptr<State> state, std::ostream& os)
+inline void print(std::shared_ptr<State> state, std::ostream& os)
 {
     std::list<Command> commands;
     std::vector<size_t> state_positions(state->id + 1);
     compile_core(state, commands, state_positions, 0);
 
-    size_t pos = 0;
     print_header(os);
     for (const auto& cmd: commands) {
         cmd.print(os);
-        pos += cmd.byte_code_size();
     }
-    return commands.size();
 }
 
 } // namespace fst
