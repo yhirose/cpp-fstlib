@@ -92,13 +92,10 @@ inline const char*  vb_decode_value(const char* byte, Val& n)
 
 namespace fst {
 
-typedef std::string Output;
-typedef std::vector<Output> Outputs;
-
 struct CommonPrefixSearchResult
 {
-    size_t  length;
-    Outputs outputs;
+    size_t                   length;
+    std::vector<std::string> outputs;
 };
 
 class State
@@ -106,7 +103,7 @@ class State
 public:
     struct Transition {
         std::shared_ptr<State> state;
-        Output                 output;
+        std::string            output;
 
         bool operator==(const Transition& rhs) const {
             return state == rhs.state && output == rhs.output;
@@ -114,14 +111,14 @@ public:
     };
     typedef std::map<char, Transition> Transitions;
 
-    const size_t      id;
-    const bool        final = false;
-    const Transitions transitions;
-    const Outputs     state_outputs;
+    const size_t                   id;
+    const bool                     final = false;
+    const Transitions              transitions;
+    const std::vector<std::string> state_outputs;
 
     State(size_t id = -1) : id(id), final(false), is_hash_prepared(false), hash_value(-1) {}
 
-    State(size_t id, bool final, const Transitions& transitions, const Outputs& state_outputs)
+    State(size_t id, bool final, const Transitions& transitions, const std::vector<std::string>& state_outputs)
         : id(id)
         , final(final)
         , transitions(transitions)
@@ -143,9 +140,9 @@ public:
         set_modified();
     }
 
-    void set_state_outputs(const Outputs& state_outputs)
+    void set_state_outputs(const std::vector<std::string>& state_outputs)
     {
-        const_cast<Outputs&>(this->state_outputs) = state_outputs;
+        const_cast<std::vector<std::string>&>(this->state_outputs) = state_outputs;
         set_modified();
     }
 
@@ -161,27 +158,27 @@ public:
         set_modified();
     }
 
-    const Output& output(char arc)
+    const std::string& output(char arc)
     {
         return transitions.at(arc).output;
     }
 
-    void set_output(char arc, const Output& output)
+    void set_output(char arc, const std::string& output)
     {
         const_cast<Transitions&>(transitions)[arc].output = output;
         set_modified();
     }
 
-    void push_to_state_outputs(const Output& output)
+    void push_to_state_outputs(const std::string& output)
     {
-        const_cast<Outputs&>(state_outputs).push_back(output);
+        const_cast<std::vector<std::string>&>(state_outputs).push_back(output);
         set_modified();
     }
 
-    void prepend_suffix_to_state_outputs(const Output& suffix)
+    void prepend_suffix_to_state_outputs(const std::string& suffix)
     {
         for (auto& state_output : state_outputs) {
-            const_cast<Output&>(state_output).insert(0, suffix);
+            const_cast<std::string&>(state_output).insert(0, suffix);
         }
         set_modified();
     }
@@ -190,7 +187,7 @@ public:
     {
         set_final(false);
         const_cast<Transitions&>(transitions).clear();
-        const_cast<Outputs&>(state_outputs).clear();
+        const_cast<std::vector<std::string>&>(state_outputs).clear();
         set_modified();
     }
 
@@ -306,17 +303,8 @@ private:
     mutable size_t hash_value;
 };
 
-inline size_t get_prefix_length(const std::string& s1, const std::string& s2)
-{
-    size_t i = 0;
-    while (i < s1.length() && i < s2.length() && s1[i] == s2[i]) {
-        i++;
-    }
-    return i;
-};
-
-inline std::shared_ptr<State> make_state_machine(
-    const std::vector<std::pair<std::string, Output>>& input)
+template <typename T>
+inline std::shared_ptr<State> make_state_machine(T input)
 {
     // State dictionary
     std::unordered_map<size_t, std::shared_ptr<State>> dictionary;
@@ -336,15 +324,21 @@ inline std::shared_ptr<State> make_state_machine(
         return r;
     };
 
+    auto get_prefix_length = [](const std::string& s1, const std::string& s2)
+    {
+        size_t i = 0;
+        while (i < s1.length() && i < s2.length() && s1[i] == s2[i]) {
+            i++;
+        }
+        return i;
+    };
+
     // Main algorithm ported from the technical paper
     std::vector<std::shared_ptr<State>> temp_states;
     std::string previous_word;
     temp_states.emplace_back(std::make_shared<State>());
 
-    for (const auto& item: input) {
-        const auto& current_word = item.first;
-        auto current_output = item.second;
-
+    input([&](const auto& current_word, auto current_output) {
         // The following loop caluculates the length of the longest common
         // prefix of 'current_word' and 'previous_word'
         auto prefix_length = get_prefix_length(previous_word, current_word);
@@ -408,7 +402,7 @@ inline std::shared_ptr<State> make_state_machine(
         }
 
         previous_word = current_word;
-    }
+    });
 
     // Here we are minimizing the states of the last word
     std::shared_ptr<State> next_state;
@@ -420,6 +414,16 @@ inline std::shared_ptr<State> make_state_machine(
     }
 
     return find_minimized(temp_states[0], next_state);
+}
+
+inline std::shared_ptr<State> make_state_machine(
+    const std::vector<std::pair<std::string, std::string>>& input)
+{
+    return make_state_machine([&](const auto& feed) {
+        for (const auto& item: input) {
+            feed(item.first, item.second);
+        }
+    });
 }
 
 union Ope {
@@ -448,20 +452,20 @@ union Ope {
 struct Command
 {
     // General
-    Ope::OpeType          type;
-    size_t                id = -1;
-    size_t                next_id = -1;
+    Ope::OpeType             type;
+    size_t                   id = -1;
+    size_t                   next_id = -1;
 
     // Arc
-    bool                  final;
-    bool                  last_transition;
-    char                  arc;
-    Ope::OutputType       output_type;
-    Output                output;
-    Outputs               state_outputs;
-    Ope::JumpOffsetType   jump_offset_type;
-    int                   jump_offset;
-    bool                  use_jump_table;
+    bool                     final;
+    bool                     last_transition;
+    char                     arc;
+    Ope::OutputType          output_type;
+    std::string              output;
+    std::vector<std::string> state_outputs;
+    Ope::JumpOffsetType      jump_offset_type;
+    int                      jump_offset;
+    bool                     use_jump_table;
 
     // Jmp
     std::vector<uint16_t> arc_jump_offsets;
@@ -589,26 +593,6 @@ struct Command
         return byte_code;
     }
 
-    void print(std::ostream& os) const
-    {
-        if (type == Ope::Arc) {
-            os << "Arc" << "\t";
-            os << byte_code_size() << "\t";
-            os << (id == -1 ? "" : std::to_string(id)) << "\t";
-            os << (next_id == -1 ? "" : std::to_string(next_id)) << "\t";
-            os << (int)(uint8_t)arc << "\t";
-            os << last_transition << "\t";
-            os << final << "\t";
-            os << output << "\t";
-            os << join(state_outputs, "/") << "\t";
-            os << (jump_offset > 0 ? vb_encode_value_length(jump_offset) : 0) << ":" << (int)jump_offset << std::endl;
-        } else { // Jmp
-            os << "Jmp" << "\t";
-            os << byte_code_size() << "\t";
-            os << (id == -1 ? "" : std::to_string(id)) << std::endl;
-        }
-    }
-
 private:
     // NOTE: for better state_outputs compression
     bool has_state_outputs() const
@@ -678,6 +662,7 @@ inline size_t compile_core(
         cmd.next_id = next_state->id;
         cmd.final = next_state->final;
         cmd.last_transition = (i + 1 == arcs.size());
+        cmd.arc = arc;
         cmd.output = trans.output;
         if (trans.output.empty()) {
             cmd.output_type = Ope::OutputNone;
@@ -688,7 +673,6 @@ inline size_t compile_core(
         } else {
             cmd.output_type = Ope::OutputLength;
         }
-        cmd.arc = arc;
         cmd.state_outputs = next_state->state_outputs;
         if (next_state->transitions.empty()) {
             cmd.jump_offset_type = Ope::JumpOffsetNone;
@@ -750,9 +734,19 @@ inline std::vector<char> compile(std::shared_ptr<State> state)
     return byte_code;
 }
 
-inline std::vector<char> build(const std::vector<std::pair<std::string, Output>>& input)
+template <typename T>
+inline std::vector<char> build(T input)
 {
     return compile(make_state_machine(input));
+}
+
+inline std::vector<char> build(const std::vector<std::pair<std::string, std::string>>& input)
+{
+    return build([&](const auto& feed) {
+        for (const auto& item: input) {
+            feed(item.first, item.second);
+        }
+    });
 }
 
 inline const char* read_byte_code_arc(
@@ -834,8 +828,8 @@ inline const char* read_byte_code_jmp(
     return p;
 }
 
-template <typename Fn>
-inline bool exact_match_search(const char* byte_code, size_t size, const char* str, Fn callback)
+template <typename T>
+inline bool exact_match_search(const char* byte_code, size_t size, const char* str, T callback)
 {
     char prefix[BUFSIZ];
     size_t prefix_len = 0;
@@ -933,19 +927,19 @@ inline bool exact_match_search(const char* byte_code, size_t size, const char* s
     return false;
 }
 
-inline Outputs exact_match_search(const char* byte_code, size_t size, const char* str)
+inline std::vector<std::string> exact_match_search(const char* byte_code, size_t size, const char* str)
 {
-    Outputs outputs;
+    std::vector<std::string> outputs;
     fst::exact_match_search(byte_code, size, str, [&](const char* s, size_t l) {
         outputs.emplace_back(s, l);
     });
     return outputs;
 }
 
-template <typename Fn>
-inline void common_prefix_search(const char* byte_code, size_t size, const char* str, Fn callback)
+template <typename T>
+inline void common_prefix_search(const char* byte_code, size_t size, const char* str, T callback)
 {
-    Output prefix;
+    std::string prefix;
 
     auto p = byte_code;
     auto end = byte_code + size;
@@ -982,12 +976,12 @@ inline void common_prefix_search(const char* byte_code, size_t size, const char*
                     if (state_outputs_size) {
                         if (state_outputs_size == 1) {
                             size_t len = *state_output++;
-                            auto suffix = Output(state_output, len);
+                            auto suffix = std::string(state_output, len);
                             result.outputs.push_back(prefix + suffix);
                         } else {
                             for (auto i = 0u; i < state_outputs_size; i++) {
                                 size_t len = *state_output++;
-                                auto suffix = Output(state_output, len);
+                                auto suffix = std::string(state_output, len);
                                 result.outputs.push_back(prefix + suffix);
                                 state_output += len;
                             }
@@ -1035,21 +1029,33 @@ inline std::vector<CommonPrefixSearchResult> common_prefix_search(
     return ret;
 }
 
-inline void print_header(std::ostream& os)
-{
-    os << "Ope" << "\t" << "Size" << "\t" << "ID" << "\t" << "NextID" << "\t" << "Arc" << "\t" << "Last" << "\t" << "Final" << "\t" << "Output" << "\t" << "StOuts" << "\t" << "JmpOff" << std::endl;
-    os << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << "\t" << "------" << std::endl;
-}
-
 inline void print(std::shared_ptr<State> state, std::ostream& os)
 {
     std::list<Command> commands;
     std::vector<size_t> state_positions(state->id + 1);
     compile_core(state, commands, state_positions, 0);
 
-    print_header(os);
+    os << "Ope\tSize\tID\tNextID\tArc\tLast\tFinal\tOutput\tStOuts\tJmpOff\n";
+    os << "------\t------\t------\t------\t------\t------\t------\t------\t------\t------\n";
+
     for (const auto& cmd: commands) {
-        cmd.print(os);
+        if (cmd.type == Ope::Arc) {
+            auto jump_offset_bytes = (cmd.jump_offset > 0 ? vb_encode_value_length(cmd.jump_offset) : 0);
+            os << "Arc" << "\t";
+            os << cmd.byte_code_size() << "\t";
+            os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << "\t";
+            os << (cmd.next_id == -1 ? "" : std::to_string(cmd.next_id)) << "\t";
+            os << (int)(uint8_t)cmd.arc << "\t";
+            os << cmd.last_transition << "\t";
+            os << cmd.final << "\t";
+            os << cmd.output << "\t";
+            os << join(cmd.state_outputs, "/") << "\t";
+            os << (jump_offset_bytes) << ":" << (int)cmd.jump_offset << std::endl;
+        } else { // Jmp
+            os << "Jmp" << "\t";
+            os << cmd.byte_code_size() << "\t";
+            os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << std::endl;
+        }
     }
 }
 

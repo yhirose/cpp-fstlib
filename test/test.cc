@@ -5,9 +5,9 @@
 
 using namespace std;
 
-inline fst::Outputs match(const std::vector<char>& byte_code, const char* str)
+inline std::vector<std::string> match(const std::vector<char>& byte_code, const char* str)
 {
-    fst::Outputs outputs;
+    std::vector<std::string> outputs;
     fst::exact_match_search(byte_code.data(), byte_code.size(), str, [&](const char* s, size_t l) {
         outputs.emplace_back(s, l);
     });
