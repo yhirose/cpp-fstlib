@@ -338,7 +338,7 @@ inline std::shared_ptr<State> make_state_machine(T input)
     std::string previous_word;
     temp_states.emplace_back(std::make_shared<State>());
 
-    input([&](const auto& current_word, auto current_output) {
+    input([&](const std::string& current_word, std::string current_output) {
         // The following loop caluculates the length of the longest common
         // prefix of 'current_word' and 'previous_word'
         auto prefix_length = get_prefix_length(previous_word, current_word);
