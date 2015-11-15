@@ -806,8 +806,8 @@ inline const char* read_byte_code_jmp(
     const char*  p,
     size_t&      jump_offset)
 {
-    int start = *p++;
-    int count = *p++;
+    auto start = (uint8_t)*p++;
+    auto count = (uint8_t)*p++;
 
     if (ope & 0x02) { // need_2byte
         if (start <= arc && arc < start + count) {
