@@ -7,7 +7,7 @@ using namespace std;
 
 void usage()
 {
-    cout << R"(usage: fst-cli <command> [<args>]
+    cout << R"(usage: fst <command> [<args>]
 
     compile     DictionaryFile FstFile     - make fst byte code
 

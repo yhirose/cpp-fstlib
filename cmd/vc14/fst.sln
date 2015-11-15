@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
 VisualStudioVersion = 14.0.23107.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fst-cli", "fst-cli.vcxproj", "{8E97077E-560E-4B36-825D-FF9984FD161D}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fst", "fst.vcxproj", "{8E97077E-560E-4B36-825D-FF9984FD161D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
