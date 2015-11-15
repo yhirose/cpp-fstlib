@@ -15,7 +15,6 @@ void usage()
     prefix      FstFile                    - common prefix search
 
     dot         DictionaryFile             - convert to dot format
-    assembly    DictionaryFile             - convert to assembly format
 )";
 }
 
@@ -122,7 +121,7 @@ int main(int argc, const char** argv)
             auto initial_state = fst::make_state_machine(load_input(fin));
             initial_state->dot(cout);
 
-        } else if (cmd == "assembly") {
+        } else if (cmd == "dump") {
             if (argi >= argc) { usage(); usage(); return 1; }
 
             ifstream fin(argv[argi++]);
