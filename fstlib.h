@@ -944,13 +944,14 @@ inline void common_prefix_search(const char* byte_code, size_t size, const char*
     auto p = byte_code;
     auto end = byte_code + size;
     auto pstr = str;
+    auto use_jump_table = false;
 
     while (*pstr && p < end) {
         auto arc = (uint8_t)*pstr;
         auto ope = *p++;
 
         if ((ope & 0x01) == Ope::Arc) {
-            auto arc2 = (uint8_t)*p++;
+            auto arc2 = use_jump_table ? arc : (uint8_t)*p++;
 
             size_t              output_len;
             const char*         output;
@@ -1006,6 +1007,8 @@ inline void common_prefix_search(const char* byte_code, size_t size, const char*
                     return;
                 }
             }
+
+            use_jump_table = false;
         } else { // Jmp
             size_t jump_offset;
             p = read_byte_code_jmp(ope, arc, p, jump_offset);
@@ -1013,6 +1016,8 @@ inline void common_prefix_search(const char* byte_code, size_t size, const char*
                 return;
             }
             p += jump_offset;
+
+            use_jump_table = true;
         }
     }
 
