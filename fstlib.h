@@ -27,12 +27,6 @@ namespace fst {
 // fst
 //-----------------------------------------------------------------------------
 
-struct CommonPrefixSearchResult
-{
-    size_t                   length;
-    std::vector<std::string> outputs;
-};
-
 class State
 {
 public:
@@ -934,6 +928,12 @@ inline std::vector<std::string> exact_match_search(const char* byte_code, size_t
     });
     return outputs;
 }
+
+struct CommonPrefixSearchResult
+{
+    size_t                   length;
+    std::vector<std::string> outputs;
+};
 
 template <typename T>
 inline void common_prefix_search(const char* byte_code, size_t size, const char* str, T callback)
