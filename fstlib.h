@@ -796,8 +796,10 @@ inline const char* read_byte_code_jmp(
     return p;
 }
 
-template <typename T>
-inline bool exact_match_search(const char* byte_code, size_t size, const char* str, T callback)
+template <typename Begin, typename Value, typename End>
+inline void run(
+    const char* byte_code, size_t size, const char* str,
+    Begin output_begin, Value output_value, End output_end)
 {
     char prefix[BUFSIZ];
     size_t prefix_len = 0;
@@ -837,119 +839,25 @@ inline bool exact_match_search(const char* byte_code, size_t size, const char* s
 
                 pstr++;
                 if (ope & 0x02) { // final
-                    if (*pstr == '\0') {
-                        // NOTE: for better state_outputs compression
-                        if (state_outputs_size == 0) {
-                            callback(prefix, prefix_len);
-                        } else {
-                            for (auto i = 0u; i < state_outputs_size; i++) {
-                                size_t state_output_len = *state_output++;
-                                char final_state_output[BUFSIZ];
-                                memcpy(&final_state_output[0], prefix, prefix_len);
-                                memcpy(&final_state_output[prefix_len], state_output, state_output_len);
-                                callback(final_state_output, prefix_len + state_output_len);
-                                state_output += state_output_len;
-                            }
-                        }
-                        return true;
-                    }
-                }
+                    output_begin(pstr);
 
-                if (jump_offset_type == Ope::JumpOffsetNone) {
-                    return false;
-                } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
-                    p += jump_offset;
-                } else if (jump_offset_type == Ope::JumpOffsetBegin) {
-                    p = end - jump_offset;
-                }
-            } else {
-                if (ope & 0x04) { // last_transition
-                    return false;
-                }
-            }
-
-            use_jump_table = false;
-        } else { // Jmp
-            size_t jump_offset;
-            p = read_byte_code_jmp(ope, arc, p, jump_offset);
-            if (jump_offset == -1) {
-                return false;
-            }
-            p += jump_offset;
-
-            use_jump_table = true;
-        }
-    }
-
-    return false;
-}
-
-inline std::vector<std::string> exact_match_search(const char* byte_code, size_t size, const char* str)
-{
-    std::vector<std::string> outputs;
-    fst::exact_match_search(byte_code, size, str, [&](const char* s, size_t l) {
-        outputs.emplace_back(s, l);
-    });
-    return outputs;
-}
-
-template <typename T>
-inline void common_prefix_search(const char* byte_code, size_t size, const char* str, T callback)
-{
-    char prefix[BUFSIZ];
-    size_t prefix_len = 0;
-
-    auto p = byte_code;
-    auto end = byte_code + size;
-    auto pstr = str;
-    auto use_jump_table = false;
-
-    while (*pstr && p < end) {
-        auto arc = (uint8_t)*pstr;
-        auto ope = *p++;
-
-        if ((ope & 0x01) == Ope::Arc) {
-            auto arc2 = use_jump_table ? arc : (uint8_t)*p++;
-
-            size_t              output_len;
-            const char*         output;
-            size_t              state_outputs_size;
-            const char*         state_output;
-            Ope::JumpOffsetType jump_offset_type;
-            size_t              jump_offset;
-
-            p = read_byte_code_arc(
-                ope, p,
-                output_len, output,
-                state_outputs_size, state_output,
-                jump_offset_type, jump_offset);
-
-            if (arc2 == arc) {
-                if (output_len == 1) {
-                    prefix[prefix_len++] = *output;
-                } else if (output_len > 1) {
-                    memcpy(&prefix[prefix_len], output, output_len);
-                    prefix_len += output_len;
-                }
-
-                pstr++;
-                if (ope & 0x02) { // final
                     // NOTE: for better state_outputs compression
-                    CommonPrefixSearchResult result;
-                    result.length = pstr - str;
                     if (state_outputs_size == 0) {
-                        result.outputs.emplace_back(prefix, prefix_len);
+                        output_value(prefix, prefix_len);
                     } else {
                         for (auto i = 0u; i < state_outputs_size; i++) {
                             size_t state_output_len = *state_output++;
                             char final_state_output[BUFSIZ];
                             memcpy(&final_state_output[0], prefix, prefix_len);
                             memcpy(&final_state_output[prefix_len], state_output, state_output_len);
-                            result.outputs.emplace_back(final_state_output, prefix_len + state_output_len);
+                            output_value(final_state_output, prefix_len + state_output_len);
                             state_output += state_output_len;
                         }
                     }
-                    callback(result);
+
+                    if (output_end()) {
+                        return;
+                    }
                 }
 
                 if (jump_offset_type == Ope::JumpOffsetNone) {
@@ -979,6 +887,59 @@ inline void common_prefix_search(const char* byte_code, size_t size, const char*
     }
 
     return;
+}
+
+template <typename T>
+inline bool exact_match_search(const char* byte_code, size_t size, const char* str, T callback)
+{
+    bool ret = false;
+
+    run(byte_code, size, str,
+        // begin
+        [&](const char* pstr) {
+            ret = (*pstr == '\0');
+        },
+        // value
+        [&](const char* s, size_t l) {
+            if (ret) { callback(s, l); }
+        },
+        // end
+        [&]() {
+            return ret;
+        });
+
+    return ret;
+}
+
+inline std::vector<std::string> exact_match_search(const char* byte_code, size_t size, const char* str)
+{
+    std::vector<std::string> outputs;
+    fst::exact_match_search(byte_code, size, str, [&](const char* s, size_t l) {
+        outputs.emplace_back(s, l);
+    });
+    return outputs;
+}
+
+template <typename T>
+inline void common_prefix_search(const char* byte_code, size_t size, const char* str, T callback)
+{
+    CommonPrefixSearchResult result;
+
+    run(byte_code, size, str,
+        // begin
+        [&](const char* pstr) {
+            result.length = pstr - str;
+            result.outputs.clear();
+        },
+        // value
+        [&](const char* s, size_t l) {
+            result.outputs.emplace_back(s, l);
+        },
+        // end
+        [&]() {
+            callback(result);
+            return false;
+        });
 }
 
 inline std::vector<CommonPrefixSearchResult> common_prefix_search(
