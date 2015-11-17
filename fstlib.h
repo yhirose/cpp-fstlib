@@ -100,6 +100,13 @@ public:
         set_modified();
     }
 
+    void prepend_suffix_to_output(char arc, const std::string& suffix)
+    {
+        auto& output = const_cast<Transitions&>(transitions)[arc].output;
+        output.insert(output.begin(), suffix.begin(), suffix.end());
+        set_modified();
+    }
+
     void push_to_state_outputs(const std::string& output)
     {
         const_cast<std::vector<std::string>&>(state_outputs).push_back(output);
@@ -165,7 +172,8 @@ public:
             is_hash_prepared = true;
 
             // NOTE: `next_state_id` is used for better hash value
-            std::string key = std::to_string(next_state_id);
+            //std::string key = std::to_string(next_state_id);
+            std::string key((const char*)&next_state_id, sizeof(next_state_id));
 
             key += (final ? "f" : "c");
             if (final) {
@@ -267,7 +275,7 @@ inline std::shared_ptr<State> make_state_machine(T input)
         for (auto j = 1u; j <= prefix_length; j++) {
             auto prev_state = temp_states[j - 1];
             auto arc = current_word[j - 1];
-            auto output = prev_state->output(arc);
+            const auto& output = prev_state->output(arc);
             auto common_prefix_length = get_prefix_length(output, current_output);
             auto common_prefix = output.substr(0, common_prefix_length);
             auto word_suffix = output.substr(common_prefix_length);
@@ -277,7 +285,7 @@ inline std::shared_ptr<State> make_state_machine(T input)
             auto state = temp_states[j];
             for (auto& item: state->transitions) {
                 auto arc = item.first;
-                state->set_output(arc, word_suffix + state->output(arc));
+                state->prepend_suffix_to_output(arc, word_suffix);
             }
             if (state->final) {
                 state->prepend_suffix_to_state_outputs(word_suffix);
