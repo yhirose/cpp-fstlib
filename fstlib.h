@@ -62,8 +62,9 @@ inline size_t vb_encode_value(Val n, Cont& out)
     return len;
 }
 
+// NOTE: this function accepts up to only 4 bytes for performance
 template <typename Val>
-inline const char*  vb_decode_value(const char* byte, Val& n)
+inline const char* vb_decode_value(const char* byte, Val& n)
 {
     auto p = (const uint8_t *)byte;
 
@@ -104,10 +105,6 @@ public:
     struct Transition {
         std::shared_ptr<State> state;
         std::string            output;
-
-        bool operator==(const Transition& rhs) const {
-            return state == rhs.state && output == rhs.output;
-        }
     };
     typedef std::map<char, Transition> Transitions;
 
@@ -778,7 +775,6 @@ inline const char* read_byte_code_arc(
 
     // state_outputs
     state_outputs_size = 0;
-    state_output = nullptr;
     if (ope & 0x20) { // has_state_outputs
         state_outputs_size = *p++;
         state_output = p;
