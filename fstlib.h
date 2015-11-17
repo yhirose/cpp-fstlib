@@ -363,51 +363,66 @@ inline size_t vb_encode_value(Val n, Cont& out)
 
 // NOTE: this function accepts up to only 4 bytes for performance
 template <typename Val>
-inline const char* vb_decode_value(const char* byte, Val& n)
+inline const char* vb_decode_value_for_4bytes(const char* p, const char* end, Val& n)
 {
-    auto p = (const uint8_t *)byte;
+    auto val = *(const uint32_t *)p;
 
-    auto b1 = *p++;
-    if (b1 & 0x80) {
-        n = b1 - 128;
+    if (val & 0x80) {
+        n = val & 0x7f;
+        return p + 1;
     } else {
-        auto b2 = *p++;
-        if (b2 & 0x80) {
-            n = b1 + ((b2 - 128) << 7);
+        if (val & 0x8000) {
+            n = (val & 0x7f) + ((val & 0x7f00) >> 1);
+            return p + 2;
         } else {
-            auto b3 = *p++;
-            if (b3 & 0x80) {
-                n = b1 + (b2 << 7) + ((b3 - 128) << 14);
+            if (val & 0x800000) {
+                n = (val & 0x7f) + ((val & 0x7f00) >> 1) + ((val & 0x7f0000) >> 2);
+                return p + 3;
             } else {
-                auto b4 = *p++;
-                n = b1 + (b2 << 7) + (b3 << 14) + ((b4 - 128) << 21);
+                n = (val & 0x7f) + ((val & 0x7f00) >> 1) + ((val & 0x7f0000) >> 2) + ((val & 0x7f0000) >> 3);
+                return p + 4;
             }
         }
     }
 
-    return (const char*)p;
+    // NOTREACHED
+    return nullptr;
 }
 
 }
 
 union Ope {
-    enum OpeType { Arc = 0, Jmp };
-    enum JumpOffsetType { JumpOffsetNone = 0, JumpOffsetZero, JumpOffsetCurrent, JumpOffsetBegin };
-    enum OutputType { OutputNone = 0, OutputOne, OutputTwo, OutputLength };
+    enum OpeType {
+        Arc = 0, Jmp
+    };
+
+    enum JumpOffsetType {
+        JumpOffsetNone = 0,
+        JumpOffsetZero,
+        JumpOffsetCurrent,
+        JumpOffsetBegin
+    };
+
+    enum OutputType {
+        OutputNone = 0,
+        OutputOne,
+        OutputTwo,
+        OutputLength
+    };
 
     struct {
-        unsigned tag : 1;
-        unsigned final : 1;
-        unsigned last_transition : 1;
-        unsigned output_type : 2;
+        unsigned type              : 1;
+        unsigned final             : 1;
+        unsigned last_transition   : 1;
+        unsigned output_type       : 2;
         unsigned has_state_outputs : 1;
-        unsigned jump_offset_type : 2;
+        unsigned jump_offset_type  : 2;
     } arc;
 
     struct {
-        unsigned tag : 1;
+        unsigned type       : 1;
         unsigned need_2byte : 1;
-        unsigned reserve : 6;
+        unsigned reserve    : 6;
     } jmp;
 
     uint8_t byte;
@@ -471,12 +486,10 @@ struct Command
             size_t end;
             scan_arc_jump_offsets(need_2byte, start, end);
 
-            auto count = end - start;
-
             if (need_2byte) {
-                size += 2 + sizeof(uint16_t) * count;
+                size += 2 + sizeof(uint16_t) * (end - start);
             } else {
-                size += 2 + sizeof(uint8_t) * count;
+                size += 2 + sizeof(uint8_t) * (end - start);
             }
         }
 
@@ -659,8 +672,8 @@ inline size_t compile_core(
             cmd.jump_offset = offset;
         }
         cmd.use_jump_table = use_jump_table;
-        commands.push_front(cmd);
 
+        commands.push_front(cmd);
         position += cmd.byte_code_size();
         arc_positions[(uint8_t)arc] = position;
     }
@@ -677,8 +690,8 @@ inline size_t compile_core(
                 cmd.arc_jump_offsets[i] = offset;
             }
         }
-        commands.push_front(cmd);
 
+        commands.push_front(cmd);
         position += cmd.byte_code_size();
     }
 
@@ -721,6 +734,7 @@ inline std::vector<char> build(
 inline const char* read_byte_code_arc(
     uint8_t              ope,
     const char*          p,
+    const char*          end,
     size_t&              output_len,
     const char*&         output,
     size_t&              state_outputs_size,
@@ -732,7 +746,6 @@ inline const char* read_byte_code_arc(
     auto output_type = (Ope::OutputType)((ope & 0x18) >> 3);
     if (output_type == Ope::OutputNone) {
         output_len = 0;
-        output = nullptr;
     } else if (output_type == Ope::OutputOne) {
         output_len = 1;
         output = p;
@@ -746,7 +759,6 @@ inline const char* read_byte_code_arc(
     p += output_len;
 
     // state_outputs
-    state_outputs_size = 0;
     if (ope & 0x20) { // has_state_outputs
         state_outputs_size = *p++;
         state_output = p;
@@ -757,12 +769,14 @@ inline const char* read_byte_code_arc(
                 p += 1 + *p;
             }
         }
+    } else {
+        state_outputs_size = 0;
     }
 
     // jump_offset
     jump_offset_type = (Ope::JumpOffsetType)((ope & 0xC0) >> 6);
     if (jump_offset_type == Ope::JumpOffsetCurrent || jump_offset_type == Ope::JumpOffsetBegin) {
-        p = vb_decode_value(p, jump_offset);
+        p = vb_decode_value_for_4bytes(p, end, jump_offset);
     }
 
     return p;
@@ -772,6 +786,7 @@ inline const char* read_byte_code_jmp(
     uint8_t      ope,
     uint8_t      arc,
     const char*  p,
+    const char*  end,
     size_t&      jump_offset)
 {
     auto start = (uint8_t)*p++;
@@ -824,7 +839,7 @@ inline void run(
             size_t              jump_offset;
 
             p = read_byte_code_arc(
-                ope, p,
+                ope, p, end,
                 output_len, output,
                 state_outputs_size, state_output,
                 jump_offset_type, jump_offset);
@@ -876,7 +891,7 @@ inline void run(
             use_jump_table = false;
         } else { // Jmp
             size_t jump_offset;
-            p = read_byte_code_jmp(ope, arc, p, jump_offset);
+            p = read_byte_code_jmp(ope, arc, p, end, jump_offset);
             if (jump_offset == -1) {
                 return;
             }
