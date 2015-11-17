@@ -1,5 +1,6 @@
 # cpp-fstlib
 C++11 header-only finite state transducer.
+It can be used as [Trie data structure](https://en.wikipedia.org/wiki/Trie).
 The algorithm used in this library is based on "[Minimal Acyclic Subsequential Transducers](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.24.3698&rep=rep1&type=pdf)".
 
 Usage
