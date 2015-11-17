@@ -119,7 +119,7 @@ int main(int argc, const char** argv)
             if (!fin) { usage(); return 1; }
 
             auto initial_state = fst::make_state_machine(load_input(fin));
-            initial_state->dot(cout);
+            dot(initial_state, cout);
 
         } else if (cmd == "dump") {
             if (argi >= argc) { usage(); usage(); return 1; }

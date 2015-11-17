@@ -21,77 +21,11 @@
 #include <unordered_map>
 #include <cstring>
 
-namespace {
-
-template <typename Cont>
-inline std::string join(const Cont& cont, const char* delm)
-{
-    std::string s;
-    for (auto i = 0u; i < cont.size(); i++) {
-        if (i != 0) {
-            s += delm;
-        }
-        s += cont[i];
-    }
-    return s;
-}
-
-template <typename Val>
-inline size_t vb_encode_value_length(Val n)
-{
-    size_t len = 0;
-    while (n >= 128) {
-        len++;
-        n >>= 7;
-    }
-    len++;
-    return len;
-}
-
-template <typename Val, typename Cont>
-inline size_t vb_encode_value(Val n, Cont& out)
-{
-    size_t len = 0;
-    while (n >= 128) {
-        out.push_back((typename Cont::value_type)(n & 0x7f));
-        len++;
-        n >>= 7;
-    }
-    out.push_back((typename Cont::value_type)(n + 128));
-    len++;
-    return len;
-}
-
-// NOTE: this function accepts up to only 4 bytes for performance
-template <typename Val>
-inline const char* vb_decode_value(const char* byte, Val& n)
-{
-    auto p = (const uint8_t *)byte;
-
-    auto b1 = *p++;
-    if (b1 & 0x80) {
-        n = b1 - 128;
-    } else {
-        auto b2 = *p++;
-        if (b2 & 0x80) {
-            n = b1 + ((b2 - 128) << 7);
-        } else {
-            auto b3 = *p++;
-            if (b3 & 0x80) {
-                n = b1 + (b2 << 7) + ((b3 - 128) << 14);
-            } else {
-                auto b4 = *p++;
-                n = b1 + (b2 << 7) + (b3 << 14) + ((b4 - 128) << 21);
-            }
-        }
-    }
-
-    return (const char*)p;
-}
-
-}
-
 namespace fst {
+
+//-----------------------------------------------------------------------------
+// fst
+//-----------------------------------------------------------------------------
 
 struct CommonPrefixSearchResult
 {
@@ -191,43 +125,6 @@ public:
     std::shared_ptr<State> copy_state(size_t id) const
     {
         return std::make_shared<State>(id, final, transitions, state_outputs);
-    }
-
-    void dot(std::ostream& os) const
-    {
-        os << "digraph{" << std::endl;
-        os << "  rankdir = LR;" << std::endl;
-        std::set<size_t> check;
-        dot_core(os, check);
-        os << "}" << std::endl;
-    }
-
-    void dot_core(std::ostream& os, std::set<size_t>& check) const
-    {
-        if (check.find(id) != check.end()) {
-            return;
-        }
-        check.insert(id);
-
-        if (final) {
-            os << "  s" << id << " [ shape = doublecircle, xlabel = \"" << join(state_outputs, "|") << "\" ];" << std::endl;
-        } else {
-            os << "  s" << id << " [ shape = circle ];" << std::endl;
-        }
-
-        for (const auto& item : transitions) {
-            auto arc = item.first;
-            auto t = item.second;
-            os << "  s" << id << "->s" << t.state->id << " [ label = \"" << arc;
-            if (!t.output.empty()) {
-                os << "/" << t.output;
-            }
-            os << "\" ];" << std::endl;
-        }
-        for (const auto& item : transitions) {
-            auto t = item.second;
-            t.state->dot_core(os, check);
-        }
     }
 
     bool operator==(const fst::State& rhs)
@@ -421,6 +318,67 @@ inline std::shared_ptr<State> make_state_machine(
             feed(item.first, item.second);
         }
     });
+}
+
+//-----------------------------------------------------------------------------
+// virtual machine
+//-----------------------------------------------------------------------------
+
+namespace {
+
+template <typename Val>
+inline size_t vb_encode_value_length(Val n)
+{
+    size_t len = 0;
+    while (n >= 128) {
+        len++;
+        n >>= 7;
+    }
+    len++;
+    return len;
+}
+
+template <typename Val, typename Cont>
+inline size_t vb_encode_value(Val n, Cont& out)
+{
+    size_t len = 0;
+    while (n >= 128) {
+        out.push_back((typename Cont::value_type)(n & 0x7f));
+        len++;
+        n >>= 7;
+    }
+    out.push_back((typename Cont::value_type)(n + 128));
+    len++;
+    return len;
+}
+
+// NOTE: this function accepts up to only 4 bytes for performance
+template <typename Val>
+inline const char* vb_decode_value(const char* byte, Val& n)
+{
+    auto p = (const uint8_t *)byte;
+
+    auto b1 = *p++;
+    if (b1 & 0x80) {
+        n = b1 - 128;
+    } else {
+        auto b2 = *p++;
+        if (b2 & 0x80) {
+            n = b1 + ((b2 - 128) << 7);
+        } else {
+            auto b3 = *p++;
+            if (b3 & 0x80) {
+                n = b1 + (b2 << 7) + ((b3 - 128) << 14);
+            } else {
+                auto b4 = *p++;
+                n = b1 + (b2 << 7) + (b3 << 14) + ((b4 - 128) << 21);
+            }
+        }
+    }
+
+    return (const char*)p;
+}
+
 }
 
 union Ope {
@@ -1036,6 +994,27 @@ inline std::vector<CommonPrefixSearchResult> common_prefix_search(
     return ret;
 }
 
+//-----------------------------------------------------------------------------
+// formatter
+//-----------------------------------------------------------------------------
+
+namespace {
+
+template <typename Cont>
+inline std::string join(const Cont& cont, const char* delm)
+{
+    std::string s;
+    for (auto i = 0u; i < cont.size(); i++) {
+        if (i != 0) {
+            s += delm;
+        }
+        s += cont[i];
+    }
+    return s;
+}
+
+}
+
 inline void print(std::shared_ptr<State> state, std::ostream& os)
 {
     std::list<Command> commands;
@@ -1064,6 +1043,46 @@ inline void print(std::shared_ptr<State> state, std::ostream& os)
             os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << std::endl;
         }
     }
+}
+
+inline void dot_core(std::shared_ptr<State> state, std::set<size_t>& check, std::ostream& os)
+{
+    auto id = state->id;
+
+    if (check.find(id) != check.end()) {
+        return;
+    }
+    check.insert(id);
+
+    if (state->final) {
+        auto state_outputs = join(state->state_outputs, "|");
+        os << "  s" << id << " [ shape = doublecircle, xlabel = \"" << state_outputs << "\" ];" << std::endl;
+    } else {
+        os << "  s" << id << " [ shape = circle ];" << std::endl;
+    }
+
+    for (const auto& item : state->transitions) {
+        auto arc = item.first;
+        auto t = item.second;
+        os << "  s" << id << "->s" << t.state->id << " [ label = \"" << arc;
+        if (!t.output.empty()) {
+            os << "/" << t.output;
+        }
+        os << "\" ];" << std::endl;
+    }
+    for (const auto& item : state->transitions) {
+        auto t = item.second;
+        dot_core(t.state, check, os);
+    }
+}
+
+inline void dot(std::shared_ptr<State> state, std::ostream& os)
+{
+    os << "digraph{" << std::endl;
+    os << "  rankdir = LR;" << std::endl;
+    std::set<size_t> check;
+    dot_core(state, check, os);
+    os << "}" << std::endl;
 }
 
 } // namespace fst
