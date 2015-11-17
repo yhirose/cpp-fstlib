@@ -277,8 +277,7 @@ inline std::shared_ptr<State> make_state_machine(T input)
             auto state = temp_states[j];
             for (auto& item: state->transitions) {
                 auto arc = item.first;
-                const auto& output = state->output(arc);
-                state->set_output(arc, word_suffix + output);
+                state->set_output(arc, word_suffix + state->output(arc));
             }
             if (state->final) {
                 state->prepend_suffix_to_state_outputs(word_suffix);
@@ -325,6 +324,8 @@ inline std::shared_ptr<State> make_state_machine(
 //-----------------------------------------------------------------------------
 
 namespace {
+
+const size_t DEFAULT_MIN_ARCS_FOR_JUMP_TABLE = 6;
 
 template <typename Val>
 inline size_t vb_encode_value_length(Val n)
@@ -579,7 +580,8 @@ inline size_t compile_core(
     std::shared_ptr<State> state,
     std::list<Command>&    commands,
     std::vector<size_t>&   state_positions,
-    size_t                 position)
+    size_t                 position,
+    size_t                 min_arcs_for_jump_table)
 {
     assert(!state->transitions.empty());
 
@@ -598,11 +600,11 @@ inline size_t compile_core(
         auto next_state = trans.state;
 
         if (!next_state->transitions.empty()) {
-            position = compile_core(next_state, commands, state_positions, position);
+            position = compile_core(next_state, commands, state_positions, position, min_arcs_for_jump_table);
         }
     }
 
-    auto use_jump_table = (arcs.size() > 4);
+    auto use_jump_table = (arcs.size() >= min_arcs_for_jump_table);
 
     std::vector<size_t> arc_positions(256, -1);
 
@@ -676,12 +678,13 @@ inline size_t compile_core(
     return position;
 }
 
-inline std::vector<char> compile(std::shared_ptr<State> state)
+inline std::vector<char> compile(std::shared_ptr<State> state,
+    size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE)
 {
     std::vector<char> byte_code;
     std::list<Command> commands;
     std::vector<size_t> state_positions(state->id + 1);
-    compile_core(state, commands, state_positions, 0);
+    compile_core(state, commands, state_positions, 0, min_arcs_for_jump_table);
     for (const auto& cmd: commands) {
         const auto& b = cmd.write_byte_code();
         byte_code.insert(byte_code.end(), b.begin(), b.end());
@@ -690,18 +693,21 @@ inline std::vector<char> compile(std::shared_ptr<State> state)
 }
 
 template <typename T>
-inline std::vector<char> build(T input)
+inline std::vector<char> build(T input,
+    size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE)
 {
-    return compile(make_state_machine(input));
+    return compile(make_state_machine(input), min_arcs_for_jump_table);
 }
 
-inline std::vector<char> build(const std::vector<std::pair<std::string, std::string>>& input)
+inline std::vector<char> build(
+    const std::vector<std::pair<std::string, std::string>>& input,
+    size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE)
 {
     return build([&](const auto& feed) {
         for (const auto& item: input) {
             feed(item.first, item.second);
         }
-    });
+    }, min_arcs_for_jump_table);
 }
 
 inline const char* read_byte_code_arc(
@@ -998,11 +1004,12 @@ inline std::string join(const Cont& cont, const char* delm)
 
 }
 
-inline void print(std::shared_ptr<State> state, std::ostream& os)
+inline void print(std::shared_ptr<State> state, std::ostream& os,
+    size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE)
 {
     std::list<Command> commands;
     std::vector<size_t> state_positions(state->id + 1);
-    compile_core(state, commands, state_positions, 0);
+    compile_core(state, commands, state_positions, 0, min_arcs_for_jump_table);
 
     os << "Ope\tSize\tID\tNextID\tArc\tLast\tFinal\tOutput\tStOuts\tJmpOff\n";
     os << "------\t------\t------\t------\t------\t------\t------\t------\t------\t------\n";
