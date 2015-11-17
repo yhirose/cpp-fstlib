@@ -19,24 +19,24 @@ std::vector<std::pair<std::string, std::string>> input = {
     { "jun", "30" },
 };
 
-auto bc = fst::build(input);
+auto t = fst::build(input);
 
-assert(fst::exact_match_search(bc.data(), bc.size(), "apr")[0] == "30");
-assert(fst::exact_match_search(bc.data(), bc.size(), "ap").empty());
-assert(fst::exact_match_search(bc.data(), bc.size(), "apr_").empty());
-assert(fst::exact_match_search(bc.data(), bc.size(), "feb")[1] == "29");
+assert(fst::exact_match_search(t.data(), t.size(), "apr")[0] == "30");
+assert(fst::exact_match_search(t.data(), t.size(), "ap").empty());
+assert(fst::exact_match_search(t.data(), t.size(), "apr_").empty());
+assert(fst::exact_match_search(t.data(), t.size(), "feb")[1] == "29");
 ```
 
 ### Common prefix search
 
 ```cpp
-auto bc = fst::build([](auto feed) {
+auto t = fst::build([](auto feed) {
     feed("a",       "0");
     feed("and",     "1");
     feed("android", "2");
 });
 
-auto ret = fst::common_prefix_search(bc.data(), bc.size(), "android phone");
+auto ret = fst::common_prefix_search(t.data(), t.size(), "android phone");
 
 assert(ret[0].length == 1);
 assert(ret[0].outputs[0] == "0");
