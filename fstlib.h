@@ -43,7 +43,7 @@ public:
     typedef std::map<char, Transition> Transitions;
 
     const size_t                   id;
-    const bool                     final = false;
+    const bool                     final;
     const Transitions              transitions;
     const std::vector<std::string> state_outputs;
 
@@ -814,49 +814,38 @@ inline bool exact_match_search(const char* byte_code, size_t size, const char* s
                 jump_offset_type, jump_offset);
 
             if (arc2 == arc) {
-                if (output_len == 0) {
-                    ;
-                } else if (output_len == 1) {
+                if (output_len == 1) {
                     prefix[prefix_len++] = *output;
-                } else {
+                } else if (output_len > 1) {
                     memcpy(&prefix[prefix_len], output, output_len);
                     prefix_len += output_len;
                 }
 
                 pstr++;
-                if ((ope & 0x02) && *pstr == '\0') { // final
-                    // NOTE: for better state_outputs compression
-                    if (state_outputs_size == 0) {
-                        callback(prefix, prefix_len);
-                    } else if (state_outputs_size == 1) {
-                        size_t state_output_len = *state_output++;
-                        if (state_output_len == 1) {
-                            prefix[prefix_len] = *state_output;
+                if (ope & 0x02) { // final
+                    if (*pstr == '\0') {
+                        // NOTE: for better state_outputs compression
+                        if (state_outputs_size == 0) {
+                            callback(prefix, prefix_len);
                         } else {
-                            memcpy(&prefix[prefix_len], state_output, state_output_len);
+                            for (auto i = 0u; i < state_outputs_size; i++) {
+                                size_t state_output_len = *state_output++;
+                                char final_state_output[BUFSIZ];
+                                memcpy(&final_state_output[0], prefix, prefix_len);
+                                memcpy(&final_state_output[prefix_len], state_output, state_output_len);
+                                callback(final_state_output, prefix_len + state_output_len);
+                                state_output += state_output_len;
+                            }
                         }
-                        prefix_len += state_output_len;
-                        callback(prefix, prefix_len);
-                    } else {
-                        for (auto i = 0u; i < state_outputs_size; i++) {
-                            size_t state_output_len = *state_output++;
-                            char final_state_output[BUFSIZ];
-                            memcpy(&final_state_output[0], prefix, prefix_len);
-                            memcpy(&final_state_output[prefix_len], state_output, state_output_len);
-                            callback(final_state_output, prefix_len + state_output_len);
-                            state_output += state_output_len;
-                        }
+                        return true;
                     }
-                    return true;
                 }
 
                 if (jump_offset_type == Ope::JumpOffsetNone) {
                     return false;
-                } else if (jump_offset_type == Ope::JumpOffsetZero) {
-                    ;
                 } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
                     p += jump_offset;
-                } else { // Ope::JumpOffsetBegin
+                } else if (jump_offset_type == Ope::JumpOffsetBegin) {
                     p = end - jump_offset;
                 }
             } else {
@@ -922,13 +911,9 @@ inline void common_prefix_search(const char* byte_code, size_t size, const char*
                 jump_offset_type, jump_offset);
 
             if (arc2 == arc) {
-                if (output_len == 0) {
-                    ;
-                }
-                else if (output_len == 1) {
+                if (output_len == 1) {
                     prefix[prefix_len++] = *output;
-                }
-                else {
+                } else if (output_len > 1) {
                     memcpy(&prefix[prefix_len], output, output_len);
                     prefix_len += output_len;
                 }
@@ -955,11 +940,9 @@ inline void common_prefix_search(const char* byte_code, size_t size, const char*
 
                 if (jump_offset_type == Ope::JumpOffsetNone) {
                     return;
-                } else if (jump_offset_type == Ope::JumpOffsetZero) {
-                    ;
                 } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
                     p += jump_offset;
-                } else { // Ope::JumpOffsetBegin
+                } else if (jump_offset_type == Ope::JumpOffsetBegin) {
                     p = end - jump_offset;
                 }
             } else {
