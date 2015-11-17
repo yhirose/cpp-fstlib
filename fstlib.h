@@ -935,7 +935,8 @@ inline std::vector<std::string> exact_match_search(const char* byte_code, size_t
 template <typename T>
 inline void common_prefix_search(const char* byte_code, size_t size, const char* str, T callback)
 {
-    std::string prefix;
+    char prefix[BUFSIZ];
+    size_t prefix_len = 0;
 
     auto p = byte_code;
     auto end = byte_code + size;
@@ -963,28 +964,33 @@ inline void common_prefix_search(const char* byte_code, size_t size, const char*
                 jump_offset_type, jump_offset);
 
             if (arc2 == arc) {
-                prefix.append(output, output_len);
+                if (output_len == 0) {
+                    ;
+                }
+                else if (output_len == 1) {
+                    prefix[prefix_len++] = *output;
+                }
+                else {
+                    memcpy(&prefix[prefix_len], output, output_len);
+                    prefix_len += output_len;
+                }
 
                 pstr++;
                 if (ope & 0x02) { // final
                     // NOTE: for better state_outputs compression
                     CommonPrefixSearchResult result;
                     result.length = pstr - str;
-                    if (state_outputs_size) {
-                        if (state_outputs_size == 1) {
-                            size_t len = *state_output++;
-                            auto suffix = std::string(state_output, len);
-                            result.outputs.push_back(prefix + suffix);
-                        } else {
-                            for (auto i = 0u; i < state_outputs_size; i++) {
-                                size_t len = *state_output++;
-                                auto suffix = std::string(state_output, len);
-                                result.outputs.push_back(prefix + suffix);
-                                state_output += len;
-                            }
+                    if (state_outputs_size == 0) {
+                        result.outputs.emplace_back(prefix, prefix_len);
+                    } else {
+                        for (auto i = 0u; i < state_outputs_size; i++) {
+                            size_t state_output_len = *state_output++;
+                            char final_state_output[BUFSIZ];
+                            memcpy(&final_state_output[0], prefix, prefix_len);
+                            memcpy(&final_state_output[prefix_len], state_output, state_output_len);
+                            result.outputs.emplace_back(final_state_output, prefix_len + state_output_len);
+                            state_output += state_output_len;
                         }
-                    } else if (!prefix.empty()) {
-                        result.outputs.push_back(prefix);
                     }
                     callback(result);
                 }
