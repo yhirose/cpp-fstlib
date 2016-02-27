@@ -371,6 +371,16 @@ inline size_t vb_decode_value(const char* data, Val& n)
 
 }
 
+const uint32_t CurrentVersion = 1;
+
+struct Header
+{
+    char matic[4] = { 'M', 'A', 'S', 'T' };
+    uint32_t version;
+    uint32_t count;
+    uint32_t reserved;
+};
+
 union Ope {
     enum OpeType {
         Arc = 0, Jmp
@@ -683,9 +693,18 @@ inline std::vector<char> compile(std::shared_ptr<State> state,
     size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE)
 {
     std::vector<char> byte_code;
+
+    Header header;
+    header.count = state->id + 1;
+    header.version = CurrentVersion;
+
+    auto p = (const char*)&header;
+    byte_code.insert(byte_code.end(), p, p + sizeof(header));
+
     std::list<Command> commands;
     std::vector<size_t> state_positions(state->id + 1);
     compile_core(state, commands, state_positions, 0, min_arcs_for_jump_table);
+
     for (const auto& cmd: commands) {
         const auto& b = cmd.write_byte_code();
         byte_code.insert(byte_code.end(), b.begin(), b.end());
@@ -799,7 +818,7 @@ inline void run(
     char prefix[BUFSIZ];
     size_t prefix_len = 0;
 
-    auto p = byte_code;
+    auto p = byte_code + sizeof(Header); // skip header
     auto end = byte_code + size;
     auto pstr = str;
     auto use_jump_table = false;
