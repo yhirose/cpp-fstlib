@@ -355,32 +355,18 @@ inline size_t vb_encode_value(Val n, Cont& out)
     return len;
 }
 
-// NOTE: this function accepts up to only 4 bytes for performance
 template <typename Val>
-inline const char* vb_decode_value_for_4bytes(const char* p, const char* end, Val& n)
+inline size_t vb_decode_value(const char* data, Val& n)
 {
-    auto val = *(const uint32_t *)p;
-
-    if (val & 0x80) {
-        n = val & 0x7f;
-        return p + 1;
-    } else {
-        if (val & 0x8000) {
-            n = (val & 0x7f) + ((val & 0x7f00) >> 1);
-            return p + 2;
-        } else {
-            if (val & 0x800000) {
-                n = (val & 0x7f) + ((val & 0x7f00) >> 1) + ((val & 0x7f0000) >> 2);
-                return p + 3;
-            } else {
-                n = (val & 0x7f) + ((val & 0x7f00) >> 1) + ((val & 0x7f0000) >> 2) + ((val & 0x7f0000) >> 3);
-                return p + 4;
-            }
-        }
+    auto p = (const uint8_t*)data;
+    size_t len = 0;
+    n = 0;
+    size_t cnt = 0;
+    while (p[len] < 128) {
+        n += (p[len++] << (7 * cnt++));
     }
-
-    // NOTREACHED
-    return nullptr;
+    n += (p[len++] - 128) << (7 * cnt);
+    return len;
 }
 
 }
@@ -441,7 +427,7 @@ struct Command
     bool                     use_jump_table;
 
     // Jmp
-    std::vector<uint16_t> arc_jump_offsets;
+    std::vector<int16_t> arc_jump_offsets;
 
     size_t byte_code_size() const
     {
@@ -481,7 +467,7 @@ struct Command
             scan_arc_jump_offsets(need_2byte, start, end);
 
             if (need_2byte) {
-                size += 2 + sizeof(uint16_t) * (end - start);
+                size += 2 + sizeof(int16_t) * (end - start);
             } else {
                 size += 2 + sizeof(uint8_t) * (end - start);
             }
@@ -547,10 +533,10 @@ struct Command
             // arc_jump_offsets
             auto count = end - start;
             byte_code.push_back(start);
-            byte_code.push_back(count);
+            byte_code.push_back(count - 1); // count is stored from 0 to 255
             if (need_2byte) {
-                const char* p = (const char*)arc_jump_offsets.data() + (sizeof(uint16_t) * start);
-                auto table_size = sizeof(uint16_t) * count;
+                auto p = (const char*)arc_jump_offsets.data() + (sizeof(int16_t) * start);
+                auto table_size = sizeof(int16_t) * count;
                 byte_code.insert(byte_code.end(), p, p + table_size);
             } else {
                 for (auto i = start; i < end; i++) {
@@ -577,7 +563,7 @@ private:
         start = -1;
         end = -1;
         for (auto i = 0; i < 256; i++) {
-            int16_t offset = arc_jump_offsets[i];
+            auto offset = arc_jump_offsets[i];
             if (offset != -1) {
                 if (offset >= 0xff) {
                     need_2byte = true;
@@ -770,7 +756,7 @@ inline const char* read_byte_code_arc(
     // jump_offset
     jump_offset_type = (Ope::JumpOffsetType)((ope & 0xC0) >> 6);
     if (jump_offset_type == Ope::JumpOffsetCurrent || jump_offset_type == Ope::JumpOffsetBegin) {
-        p = vb_decode_value_for_4bytes(p, end, jump_offset);
+        p += vb_decode_value(p, jump_offset);
     }
 
     return p;
@@ -781,18 +767,18 @@ inline const char* read_byte_code_jmp(
     uint8_t      arc,
     const char*  p,
     const char*  end,
-    size_t&      jump_offset)
+    int32_t&     jump_offset)
 {
     auto start = (uint8_t)*p++;
-    auto count = (uint8_t)*p++;
+    auto count = ((uint8_t)*p++) + 1; // count is stored from 0 to 255
 
     if (ope & 0x02) { // need_2byte
         if (start <= arc && arc < start + count) {
-            jump_offset = *(((const uint16_t*)p) + (arc - start));
+            jump_offset = *(((const int16_t*)p) + (arc - start));
         } else {
             jump_offset = -1;
         }
-        p += sizeof(uint16_t) * count;
+        p += sizeof(int16_t) * count;
     } else {
         if (start <= arc && arc < start + count) {
             jump_offset = *(((const uint8_t*)p) + (arc - start));
@@ -884,7 +870,7 @@ inline void run(
 
             use_jump_table = false;
         } else { // Jmp
-            size_t jump_offset;
+            int32_t jump_offset;
             p = read_byte_code_jmp(ope, arc, p, end, jump_offset);
             if (jump_offset == -1) {
                 return;
@@ -995,27 +981,53 @@ inline void print(std::shared_ptr<State> state, std::ostream& os,
     std::vector<size_t> state_positions(state->id + 1);
     compile_core(state, commands, state_positions, 0, min_arcs_for_jump_table);
 
-    os << "Ope\tSize\tID\tNextID\tArc\tLast\tFinal\tOutput\tStOuts\tJmpOff\n";
-    os << "------\t------\t------\t------\t------\t------\t------\t------\t------\t------\n";
+    os << "Ope\tArc\tAddr\tNxtAdr\tID\tNextID\tSize\tLast\tFinal\tOutput\tStOuts\tJpOffSz\tJmpOff\n";
+    os << "------\t------\t------\t------\t------\t------\t------\t------\t------\t------\t------\t------\t------\n";
+
+    size_t end = 0;
+    for (const auto& cmd: commands) {
+        end += cmd.byte_code_size();
+    }
+
+    size_t addr = 0;
 
     for (const auto& cmd: commands) {
+        auto size = cmd.byte_code_size();
         if (cmd.type == Ope::Arc) {
+            size_t next_addr = -1;
+            if (cmd.jump_offset_type == Ope::JumpOffsetZero) {
+                next_addr = addr + size;
+            } else if (cmd.jump_offset_type == Ope::JumpOffsetCurrent) {
+                next_addr = addr + size + cmd.jump_offset;
+            } else if (cmd.jump_offset_type == Ope::JumpOffsetBegin) {
+                next_addr = end - cmd.jump_offset;
+            }
             auto jump_offset_bytes = (cmd.jump_offset > 0 ? vb_encode_value_length(cmd.jump_offset) : 0);
+
             os << "Arc" << "\t";
-            os << cmd.byte_code_size() << "\t";
+            os << (int)(uint8_t)cmd.arc << "\t";
+            os << addr << "\t";
+            os << (int)next_addr << "\t";
             os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << "\t";
             os << (cmd.next_id == -1 ? "" : std::to_string(cmd.next_id)) << "\t";
-            os << (int)(uint8_t)cmd.arc << "\t";
+            os << size << "\t";
             os << cmd.last_transition << "\t";
             os << cmd.final << "\t";
             os << cmd.output << "\t";
             os << join(cmd.state_outputs, "/") << "\t";
-            os << (jump_offset_bytes) << ":" << (int)cmd.jump_offset << std::endl;
+            os << jump_offset_bytes << "\t";
+            os << (int)cmd.jump_offset << std::endl;
         } else { // Jmp
-            os << "Jmp" << "\t";
-            os << cmd.byte_code_size() << "\t";
-            os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << std::endl;
+            auto next_addr = addr + size;
+
+            os << "Jmp" << "\t\t";
+            os << addr << "\t";
+            os << (int)next_addr << "\t";
+            os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << "\t";
+            os << "\t";
+            os << size << std::endl;
         }
+        addr += size;
     }
 }
 
@@ -1057,6 +1069,37 @@ inline void dot(std::shared_ptr<State> state, std::ostream& os)
     std::set<size_t> check;
     dot_core(state, check, os);
     os << "}" << std::endl;
+}
+
+inline std::vector<std::string> exact_match_search(std::shared_ptr<State> state, const std::string s)
+{
+    std::string prefix;
+
+    auto it = s.begin();
+    while (it != s.end()) {
+        auto arc = *it;
+        auto next_state = state->transition(arc);
+        if (!next_state) {
+            return std::vector<std::string>();
+        }
+        prefix += state->output(arc);
+        state = next_state;
+        ++it;
+    }
+    if (!state->final || it != s.end()) {
+        return std::vector<std::string>();
+    } else {
+        // NOTE: for better state_outputs compression
+        std::vector<std::string> ret;
+        if (!state->state_outputs.empty()) {
+            for (const auto& suffix : state->state_outputs) {
+                ret.push_back(prefix + suffix);
+            }
+        } else if (!prefix.empty()) {
+            ret.push_back(prefix);
+        }
+        return ret;
+    }
 }
 
 } // namespace fst
