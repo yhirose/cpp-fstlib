@@ -375,7 +375,7 @@ const uint32_t CurrentVersion = 1;
 
 struct Header
 {
-    char matic[4] = { 'M', 'A', 'S', 'T' };
+    char magic[4];
     uint32_t version;
     uint32_t count;
     uint32_t reserved;
@@ -695,6 +695,7 @@ inline std::vector<char> compile(std::shared_ptr<State> state,
     std::vector<char> byte_code;
 
     Header header;
+    memcpy(header.magic, "MAST", 4);
     header.count = state->id + 1;
     header.version = CurrentVersion;
 
@@ -904,6 +905,11 @@ inline void run(
     }
 
     return;
+}
+
+inline Header read_header(const char* byte_code, size_t size)
+{
+    return *((const fst::Header*)byte_code);
 }
 
 template <typename T>

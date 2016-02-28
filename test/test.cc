@@ -275,3 +275,26 @@ TEST_CASE("Invalid arc jump test", "[general]")
     REQUIRE(match(byte_code, "az").empty());
 }
 
+TEST_CASE("Header test", "[general]")
+{
+    vector<pair<string, string>> input = {
+        { "apr", "30" },
+        { "aug", "31" },
+        { "dec", "31" },
+        { "feb", "28" },
+        { "feb", "29" },
+        { "jan", "31" },
+        { "jul", "31" },
+        { "jun", "30" },
+    };
+
+    auto initial_state = fst::make_state_machine(input);
+
+    auto byte_code = fst::compile(initial_state);
+    auto header = fst::read_header(byte_code.data(), byte_code.size());
+
+    REQUIRE(memcmp(header.magic, "MAST", 4) == 0);
+    REQUIRE(initial_state->id + 1 == header.count);
+    REQUIRE(header.version == 1);
+    REQUIRE(header.count);
+}
