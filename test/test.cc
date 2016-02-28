@@ -255,3 +255,23 @@ TEST_CASE("Common prefix search test2", "[general]")
     REQUIRE(ret[2].outputs[0] == "2");
 }
 
+TEST_CASE("Invalid arc jump test", "[general]")
+{
+    vector<pair<string, string>> input = {
+        { "aazasl;kfjasfl;",  "0" },
+        { "acza;slkdfjas;",   "1" },
+        { "adzs;ldfkjas;",    "2" },
+        { "aezs;lkdfjals;f",  "3" },
+        { "afzasf;laksjf;l",  "4" },
+        { "agzaslfkjsa;ldfk", "5" },
+        { "ahzaslkdfjas;df",  "6" },
+        { "aizs;ldkfjas;dlf", "7" },
+        { "akzs;ldkfjas;",    "8" },
+        { "alzs;lfkjasdf;l",  "9" },
+    };
+
+    auto byte_code = fst::build(input);
+
+    REQUIRE(match(byte_code, "az").empty());
+}
+

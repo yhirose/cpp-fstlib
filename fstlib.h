@@ -801,6 +801,9 @@ inline const char* read_byte_code_jmp(
     } else {
         if (start <= arc && arc < start + count) {
             jump_offset = *(((const uint8_t*)p) + (arc - start));
+            if (jump_offset == (uint8_t)-1) {
+                jump_offset = -1;
+            }
         } else {
             jump_offset = -1;
         }

@@ -96,7 +96,6 @@ int main(int argc, const char** argv)
                     if (outputs.empty()) {
                         cout << "not found..." << endl;
                     }
-                    cout << endl;
                 } else { // "prefix"
                     auto results = fst::common_prefix_search(byte_code.data(), byte_code.size(), line.c_str());
                     for (const auto& result : results) {
@@ -108,7 +107,6 @@ int main(int argc, const char** argv)
                     if (results.empty()) {
                         cout << "not found..." << endl;
                     }
-                    cout << endl;
                 }
             }
 
