@@ -59,18 +59,6 @@ public:
         set_modified();
     }
 
-    void set_transitions(const Transitions& transitions)
-    {
-        const_cast<Transitions&>(this->transitions) = transitions;
-        set_modified();
-    }
-
-    void set_state_outputs(const std::vector<std::string>& state_outputs)
-    {
-        const_cast<std::vector<std::string>&>(this->state_outputs) = state_outputs;
-        set_modified();
-    }
-
     std::shared_ptr<State> transition(char arc)
     {
         auto it = transitions.find(arc);
@@ -199,6 +187,15 @@ private:
     mutable size_t hash_value;
 };
 
+inline size_t get_prefix_length(const std::string& s1, const std::string& s2)
+{
+    size_t i = 0;
+    while (i < s1.length() && i < s2.length() && s1[i] == s2[i]) {
+        i++;
+    }
+    return i;
+}
+
 template <typename T>
 inline std::shared_ptr<State> make_state_machine(T input)
 {
@@ -218,15 +215,6 @@ inline std::shared_ptr<State> make_state_machine(T input)
         auto r = state->copy_state(state_id++);
         dictionary[h] = r;
         return r;
-    };
-
-    auto get_prefix_length = [](const std::string& s1, const std::string& s2)
-    {
-        size_t i = 0;
-        while (i < s1.length() && i < s2.length() && s1[i] == s2[i]) {
-            i++;
-        }
-        return i;
     };
 
     // Main algorithm ported from the technical paper
