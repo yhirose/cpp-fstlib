@@ -35,7 +35,7 @@ class State {
   };
   typedef std::map<char, Transition> Transitions;
 
-  const size_t id;
+  size_t id;
   const bool final;
   const Transitions transitions;
   const std::vector<std::string> state_outputs;
@@ -180,11 +180,15 @@ inline size_t get_prefix_length(const std::string& s1, const std::string& s2) {
   return i;
 }
 
+struct StateMachine {
+  size_t count;
+  std::shared_ptr<State> root;
+};
+
 template <typename T>
-inline std::shared_ptr<State> make_state_machine(T input) {
-  // State dictionary
+inline StateMachine make_state_machine(T input) {
   std::unordered_map<size_t, std::shared_ptr<State>> dictionary;
-  size_t state_id = 0;
+  std::list<std::shared_ptr<State>> state_list;
 
   auto find_minimized = [&](
       std::shared_ptr<State> state,
@@ -196,7 +200,9 @@ inline std::shared_ptr<State> make_state_machine(T input) {
       return it->second;
     }
 
-    auto r = state->copy_state(state_id++);
+    auto r = state->copy_state(state_list.size());
+    state_list.push_back(r);
+
     dictionary[h] = r;
     return r;
   };
@@ -280,10 +286,19 @@ inline std::shared_ptr<State> make_state_machine(T input) {
     next_state = state;
   }
 
-  return find_minimized(temp_states[0], next_state);
+  auto root = find_minimized(temp_states[0], next_state);
+  auto count = state_list.size();
+
+  // Reorder state ids in ascending order
+  for (auto& state : state_list) {
+    auto& id = state->id;
+    id = count - id - 1;
+  }
+
+  return {state_list.size(), root};
 }
 
-inline std::shared_ptr<State> make_state_machine(
+inline StateMachine make_state_machine(
     const std::vector<std::pair<std::string, std::string>>& input) {
   return make_state_machine([&](const auto& feed) {
     for (const auto& item : input) {
@@ -644,21 +659,21 @@ inline size_t compile_core(std::shared_ptr<State> state,
 }
 
 inline std::vector<char> compile(
-    std::shared_ptr<State> state,
+    const StateMachine& sm,
     size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE) {
   std::vector<char> byte_code;
 
   Header header;
   memcpy(header.magic, "MAST", 4);
-  header.count = state->id + 1;
+  header.count = sm.count;
   header.version = CurrentVersion;
 
   auto p = (const char*)&header;
   byte_code.insert(byte_code.end(), p, p + sizeof(header));
 
   std::list<Command> commands;
-  std::vector<size_t> state_positions(state->id + 1);
-  compile_core(state, commands, state_positions, 0, min_arcs_for_jump_table);
+  std::vector<size_t> state_positions(sm.count);
+  compile_core(sm.root, commands, state_positions, 0, min_arcs_for_jump_table);
 
   for (const auto& cmd : commands) {
     const auto& b = cmd.write_byte_code();
@@ -935,11 +950,11 @@ inline std::string join(const Cont& cont, const char* delm) {
 }
 
 inline void print(
-    std::shared_ptr<State> state, std::ostream& os,
+    const StateMachine& sm, std::ostream& os,
     size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE) {
   std::list<Command> commands;
-  std::vector<size_t> state_positions(state->id + 1);
-  compile_core(state, commands, state_positions, 0, min_arcs_for_jump_table);
+  std::vector<size_t> state_positions(sm.count);
+  compile_core(sm.root, commands, state_positions, 0, min_arcs_for_jump_table);
 
   os << "Ope\tArc\tAddr\tNxtAdr\tID\tNextID\tSize\tLast\tFinal\tOutput\tStOuts"
         "\tJpOffSz\tJmpOff\n";
@@ -1028,16 +1043,17 @@ inline void dot_core(std::shared_ptr<State> state, std::set<size_t>& check,
   }
 }
 
-inline void dot(std::shared_ptr<State> state, std::ostream& os) {
+inline void dot(const StateMachine& sm, std::ostream& os) {
   os << "digraph{" << std::endl;
   os << "  rankdir = LR;" << std::endl;
   std::set<size_t> check;
-  dot_core(state, check, os);
+  dot_core(sm.root, check, os);
   os << "}" << std::endl;
 }
 
-inline std::vector<std::string> exact_match_search(std::shared_ptr<State> state,
+inline std::vector<std::string> exact_match_search(const StateMachine& sm,
                                                    const std::string s) {
+  auto state = sm.root;
   std::string prefix;
 
   auto it = s.begin();

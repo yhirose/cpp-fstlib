@@ -17,12 +17,28 @@ void usage() {
 )";
 }
 
+// TODO: Support full CSV and TSV format
+std::vector<std::string> split(const std::string& input, char delimiter) {
+  std::istringstream stream(input);
+  std::string field;
+  std::vector<std::string> result;
+  while (std::getline(stream, field, delimiter)) {
+    result.push_back(field);
+  }
+  return result;
+}
+
 vector<pair<string, string>> load_input(istream& fin) {
   vector<pair<string, string>> input;
 
-  string word;
-  while (getline(fin, word)) {
-    input.emplace_back(word, to_string(input.size()));
+  string line;
+  while (getline(fin, line)) {
+    auto fields = split(line, ',');
+    if (fields.size() > 1) {
+      input.emplace_back(fields[0], fields[1]);
+    } else {
+      input.emplace_back(line, to_string(input.size()));
+    }
   }
 
   sort(input.begin(), input.end(),
@@ -74,8 +90,8 @@ int main(int argc, const char** argv) {
         return 1;
       }
 
-      auto initial_state = fst::make_state_machine(load_input(fin));
-      auto byte_code = fst::compile(initial_state);
+      auto sm = fst::make_state_machine(load_input(fin));
+      auto byte_code = fst::compile(sm);
       fout.write(byte_code.data(), byte_code.size());
 
     } else if (cmd == "search" || cmd == "prefix") {
@@ -134,8 +150,8 @@ int main(int argc, const char** argv) {
         return 1;
       }
 
-      auto initial_state = fst::make_state_machine(load_input(fin));
-      dot(initial_state, cout);
+      auto sm = fst::make_state_machine(load_input(fin));
+      dot(sm, cout);
 
     } else if (cmd == "dump") {
       if (argi >= argc) {
@@ -150,8 +166,8 @@ int main(int argc, const char** argv) {
         return 1;
       }
 
-      auto initial_state = fst::make_state_machine(load_input(fin));
-      fst::print(initial_state, cout);
+      auto sm = fst::make_state_machine(load_input(fin));
+      fst::print(sm, cout);
 
     } else if (cmd == "test") {
       if (argi >= argc) {
@@ -169,11 +185,11 @@ int main(int argc, const char** argv) {
       auto input = load_input(fin);
 
       cerr << "# making fst..." << endl;
-      auto initial_state = fst::make_state_machine(input);
-      cerr << "# state count: " << initial_state->id + 1 << endl;
+      auto sm = fst::make_state_machine(input);
+      cerr << "# state count: " << sm.count << endl;
 
       cerr << "# compile fst..." << endl;
-      auto byte_code = fst::compile(initial_state);
+      auto byte_code = fst::compile(sm);
       cerr << "# byte code size: " << byte_code.size() << endl;
 
       cerr << "# test all words..." << endl;
