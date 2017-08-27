@@ -99,7 +99,7 @@ class State {
     set_modified();
   }
 
-  std::shared_ptr<State> copy_state(size_t id) const {
+  std::shared_ptr<State> copy_state() const {
     return std::make_shared<State>(id, final, transitions, state_outputs);
   }
 
@@ -164,7 +164,6 @@ class State {
   State(State&&) = delete;
 
   void set_modified() {
-    assert(id == -1);
     is_hash_prepared = false;
   }
 
@@ -188,7 +187,7 @@ struct StateMachine {
 template <typename T>
 inline StateMachine make_state_machine(T input) {
   std::unordered_map<size_t, std::shared_ptr<State>> dictionary;
-  std::list<std::shared_ptr<State>> state_list;
+  size_t state_id = 0;
 
   auto find_minimized = [&](
       std::shared_ptr<State> state,
@@ -197,12 +196,11 @@ inline StateMachine make_state_machine(T input) {
 
     auto it = dictionary.find(h);
     if (it != dictionary.end() && (*it->second == *state)) {
+      state_id--;
       return it->second;
     }
 
-    auto r = state->copy_state(state_list.size());
-    state_list.push_back(r);
-
+    auto r = state->copy_state();
     dictionary[h] = r;
     return r;
   };
@@ -210,7 +208,7 @@ inline StateMachine make_state_machine(T input) {
   // Main algorithm ported from the technical paper
   std::vector<std::shared_ptr<State>> temp_states;
   std::string previous_word;
-  temp_states.emplace_back(std::make_shared<State>());
+  temp_states.emplace_back(std::make_shared<State>(state_id++));
 
   input([&](const std::string& current_word, std::string current_output) {
     // The following loop caluculates the length of the longest common
@@ -230,8 +228,9 @@ inline StateMachine make_state_machine(T input) {
     for (auto i = prefix_length + 1; i <= current_word.length(); i++) {
       assert(i <= temp_states.size());
       if (i == temp_states.size()) {
-        temp_states.emplace_back(std::make_shared<State>());
+        temp_states.emplace_back(std::make_shared<State>(state_id++));
       } else {
+        temp_states[i]->id = state_id++;
         temp_states[i]->clear();
       }
       auto arc = current_word[i - 1];
@@ -287,15 +286,7 @@ inline StateMachine make_state_machine(T input) {
   }
 
   auto root = find_minimized(temp_states[0], next_state);
-  auto count = state_list.size();
-
-  // Reorder state ids in ascending order
-  for (auto& state : state_list) {
-    auto& id = state->id;
-    id = count - id - 1;
-  }
-
-  return {state_list.size(), root};
+  return {state_id, root};
 }
 
 inline StateMachine make_state_machine(
