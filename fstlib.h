@@ -36,9 +36,9 @@ class State {
   typedef std::map<char, Transition> Transitions;
 
   size_t id;
-  const bool final;
-  const Transitions transitions;
-  const std::vector<std::string> state_outputs;
+  bool final;
+  Transitions transitions;
+  std::vector<std::string> state_outputs;
 
   State(size_t id = -1)
       : id(id), final(false), is_hash_prepared(false), hash_value(-1) {}
@@ -53,7 +53,7 @@ class State {
         hash_value(-1) {}
 
   void set_final(bool is_final) {
-    const_cast<bool&>(final) = is_final;
+    final = is_final;
     set_modified();
   }
 
@@ -63,39 +63,39 @@ class State {
   }
 
   void set_transition(char arc, std::shared_ptr<State> state) {
-    const_cast<Transitions&>(transitions)[arc].state = state;
+    transitions[arc].state = state;
     set_modified();
   }
 
   const std::string& output(char arc) { return transitions.at(arc).output; }
 
   void set_output(char arc, const std::string& output) {
-    const_cast<Transitions&>(transitions)[arc].output = output;
+    transitions[arc].output = output;
     set_modified();
   }
 
   void prepend_suffix_to_output(char arc, const std::string& suffix) {
-    auto& output = const_cast<Transitions&>(transitions)[arc].output;
+    auto& output = transitions.at(arc).output;
     output.insert(output.begin(), suffix.begin(), suffix.end());
     set_modified();
   }
 
   void push_to_state_outputs(const std::string& output) {
-    const_cast<std::vector<std::string>&>(state_outputs).push_back(output);
+    state_outputs.push_back(output);
     set_modified();
   }
 
   void prepend_suffix_to_state_outputs(const std::string& suffix) {
     for (auto& state_output : state_outputs) {
-      const_cast<std::string&>(state_output).insert(0, suffix);
+      state_output.insert(0, suffix);
     }
     set_modified();
   }
 
   void clear() {
     set_final(false);
-    const_cast<Transitions&>(transitions).clear();
-    const_cast<std::vector<std::string>&>(state_outputs).clear();
+    transitions.clear();
+    state_outputs.clear();
     set_modified();
   }
 
@@ -104,17 +104,15 @@ class State {
   }
 
   bool operator==(const fst::State& rhs) {
-    const auto& lhs = *this;
-
-    if (&lhs != &rhs) {
-      if (lhs.final != rhs.final ||
-          lhs.transitions.size() != rhs.transitions.size() ||
-          lhs.state_outputs.size() != rhs.state_outputs.size()) {
+    if (this != &rhs) {
+      if (final != rhs.final ||
+          transitions.size() != rhs.transitions.size() ||
+          state_outputs.size() != rhs.state_outputs.size()) {
         return false;
       }
 
       auto rit = rhs.transitions.begin();
-      for (const auto& l : lhs.transitions) {
+      for (const auto& l : transitions) {
         const auto& r = *rit;
         if (l.first != r.first) {
           return false;
@@ -128,7 +126,7 @@ class State {
         ++rit;
       }
 
-      return std::equal(lhs.state_outputs.begin(), lhs.state_outputs.end(),
+      return std::equal(state_outputs.begin(), state_outputs.end(),
                         rhs.state_outputs.begin());
     }
 
@@ -191,8 +189,8 @@ inline StateMachine make_state_machine(T input) {
 
   auto find_minimized = [&](
       std::shared_ptr<State> state,
-      std::shared_ptr<State> next_state) -> std::shared_ptr<State> {
-    auto h = state->hash(next_state ? next_state->id : -1);
+      size_t next_state_id) -> std::shared_ptr<State> {
+    auto h = state->hash(next_state_id);
 
     auto it = dictionary.find(h);
     if (it != dictionary.end() && (*it->second == *state)) {
@@ -216,12 +214,12 @@ inline StateMachine make_state_machine(T input) {
     auto prefix_length = get_prefix_length(previous_word, current_word);
 
     // We minimize the states from the suffix of the previous word
-    std::shared_ptr<State> next_state;
+    size_t next_state_id = -1;
     for (auto i = previous_word.length(); i > prefix_length; i--) {
       auto arc = previous_word[i - 1];
-      auto state = find_minimized(temp_states[i], next_state);
+      auto state = find_minimized(temp_states[i], next_state_id);
       temp_states[i - 1]->set_transition(arc, state);
-      next_state = state;
+      next_state_id = state->id;
     }
 
     // This loop initializes the tail states for the current word
@@ -277,15 +275,15 @@ inline StateMachine make_state_machine(T input) {
   });
 
   // Here we are minimizing the states of the last word
-  std::shared_ptr<State> next_state;
+  size_t next_state_id = -1;
   for (auto i = previous_word.length(); i > 0; i--) {
     auto arc = previous_word[i - 1];
-    auto state = find_minimized(temp_states[i], next_state);
+    auto state = find_minimized(temp_states[i], next_state_id);
     temp_states[i - 1]->set_transition(arc, state);
-    next_state = state;
+    next_state_id = state->id;
   }
 
-  auto root = find_minimized(temp_states[0], next_state);
+  auto root = find_minimized(temp_states[0], next_state_id);
   return {state_id, root};
 }
 
