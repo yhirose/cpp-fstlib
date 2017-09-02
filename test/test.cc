@@ -38,9 +38,9 @@ TEST_CASE("Simple virtual machine test", "[general]")
   };
 
   auto sm = fst::make_state_machine(input);
-  REQUIRE(sm.count == 13);
+  REQUIRE(sm->count == 13);
 
-  auto byte_code = fst::compile(sm);
+  auto byte_code = fst::compile(*sm);
 
   REQUIRE(match(byte_code, "apr")[0] == "30");
   REQUIRE(match(byte_code, "aug")[0] == "31");
@@ -67,9 +67,9 @@ TEST_CASE("Edge case test1", "[general]")
 
   auto sm = fst::make_state_machine(input);
 
-  REQUIRE(sm.count == 3);
+  REQUIRE(sm->count == 3);
 
-  auto byte_code = fst::compile(sm);
+  auto byte_code = fst::compile(*sm);
 
   REQUIRE(match(byte_code, "a")[0] == "0");
   REQUIRE(match(byte_code, "ab")[0] == "1");
@@ -84,9 +84,9 @@ TEST_CASE("Edge case test2", "[general]")
 
   auto sm = fst::make_state_machine(input);
 
-  REQUIRE(sm.count == 4);
+  REQUIRE(sm->count == 4);
 
-  auto byte_code = fst::compile(sm);
+  auto byte_code = fst::compile(*sm);
 
   REQUIRE(match(byte_code, "aa")[0] == "0");
   REQUIRE(match(byte_code, "abb")[0] == "1");
@@ -101,9 +101,9 @@ TEST_CASE("Edge case test3", "[general]")
 
   auto sm = fst::make_state_machine(input);
 
-  REQUIRE(sm.count == 4);
+  REQUIRE(sm->count == 4);
 
-  auto byte_code = fst::compile(sm);
+  auto byte_code = fst::compile(*sm);
 
   REQUIRE(match(byte_code, "abc")[0] == "0");
   REQUIRE(match(byte_code, "bc")[0] == "1");
@@ -120,9 +120,9 @@ TEST_CASE("Edge case test4", "[general]")
 
   auto sm = fst::make_state_machine(input);
 
-  REQUIRE(sm.count == 4);
+  REQUIRE(sm->count == 4);
 
-  auto byte_code = fst::compile(sm);
+  auto byte_code = fst::compile(*sm);
 
   REQUIRE(match(byte_code, "z")[0] == "0");
   REQUIRE(match(byte_code, "zc")[0] == "10");
@@ -141,9 +141,9 @@ TEST_CASE("Edge case test5", "[general]")
 
   auto sm = fst::make_state_machine(input);
 
-  REQUIRE(sm.count == 6);
+  REQUIRE(sm->count == 6);
 
-  auto byte_code = fst::compile(sm);
+  auto byte_code = fst::compile(*sm);
 
   REQUIRE(match(byte_code, "aba")[0] == "1");
   REQUIRE(match(byte_code, "abz")[0] == "2");
@@ -194,9 +194,9 @@ TEST_CASE("UTF-8 test", "[general]")
 
   auto sm = fst::make_state_machine(input);
 
-  REQUIRE(sm.count == 7);
+  REQUIRE(sm->count == 7);
 
-  auto byte_code = fst::compile(sm);
+  auto byte_code = fst::compile(*sm);
 
   REQUIRE(match(byte_code, u8"あ")[0] == "0");
   REQUIRE(match(byte_code, u8"あい")[0] == "1");
@@ -289,11 +289,11 @@ TEST_CASE("Header test", "[general]")
 
   auto sm = fst::make_state_machine(input);
 
-  auto byte_code = fst::compile(sm);
+  auto byte_code = fst::compile(*sm);
   auto header = fst::read_header(byte_code.data(), byte_code.size());
 
   REQUIRE(memcmp(header.magic, "MAST", 4) == 0);
-  REQUIRE(sm.count == header.count);
+  REQUIRE(sm->count == header.count);
   REQUIRE(header.version == 1);
   REQUIRE(header.count);
 }

@@ -49,7 +49,7 @@ vector<pair<string, string>> load_input(istream& fin) {
 
 vector<char> load_byte_code(istream& is) {
   is.seekg(0, ios_base::end);
-  auto size = is.tellg();
+  auto size = (unsigned int)is.tellg();
   is.seekg(0, ios_base::beg);
   vector<char> byte_code(size);
   is.read(byte_code.data(), size);
@@ -91,7 +91,7 @@ int main(int argc, const char** argv) {
       }
 
       auto sm = fst::make_state_machine(load_input(fin));
-      auto byte_code = fst::compile(sm);
+      auto byte_code = fst::compile(*sm);
       fout.write(byte_code.data(), byte_code.size());
 
     } else if (cmd == "search" || cmd == "prefix") {
@@ -107,7 +107,7 @@ int main(int argc, const char** argv) {
       }
 
       fin.seekg(0, ios_base::end);
-      auto size = fin.tellg();
+      auto size = (unsigned int)fin.tellg();
       fin.seekg(0, ios_base::beg);
       vector<char> byte_code(size);
       fin.read(byte_code.data(), size);
@@ -151,7 +151,7 @@ int main(int argc, const char** argv) {
       }
 
       auto sm = fst::make_state_machine(load_input(fin));
-      dot(sm, cout);
+      dot(*sm, cout);
 
     } else if (cmd == "dump") {
       if (argi >= argc) {
@@ -167,7 +167,7 @@ int main(int argc, const char** argv) {
       }
 
       auto sm = fst::make_state_machine(load_input(fin));
-      fst::print(sm, cout);
+      fst::print(*sm, cout);
 
     } else if (cmd == "test") {
       if (argi >= argc) {
@@ -186,10 +186,10 @@ int main(int argc, const char** argv) {
 
       cerr << "# making fst..." << endl;
       auto sm = fst::make_state_machine(input);
-      cerr << "# state count: " << sm.count << endl;
+      cerr << "# state count: " << sm->count << endl;
 
       cerr << "# compile fst..." << endl;
-      auto byte_code = fst::compile(sm);
+      auto byte_code = fst::compile(*sm);
       cerr << "# byte code size: " << byte_code.size() << endl;
 
       cerr << "# test all words..." << endl;

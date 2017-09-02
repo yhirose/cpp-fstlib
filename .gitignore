@@ -28,7 +28,7 @@
 *.app
 
 *.swp
-build/
+build*/
 Debug/
 Release/
 tags
@@ -37,3 +37,4 @@ tags
 .vs/
 out/
 sample/
+benchmark/

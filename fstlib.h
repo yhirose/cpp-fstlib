@@ -12,7 +12,6 @@
 #include <cassert>
 #include <cstring>
 #include <iostream>
-#include <list>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -21,7 +20,79 @@
 #include <unordered_map>
 #include <vector>
 
+#define USE_JUMP_OFFSET_END
+
 namespace fst {
+
+//-----------------------------------------------------------------------------
+// MurmurHash64B - 64-bit MurmurHash2 for 32-bit platforms
+//-----------------------------------------------------------------------------
+
+// URL:: https://github.com/aappleby/smhasher/blob/master/src/MurmurHash2.cpp
+// License: Public Domain
+
+inline uint64_t MurmurHash64B(const void* key, int len, uint64_t seed) {
+  const uint32_t m = 0x5bd1e995;
+  const int r = 24;
+
+  uint32_t h1 = uint32_t(seed) ^ len;
+  uint32_t h2 = uint32_t(seed >> 32);
+
+  const uint32_t* data = (const uint32_t*)key;
+
+  while (len >= 8) {
+    uint32_t k1 = *data++;
+    k1 *= m;
+    k1 ^= k1 >> r;
+    k1 *= m;
+    h1 *= m;
+    h1 ^= k1;
+    len -= 4;
+
+    uint32_t k2 = *data++;
+    k2 *= m;
+    k2 ^= k2 >> r;
+    k2 *= m;
+    h2 *= m;
+    h2 ^= k2;
+    len -= 4;
+  }
+
+  if (len >= 4) {
+    uint32_t k1 = *data++;
+    k1 *= m;
+    k1 ^= k1 >> r;
+    k1 *= m;
+    h1 *= m;
+    h1 ^= k1;
+    len -= 4;
+  }
+
+  switch (len) {
+    case 3:
+      h2 ^= ((unsigned char*)data)[2] << 16;
+    case 2:
+      h2 ^= ((unsigned char*)data)[1] << 8;
+    case 1:
+      h2 ^= ((unsigned char*)data)[0];
+      h2 *= m;
+  };
+
+  h1 ^= h2 >> 18;
+  h1 *= m;
+  h2 ^= h1 >> 22;
+  h2 *= m;
+  h1 ^= h2 >> 17;
+  h1 *= m;
+  h2 ^= h1 >> 19;
+  h2 *= m;
+
+  uint64_t h = h1;
+
+  h = (h << 32) | h2;
+
+  return h;
+}
 
 //-----------------------------------------------------------------------------
 // fst
@@ -29,145 +100,218 @@ namespace fst {
 
 class State {
  public:
+  typedef State* pointer;
+
   struct Transition {
-    std::shared_ptr<State> state;
+    pointer state;
     std::string output;
+
+    bool operator==(const Transition& rhs) const {
+      if (this != &rhs) {
+        return state == rhs.state && output == rhs.output;
+      }
+      return true;
+    }
   };
-  typedef std::map<char, Transition> Transitions;
+
+  class Transitions {
+   public:
+    std::vector<char> arcs;
+    std::vector<Transition> states_and_outputs;
+
+    bool operator==(const Transitions& rhs) const {
+      if (this != &rhs) {
+        return arcs == rhs.arcs && states_and_outputs == rhs.states_and_outputs;
+      }
+      return true;
+    }
+
+    int get_index(char arc) const {
+      for (size_t i = 0; i < arcs.size(); i++) {
+        if (arcs[i] == arc) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    const Transition& state_and_output(char arc) const {
+      auto idx = get_index(arc);
+      assert(idx != -1);
+      assert(idx < states_and_outputs.size());
+      return states_and_outputs[idx];
+    }
+
+    pointer next_state(char arc) const {
+      auto idx = get_index(arc);
+      return next_state(idx);
+    }
+
+    const std::string& output(char arc) const {
+      auto idx = get_index(arc);
+      assert(idx != -1);
+      assert(idx < states_and_outputs.size());
+      return states_and_outputs[idx].output;
+    }
+
+    template <typename T>
+    void for_each(T fn) const {
+      for (auto i = 0u; i < arcs.size(); i++) {
+        fn(arcs[i], states_and_outputs[i], i);
+      }
+    }
+
+    template <typename T>
+    void for_each_reverse(T fn) const {
+      for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
+        fn(arcs[i], states_and_outputs[i], i);
+      }
+    }
+
+    template <typename T>
+    void for_each_arc(T fn) const {
+      for (auto arc : arcs) {
+        fn(arc);
+      }
+    }
+
+   private:
+    void clear() {
+      states_and_outputs.clear();
+      arcs.clear();
+    }
+
+    void set_transition(char arc, pointer state) {
+      auto idx = get_index(arc);
+      if (idx == -1) {
+        idx = arcs.size();
+        arcs.push_back(arc);
+        states_and_outputs.emplace_back(Transition());
+      }
+      states_and_outputs[idx].state = state;
+    }
+
+    void set_output(char arc, const std::string& output) {
+      auto idx = get_index(arc);
+      assert(idx != -1);
+      assert(idx < states_and_outputs.size());
+      states_and_outputs[idx].output = output;
+    }
+
+    void insert_output(char arc, const std::string& s) {
+      auto idx = get_index(arc);
+      assert(idx != -1);
+      assert(idx < states_and_outputs.size());
+      auto& output = states_and_outputs[idx].output;
+      output.insert(output.begin(), s.begin(), s.end());
+    }
+
+    friend class State;
+  };
 
   size_t id;
+  bool in_dictionary;
   bool final;
   Transitions transitions;
   std::vector<std::string> state_outputs;
 
-  State(size_t id = -1)
-      : id(id), final(false), is_hash_prepared(false), hash_value(-1) {}
+  State(size_t id) : id(id), in_dictionary(false), final(false) {}
 
-  State(size_t id, bool final, const Transitions& transitions,
-        const std::vector<std::string>& state_outputs)
-      : id(id),
-        final(final),
-        transitions(transitions),
-        state_outputs(state_outputs),
-        is_hash_prepared(false),
-        hash_value(-1) {}
+  pointer next_state(char arc) const { return transitions.next_state(arc); }
 
-  void set_final(bool is_final) {
-    final = is_final;
-    set_modified();
+  const std::string& output(char arc) const { return transitions.output(arc); }
+
+  bool operator==(const State& rhs) const {
+    if (this != &rhs) {
+      return final == rhs.final && transitions == rhs.transitions &&
+             state_outputs == rhs.state_outputs;
+    }
+    return true;
   }
 
-  std::shared_ptr<State> transition(char arc) {
-    auto it = transitions.find(arc);
-    return it != transitions.end() ? it->second.state : nullptr;
-  }
+  uint64_t hash() const;
 
-  void set_transition(char arc, std::shared_ptr<State> state) {
-    transitions[arc].state = state;
-    set_modified();
-  }
+  void set_final(bool final) { this->final = final; }
 
-  const std::string& output(char arc) { return transitions.at(arc).output; }
+  void set_transition(char arc, pointer state) {
+    transitions.set_transition(arc, state);
+  }
 
   void set_output(char arc, const std::string& output) {
-    transitions[arc].output = output;
-    set_modified();
+    transitions.set_output(arc, output);
   }
 
   void prepend_suffix_to_output(char arc, const std::string& suffix) {
-    auto& output = transitions.at(arc).output;
-    output.insert(output.begin(), suffix.begin(), suffix.end());
-    set_modified();
+    transitions.insert_output(arc, suffix);
   }
 
   void push_to_state_outputs(const std::string& output) {
     state_outputs.push_back(output);
-    set_modified();
   }
 
   void prepend_suffix_to_state_outputs(const std::string& suffix) {
     for (auto& state_output : state_outputs) {
       state_output.insert(0, suffix);
     }
-    set_modified();
   }
 
-  void clear() {
+  void reuse(size_t state_id) {
+    id = state_id;
     set_final(false);
     transitions.clear();
     state_outputs.clear();
-    set_modified();
   }
 
-  std::shared_ptr<State> copy_state() const {
-    return std::make_shared<State>(id, final, transitions, state_outputs);
+  static pointer New(size_t state_id = -1) {
+    auto p = new State(state_id);
+    objects_.push_back(p);
+    return p;
   }
 
-  bool operator==(const fst::State& rhs) {
-    if (this != &rhs) {
-      if (final != rhs.final ||
-          transitions.size() != rhs.transitions.size() ||
-          state_outputs.size() != rhs.state_outputs.size()) {
-        return false;
-      }
-
-      auto rit = rhs.transitions.begin();
-      for (const auto& l : transitions) {
-        const auto& r = *rit;
-        if (l.first != r.first) {
-          return false;
-        }
-        if (l.second.output != r.second.output) {
-          return false;
-        }
-        if (l.second.state != r.second.state) {
-          return false;
-        }
-        ++rit;
-      }
-
-      return std::equal(state_outputs.begin(), state_outputs.end(),
-                        rhs.state_outputs.begin());
+  static void ClearMemory() {
+    for (auto p : objects_) {
+      delete p;
     }
-
-    return true;
-  }
-
-  size_t hash(size_t next_state_id) const {
-    if (!is_hash_prepared) {
-      is_hash_prepared = true;
-
-      // NOTE: `next_state_id` is used for better hash value
-      // std::string key = std::to_string(next_state_id);
-      std::string key((const char*)&next_state_id, sizeof(next_state_id));
-
-      key += (final ? "f" : "c");
-      if (final) {
-        for (const auto& state_output : state_outputs) {
-          key += state_output;
-        }
-      }
-      for (const auto& item : transitions) {
-        key += item.first;
-        key += item.second.output;
-      }
-
-      hash_value = std::hash<std::string>()(key);
-    }
-    return hash_value;
+    objects_.clear();
   }
 
  private:
   State(const State&) = delete;
   State(State&&) = delete;
 
-  void set_modified() {
-    is_hash_prepared = false;
+  static std::vector<pointer> objects_;
+};
+
+inline uint64_t State::hash() const {
+  char buff[1024];  // TOOD: large enough?
+  size_t buff_len = 0;
+
+  if (final) {
+    for (const auto& state_output : state_outputs) {
+      if (!state_outputs.empty()) {
+        memcpy(&buff[buff_len], state_output.data(), state_output.size());
+        buff_len += state_output.size();
+        buff[buff_len++] = '\t';
+      }
+    }
   }
 
-  mutable bool is_hash_prepared;
-  mutable size_t hash_value;
-};
+  buff[buff_len++] = '\n';
+
+  transitions.for_each([&](char arc, const State::Transition& t, int i) {
+    buff[buff_len++] = arc;
+    uint32_t val = t.state->id;
+    memcpy(&buff[buff_len], &val, sizeof(val));
+    buff_len += sizeof(val);
+    memcpy(&buff[buff_len], t.output.data(), t.output.size());
+    buff_len += t.output.size();
+    buff[buff_len++] = '\t';
+  });
+
+  return MurmurHash64B(buff, buff_len, 0);
+}
+
+std::vector<State::pointer> State::objects_;
 
 inline size_t get_prefix_length(const std::string& s1, const std::string& s2) {
   size_t i = 0;
@@ -177,36 +321,54 @@ inline size_t get_prefix_length(const std::string& s1, const std::string& s2) {
   return i;
 }
 
-struct StateMachine {
+class StateMachine {
+ public:
   size_t count;
-  std::shared_ptr<State> root;
+  State::pointer root;
+
+  StateMachine(size_t count, State::pointer root) : count(count), root(root) {}
+  ~StateMachine() { State::ClearMemory(); }
+
+ private:
+  StateMachine(const StateMachine&) = delete;
+  StateMachine(StateMachine&&) = delete;
+};
+
+// NOTE: unordered_set is not used here, because it uses size_t as hash value
+// which becomes 32-bit on 32-bit platforms. But we want to use 64-bit hash
+// value.
+typedef std::unordered_map<uint64_t, State::pointer> Dictionary;
+
+inline State::pointer find_minimized(State::pointer state,
+                                     Dictionary& dictionary, size_t& state_id,
+                                     bool& found) {
+  auto h = state->hash();
+
+  auto it = dictionary.find(h);
+  if (it != dictionary.end()) {
+    if (*it->second == *state) {
+      state_id--;
+      found = true;
+      return it->second;
+    }
+  }
+
+  // NOTE: COPY_STATE is very expensive...
+  state->in_dictionary = true;
+  dictionary[h] = state;
+  found = false;
+  return state;
 };
 
 template <typename T>
-inline StateMachine make_state_machine(T input) {
-  std::unordered_map<size_t, std::shared_ptr<State>> dictionary;
+inline std::shared_ptr<StateMachine> make_state_machine(T input) {
+  Dictionary dictionary;
   size_t state_id = 0;
 
-  auto find_minimized = [&](
-      std::shared_ptr<State> state,
-      size_t next_state_id) -> std::shared_ptr<State> {
-    auto h = state->hash(next_state_id);
-
-    auto it = dictionary.find(h);
-    if (it != dictionary.end() && (*it->second == *state)) {
-      state_id--;
-      return it->second;
-    }
-
-    auto r = state->copy_state();
-    dictionary[h] = r;
-    return r;
-  };
-
   // Main algorithm ported from the technical paper
-  std::vector<std::shared_ptr<State>> temp_states;
+  std::vector<State::pointer> temp_states;
   std::string previous_word;
-  temp_states.emplace_back(std::make_shared<State>(state_id++));
+  temp_states.push_back(State::New(state_id++));
 
   input([&](const std::string& current_word, std::string current_output) {
     // The following loop caluculates the length of the longest common
@@ -214,22 +376,25 @@ inline StateMachine make_state_machine(T input) {
     auto prefix_length = get_prefix_length(previous_word, current_word);
 
     // We minimize the states from the suffix of the previous word
-    size_t next_state_id = -1;
     for (auto i = previous_word.length(); i > prefix_length; i--) {
       auto arc = previous_word[i - 1];
-      auto state = find_minimized(temp_states[i], next_state_id);
+      bool found;
+      auto state = find_minimized(temp_states[i], dictionary, state_id, found);
+      if (!found) {
+        // Ownership of the object in temp_states[i] has been moved to the
+        // dictionary...
+        temp_states[i] = State::New();
+      }
       temp_states[i - 1]->set_transition(arc, state);
-      next_state_id = state->id;
     }
 
     // This loop initializes the tail states for the current word
     for (auto i = prefix_length + 1; i <= current_word.length(); i++) {
       assert(i <= temp_states.size());
       if (i == temp_states.size()) {
-        temp_states.emplace_back(std::make_shared<State>(state_id++));
+        temp_states.push_back(State::New(state_id++));
       } else {
-        temp_states[i]->id = state_id++;
-        temp_states[i]->clear();
+        temp_states[i]->reuse(state_id++);
       }
       auto arc = current_word[i - 1];
       temp_states[i - 1]->set_transition(arc, temp_states[i]);
@@ -251,13 +416,14 @@ inline StateMachine make_state_machine(T input) {
 
       prev_state->set_output(arc, common_prefix);
 
-      auto state = temp_states[j];
-      for (auto& item : state->transitions) {
-        auto arc = item.first;
-        state->prepend_suffix_to_output(arc, word_suffix);
-      }
-      if (state->final) {
-        state->prepend_suffix_to_state_outputs(word_suffix);
+      if (!word_suffix.empty()) {
+        auto state = temp_states[j];
+        state->transitions.for_each_arc([&](char arc) {
+          state->prepend_suffix_to_output(arc, word_suffix);
+        });
+        if (state->final) {
+          state->prepend_suffix_to_state_outputs(word_suffix);
+        }
       }
       current_output = current_output.substr(common_prefix_length);
     }
@@ -275,19 +441,19 @@ inline StateMachine make_state_machine(T input) {
   });
 
   // Here we are minimizing the states of the last word
-  size_t next_state_id = -1;
   for (auto i = previous_word.length(); i > 0; i--) {
     auto arc = previous_word[i - 1];
-    auto state = find_minimized(temp_states[i], next_state_id);
+    bool found;
+    auto state = find_minimized(temp_states[i], dictionary, state_id, found);
     temp_states[i - 1]->set_transition(arc, state);
-    next_state_id = state->id;
   }
 
-  auto root = find_minimized(temp_states[0], next_state_id);
-  return {state_id, root};
+  bool found;
+  auto root = find_minimized(temp_states[0], dictionary, state_id, found);
+  return std::make_shared<StateMachine>(state_id, root);
 }
 
-inline StateMachine make_state_machine(
+inline std::shared_ptr<StateMachine> make_state_machine(
     const std::vector<std::pair<std::string, std::string>>& input) {
   return make_state_machine([&](const auto& feed) {
     for (const auto& item : input) {
@@ -315,15 +481,15 @@ inline size_t vb_encode_value_length(Val n) {
   return len;
 }
 
-template <typename Val, typename Cont>
-inline size_t vb_encode_value(Val n, Cont& out) {
+template <typename Val>
+inline size_t vb_encode_value(Val n, char* out) {
   size_t len = 0;
   while (n >= 128) {
-    out.push_back((typename Cont::value_type)(n & 0x7f));
+    out[len] = (char)(n & 0x7f);
     len++;
     n >>= 7;
   }
-  out.push_back((typename Cont::value_type)(n + 128));
+  out[len] = (char)(n + 128);
   len++;
   return len;
 }
@@ -358,7 +524,7 @@ union Ope {
     JumpOffsetNone = 0,
     JumpOffsetZero,
     JumpOffsetCurrent,
-    JumpOffsetBegin
+    JumpOffsetEnd
   };
 
   enum OutputType { OutputNone = 0, OutputOne, OutputTwo, OutputLength };
@@ -447,17 +613,17 @@ struct Command {
     return size;
   }
 
-  std::vector<char> write_byte_code() const {
-    std::vector<char> byte_code;
+  void write_byte_code(std::vector<char>& byte_code) const {
+    auto save_size = byte_code.size();
 
     if (type == Ope::Arc) {
       // ope
       Ope ope = {Ope::Arc,
                  final,
                  last_transition,
-                 output_type,
+                 (unsigned int)output_type,
                  has_state_outputs(),
-                 jump_offset_type};
+                 (unsigned int)jump_offset_type};
       byte_code.push_back(ope.byte);
 
       // arc
@@ -485,9 +651,9 @@ struct Command {
 
       // jump_offset
       if (jump_offset > 0) {
-        std::vector<char> vb;
-        vb_encode_value<uint32_t>(jump_offset, vb);
-        byte_code.insert(byte_code.end(), vb.data(), vb.data() + vb.size());
+        char vb[9];  // To hold 64 bits value
+        auto vb_len = vb_encode_value(jump_offset, vb);
+        byte_code.insert(byte_code.end(), vb, vb + vb_len);
       }
     } else {  // type == Jmp
       bool need_2byte;
@@ -501,8 +667,9 @@ struct Command {
 
       // arc_jump_offsets
       auto count = end - start;
-      byte_code.push_back(start);
-      byte_code.push_back(count - 1);  // count is stored from 0 to 255
+      byte_code.push_back((unsigned char)start);
+      byte_code.push_back(
+          (unsigned char)(count - 1));  // count is stored from 0 to 255
       if (need_2byte) {
         auto p =
             (const char*)arc_jump_offsets.data() + (sizeof(int16_t) * start);
@@ -511,13 +678,12 @@ struct Command {
       } else {
         for (auto i = start; i < end; i++) {
           auto offset = arc_jump_offsets[i];
-          byte_code.push_back(offset);
+          byte_code.push_back((unsigned char)offset);
         }
       }
     }
 
-    assert(byte_code.size() == byte_code_size());
-    return byte_code;
+    assert(byte_code.size() - save_size == byte_code_size());
   }
 
  private:
@@ -547,60 +713,56 @@ struct Command {
   }
 };
 
-inline size_t compile_core(std::shared_ptr<State> state,
-                           std::list<Command>& commands,
+typedef std::vector<Command> Commands;
+
+inline size_t compile_core(State::pointer state, Commands& commands,
                            std::vector<size_t>& state_positions,
                            size_t position, size_t min_arcs_for_jump_table) {
-  assert(!state->transitions.empty());
+  assert(state->transitions.arcs.size() > 0);
 
   if (state_positions[state->id]) {
     return position;
   }
 
-  std::vector<char> arcs;
-  for (const auto& item : state->transitions) {
-    arcs.push_back(item.first);
-  }
+  auto arcs_count = state->transitions.arcs.size();
 
-  for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
-    auto arc = arcs[i];
-    const auto& trans = state->transitions.at(arc);
-    auto next_state = trans.state;
+  state->transitions.for_each_reverse(
+      [&](char arc, const State::Transition& t, int i) {
+        auto next_state = t.state;
+        if (next_state->transitions.arcs.size() > 0) {
+          position = compile_core(next_state, commands, state_positions,
+                                  position, min_arcs_for_jump_table);
+        }
+      });
 
-    if (!next_state->transitions.empty()) {
-      position = compile_core(next_state, commands, state_positions, position,
-                              min_arcs_for_jump_table);
-    }
-  }
+  auto use_jump_table = (arcs_count >= min_arcs_for_jump_table);
 
-  auto use_jump_table = (arcs.size() >= min_arcs_for_jump_table);
+  size_t arc_positions[256];
+  memset(arc_positions, -1, sizeof(arc_positions));
 
-  std::vector<size_t> arc_positions(256, -1);
-
-  for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
-    auto arc = arcs[i];
-    const auto& trans = state->transitions.at(arc);
-    auto next_state = trans.state;
+  state->transitions.for_each_reverse([&](char arc, const State::Transition& t,
+                                          int i) {
+    auto next_state = t.state;
 
     Command cmd;
     cmd.type = Ope::Arc;
     cmd.id = state->id;
     cmd.next_id = next_state->id;
     cmd.final = next_state->final;
-    cmd.last_transition = (i + 1 == arcs.size());
+    cmd.last_transition = (i + 1 == arcs_count);
     cmd.arc = arc;
-    cmd.output = trans.output;
-    if (trans.output.empty()) {
+    cmd.output = t.output;
+    if (cmd.output.empty()) {
       cmd.output_type = Ope::OutputNone;
-    } else if (trans.output.length() == 1) {
+    } else if (cmd.output.length() == 1) {
       cmd.output_type = Ope::OutputOne;
-    } else if (trans.output.length() == 2) {
+    } else if (cmd.output.length() == 2) {
       cmd.output_type = Ope::OutputTwo;
     } else {
       cmd.output_type = Ope::OutputLength;
     }
     cmd.state_outputs = next_state->state_outputs;
-    if (next_state->transitions.empty()) {
+    if (next_state->transitions.arcs.size() == 0) {
       cmd.jump_offset_type = Ope::JumpOffsetNone;
       cmd.jump_offset = -1;
     } else {
@@ -608,23 +770,27 @@ inline size_t compile_core(std::shared_ptr<State> state,
       if (offset == 0) {
         cmd.jump_offset_type = Ope::JumpOffsetZero;
       } else {
+#ifdef USE_JUMP_OFFSET_END
         auto cur_byte = vb_encode_value_length(offset);
-        auto beg_byte = vb_encode_value_length(state_positions[next_state->id]);
-        if (beg_byte < cur_byte) {
+        auto end_byte = vb_encode_value_length(state_positions[next_state->id]);
+        if (end_byte < cur_byte) {
           offset = state_positions[next_state->id];
-          cmd.jump_offset_type = Ope::JumpOffsetBegin;
+          cmd.jump_offset_type = Ope::JumpOffsetEnd;
         } else {
           cmd.jump_offset_type = Ope::JumpOffsetCurrent;
         }
+#else
+        cmd.jump_offset_type = Ope::JumpOffsetCurrent;
+#endif
       }
       cmd.jump_offset = offset;
     }
     cmd.use_jump_table = use_jump_table;
 
-    commands.push_front(cmd);
     position += cmd.byte_code_size();
+    commands.emplace_back(std::move(cmd));
     arc_positions[(uint8_t)arc] = position;
-  }
+  });
 
   if (use_jump_table) {
     Command cmd;
@@ -635,12 +801,12 @@ inline size_t compile_core(std::shared_ptr<State> state,
     for (auto i = 0; i < 256; i++) {
       if (arc_positions[i] != -1) {
         auto offset = position - arc_positions[i];
-        cmd.arc_jump_offsets[i] = offset;
+        cmd.arc_jump_offsets[i] = (int16_t)offset;
       }
     }
 
-    commands.push_front(cmd);
     position += cmd.byte_code_size();
+    commands.emplace_back(std::move(cmd));
   }
 
   state_positions[state->id] = position;
@@ -660,21 +826,24 @@ inline std::vector<char> compile(
   auto p = (const char*)&header;
   byte_code.insert(byte_code.end(), p, p + sizeof(header));
 
-  std::list<Command> commands;
+  Commands commands;
   std::vector<size_t> state_positions(sm.count);
   compile_core(sm.root, commands, state_positions, 0, min_arcs_for_jump_table);
 
-  for (const auto& cmd : commands) {
-    const auto& b = cmd.write_byte_code();
-    byte_code.insert(byte_code.end(), b.begin(), b.end());
+  auto rit = commands.rbegin();
+  while (rit != commands.rend()) {
+    rit->write_byte_code(byte_code);
+    ++rit;
   }
+
   return byte_code;
 }
 
 template <typename T>
 inline std::vector<char> build(
     T input, size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE) {
-  return compile(make_state_machine(input), min_arcs_for_jump_table);
+  auto sm = make_state_machine(input);
+  return compile(*sm, min_arcs_for_jump_table);
 }
 
 inline std::vector<char> build(
@@ -727,7 +896,7 @@ inline const char* read_byte_code_arc(
   // jump_offset
   jump_offset_type = (Ope::JumpOffsetType)((ope & 0xC0) >> 6);
   if (jump_offset_type == Ope::JumpOffsetCurrent ||
-      jump_offset_type == Ope::JumpOffsetBegin) {
+      jump_offset_type == Ope::JumpOffsetEnd) {
     p += vb_decode_value(p, jump_offset);
   }
 
@@ -826,7 +995,7 @@ inline void run(const char* byte_code, size_t size, const char* str,
           return;
         } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
           p += jump_offset;
-        } else if (jump_offset_type == Ope::JumpOffsetBegin) {
+        } else if (jump_offset_type == Ope::JumpOffsetEnd) {
           p = end - jump_offset;
         }
       } else {
@@ -941,7 +1110,7 @@ inline std::string join(const Cont& cont, const char* delm) {
 inline void print(
     const StateMachine& sm, std::ostream& os,
     size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE) {
-  std::list<Command> commands;
+  Commands commands;
   std::vector<size_t> state_positions(sm.count);
   compile_core(sm.root, commands, state_positions, 0, min_arcs_for_jump_table);
 
@@ -951,13 +1120,17 @@ inline void print(
         "\t------\t------\t------\t------\n";
 
   size_t end = 0;
-  for (const auto& cmd : commands) {
-    end += cmd.byte_code_size();
+  auto rit = commands.rbegin();
+  while (rit != commands.rend()) {
+    end += rit->byte_code_size();
+    ++rit;
   }
 
   size_t addr = 0;
 
-  for (const auto& cmd : commands) {
+  rit = commands.rbegin();
+  while (rit != commands.rend()) {
+    const auto& cmd = *rit;
     auto size = cmd.byte_code_size();
     if (cmd.type == Ope::Arc) {
       size_t next_addr = -1;
@@ -965,7 +1138,7 @@ inline void print(
         next_addr = addr + size;
       } else if (cmd.jump_offset_type == Ope::JumpOffsetCurrent) {
         next_addr = addr + size + cmd.jump_offset;
-      } else if (cmd.jump_offset_type == Ope::JumpOffsetBegin) {
+      } else if (cmd.jump_offset_type == Ope::JumpOffsetEnd) {
         next_addr = end - cmd.jump_offset;
       }
       auto jump_offset_bytes =
@@ -997,10 +1170,11 @@ inline void print(
       os << size << std::endl;
     }
     addr += size;
+    ++rit;
   }
 }
 
-inline void dot_core(std::shared_ptr<State> state, std::set<size_t>& check,
+inline void dot_core(State::pointer state, std::set<size_t>& check,
                      std::ostream& os) {
   auto id = state->id;
 
@@ -1017,19 +1191,17 @@ inline void dot_core(std::shared_ptr<State> state, std::set<size_t>& check,
     os << "  s" << id << " [ shape = circle ];" << std::endl;
   }
 
-  for (const auto& item : state->transitions) {
-    auto arc = item.first;
-    auto t = item.second;
+  state->transitions.for_each([&](char arc, const State::Transition& t, int i) {
     os << "  s" << id << "->s" << t.state->id << " [ label = \"" << arc;
     if (!t.output.empty()) {
       os << "/" << t.output;
     }
     os << "\" ];" << std::endl;
-  }
-  for (const auto& item : state->transitions) {
-    auto t = item.second;
+  });
+
+  state->transitions.for_each([&](char arc, const State::Transition& t, int i) {
     dot_core(t.state, check, os);
-  }
+  });
 }
 
 inline void dot(const StateMachine& sm, std::ostream& os) {
@@ -1048,7 +1220,7 @@ inline std::vector<std::string> exact_match_search(const StateMachine& sm,
   auto it = s.begin();
   while (it != s.end()) {
     auto arc = *it;
-    auto next_state = state->transition(arc);
+    auto next_state = state->next_state(arc);
     if (!next_state) {
       return std::vector<std::string>();
     }
