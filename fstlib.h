@@ -508,15 +508,6 @@ inline size_t vb_decode_value(const char* data, Val& n) {
 }
 }
 
-const uint32_t CurrentVersion = 1;
-
-struct Header {
-  char magic[4];
-  uint32_t version;
-  uint32_t count;
-  uint32_t reserved;
-};
-
 union Ope {
   enum OpeType { Arc = 0, Jmp };
 
@@ -818,14 +809,6 @@ inline std::vector<char> compile(
     size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE) {
   std::vector<char> byte_code;
 
-  Header header;
-  memcpy(header.magic, "MAST", 4);
-  header.count = sm.count;
-  header.version = CurrentVersion;
-
-  auto p = (const char*)&header;
-  byte_code.insert(byte_code.end(), p, p + sizeof(header));
-
   Commands commands;
   std::vector<size_t> state_positions(sm.count);
   compile_core(sm.root, commands, state_positions, 0, min_arcs_for_jump_table);
@@ -936,7 +919,7 @@ inline void run(const char* byte_code, size_t size, const char* str,
   char prefix[BUFSIZ];
   size_t prefix_len = 0;
 
-  auto p = byte_code + sizeof(Header);  // skip header
+  auto p = byte_code;
   auto end = byte_code + size;
   auto pstr = str;
   auto use_jump_table = false;
@@ -1018,10 +1001,6 @@ inline void run(const char* byte_code, size_t size, const char* str,
   }
 
   return;
-}
-
-inline Header read_header(const char* byte_code, size_t size) {
-  return *((const fst::Header*)byte_code);
 }
 
 template <typename T>
