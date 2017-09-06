@@ -82,8 +82,12 @@ common_prefix_search(const char* byte_code, size_t byte_code_size, const char* s
 Tested compilers
 ----------------
 
+  * Visual Studio 2017
   * Visual Studio 2015
+  * Clang 4
+  * Clang 3.8
   * Clang 3.5
+  * g++ 5.4
 
 License
 -------
