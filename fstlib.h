@@ -21,8 +21,15 @@
 #include <vector>
 
 #define USE_JUMP_OFFSET_END
+#define USE_UINT32_OUTPUT_T
 
 namespace fst {
+
+#ifdef USE_UINT32_OUTPUT_T
+typedef uint32_t output_t;
+#else
+typedef std::string output_t;
+#endif
 
 //-----------------------------------------------------------------------------
 // MurmurHash64B - 64-bit MurmurHash2 for 32-bit platforms
@@ -31,9 +38,9 @@ namespace fst {
 // URL:: https://github.com/aappleby/smhasher/blob/master/src/MurmurHash2.cpp
 // License: Public Domain
 
-inline uint64_t MurmurHash64B(const void* key, int len, uint64_t seed) {
+inline uint64_t MurmurHash64B(const void* key, size_t len, uint64_t seed) {
   const uint32_t m = 0x5bd1e995;
-  const int r = 24;
+  const size_t r = 24;
 
   uint32_t h1 = uint32_t(seed) ^ len;
   uint32_t h2 = uint32_t(seed >> 32);
@@ -104,7 +111,7 @@ class State {
 
   struct Transition {
     pointer state;
-    std::string output;
+    output_t output;
 
     bool operator==(const Transition& rhs) const {
       if (this != &rhs) {
@@ -137,21 +144,13 @@ class State {
 
     const Transition& state_and_output(char arc) const {
       auto idx = get_index(arc);
-      assert(idx != -1);
-      assert(idx < states_and_outputs.size());
       return states_and_outputs[idx];
     }
 
-    pointer next_state(char arc) const {
-      auto idx = get_index(arc);
-      return next_state(idx);
-    }
+    pointer next_state(char arc) const { return state_and_output(arc).state; }
 
-    const std::string& output(char arc) const {
-      auto idx = get_index(arc);
-      assert(idx != -1);
-      assert(idx < states_and_outputs.size());
-      return states_and_outputs[idx].output;
+    const output_t& output(char arc) const {
+      return state_and_output(arc).output;
     }
 
     template <typename T>
@@ -163,8 +162,9 @@ class State {
 
     template <typename T>
     void for_each_reverse(T fn) const {
-      for (auto i = (int)arcs.size() - 1; i >= 0; i--) {
-        fn(arcs[i], states_and_outputs[i], i);
+      for (auto i = arcs.size(); i > 0; i--) {
+        auto idx = i - 1;
+        fn(arcs[idx], states_and_outputs[idx], idx);
       }
     }
 
@@ -191,19 +191,19 @@ class State {
       states_and_outputs[idx].state = state;
     }
 
-    void set_output(char arc, const std::string& output) {
+    void set_output(char arc, const output_t& val) {
       auto idx = get_index(arc);
-      assert(idx != -1);
-      assert(idx < states_and_outputs.size());
-      states_and_outputs[idx].output = output;
+      states_and_outputs[idx].output = val;
     }
 
-    void insert_output(char arc, const std::string& s) {
+    void insert_output(char arc, const output_t& val) {
       auto idx = get_index(arc);
-      assert(idx != -1);
-      assert(idx < states_and_outputs.size());
       auto& output = states_and_outputs[idx].output;
-      output.insert(output.begin(), s.begin(), s.end());
+#ifdef USE_UINT32_OUTPUT_T
+      output += val;
+#else
+      output.insert(output.begin(), val.begin(), val.end());
+#endif
     }
 
     friend class State;
@@ -213,13 +213,13 @@ class State {
   bool in_dictionary;
   bool final;
   Transitions transitions;
-  std::vector<std::string> state_outputs;
+  std::vector<output_t> state_outputs;
 
   State(size_t id) : id(id), in_dictionary(false), final(false) {}
 
   pointer next_state(char arc) const { return transitions.next_state(arc); }
 
-  const std::string& output(char arc) const { return transitions.output(arc); }
+  const output_t& output(char arc) const { return transitions.output(arc); }
 
   bool operator==(const State& rhs) const {
     if (this != &rhs) {
@@ -237,21 +237,34 @@ class State {
     transitions.set_transition(arc, state);
   }
 
-  void set_output(char arc, const std::string& output) {
+  void set_output(char arc, const output_t& output) {
     transitions.set_output(arc, output);
   }
 
-  void prepend_suffix_to_output(char arc, const std::string& suffix) {
+  void prepend_suffix_to_output(char arc, const output_t& suffix) {
     transitions.insert_output(arc, suffix);
   }
 
-  void push_to_state_outputs(const std::string& output) {
+  void push_to_state_outputs(const output_t& output) {
+    if (state_outputs.empty()) {
+      // NOTE: The following code makes good performance...
+      state_outputs.push_back(0);
+    }
     state_outputs.push_back(output);
   }
 
-  void prepend_suffix_to_state_outputs(const std::string& suffix) {
-    for (auto& state_output : state_outputs) {
-      state_output.insert(0, suffix);
+  void prepend_suffix_to_state_outputs(const output_t& suffix) {
+    if (state_outputs.empty()) {
+      // NOTE: The following code makes good performance...
+      state_outputs.push_back(suffix);
+    } else {
+      for (auto& state_output : state_outputs) {
+#ifdef USE_UINT32_OUTPUT_T
+        state_output += suffix;
+#else
+        state_output.insert(0, suffix);
+#endif
+      }
     }
   }
 
@@ -288,24 +301,33 @@ inline uint64_t State::hash() const {
 
   if (final) {
     for (const auto& state_output : state_outputs) {
-      if (!state_outputs.empty()) {
-        memcpy(&buff[buff_len], state_output.data(), state_output.size());
-        buff_len += state_output.size();
-        buff[buff_len++] = '\t';
-      }
+#ifdef USE_UINT32_OUTPUT_T
+      memcpy(&buff[buff_len], &state_output, sizeof(state_output));
+      buff_len += sizeof(state_output);
+      buff[buff_len++] = '\t';
+#else
+      memcpy(&buff[buff_len], state_output.data(), state_output.size());
+      buff_len += state_output.size();
+      buff[buff_len++] = '\t';
+#endif
     }
   }
 
   buff[buff_len++] = '\n';
 
-  transitions.for_each([&](char arc, const State::Transition& t, int i) {
+  transitions.for_each([&](char arc, const State::Transition& t, size_t i) {
     buff[buff_len++] = arc;
     uint32_t val = t.state->id;
     memcpy(&buff[buff_len], &val, sizeof(val));
     buff_len += sizeof(val);
+#ifdef USE_UINT32_OUTPUT_T
+    memcpy(&buff[buff_len], &t.output, sizeof(t.output));
+    buff_len += sizeof(t.output);
+    buff[buff_len++] = '\t';
+#else
     memcpy(&buff[buff_len], t.output.data(), t.output.size());
     buff_len += t.output.size();
-    buff[buff_len++] = '\t';
+#endif
   });
 
   return MurmurHash64B(buff, buff_len, 0);
@@ -360,6 +382,32 @@ inline State::pointer find_minimized(State::pointer state,
   return state;
 };
 
+#ifdef USE_UINT32_OUTPUT_T
+inline output_t get_suffix(output_t a, output_t b) { return a - b; }
+#else
+inline output_t get_suffix(const output_t& a, const output_t& b) {
+  return a.substr(b.size());
+}
+#endif
+
+#ifdef USE_UINT32_OUTPUT_T
+inline output_t get_common_previx(output_t a, output_t b) {
+  return std::min(a, b);
+}
+#else
+inline output_t get_common_previx(const output_t& a, const output_t& b) {
+  return a.substr(0, get_prefix_length(a, b));
+}
+#endif
+
+template <typename T>
+inline void get_common_prefix_and_word_suffix(const T& current_output,
+                                              const T& output, T& common_prefix,
+                                              T& word_suffix) {
+  common_prefix = get_common_previx(output, current_output);
+  word_suffix = get_suffix(output, common_prefix);
+}
+
 template <typename T>
 inline std::shared_ptr<StateMachine> make_state_machine(T input) {
   Dictionary dictionary;
@@ -370,7 +418,7 @@ inline std::shared_ptr<StateMachine> make_state_machine(T input) {
   std::string previous_word;
   temp_states.push_back(State::New(state_id++));
 
-  input([&](const std::string& current_word, std::string current_output) {
+  input([&](const std::string& current_word, output_t current_output) {
     // The following loop caluculates the length of the longest common
     // prefix of 'current_word' and 'previous_word'
     auto prefix_length = get_prefix_length(previous_word, current_word);
@@ -403,20 +451,33 @@ inline std::shared_ptr<StateMachine> make_state_machine(T input) {
     if (current_word != previous_word) {
       auto state = temp_states[current_word.length()];
       state->set_final(true);
-      state->push_to_state_outputs("");
+      // NOTE: The following code makes bad performance...
+      // state->push_to_state_outputs("");
     }
 
     for (auto j = 1u; j <= prefix_length; j++) {
       auto prev_state = temp_states[j - 1];
       auto arc = current_word[j - 1];
+
       const auto& output = prev_state->output(arc);
-      auto common_prefix_length = get_prefix_length(output, current_output);
-      auto common_prefix = output.substr(0, common_prefix_length);
-      auto word_suffix = output.substr(common_prefix_length);
+
+#ifdef USE_UINT32_OUTPUT_T
+      output_t common_prefix = 0;
+      output_t word_suffix = 0;
+#else
+      output_t common_prefix;
+      output_t word_suffix;
+#endif
+      get_common_prefix_and_word_suffix(current_output, output, common_prefix,
+                                        word_suffix);
 
       prev_state->set_output(arc, common_prefix);
 
+#ifdef USE_UINT32_OUTPUT_T
+      if (word_suffix != 0) {
+#else
       if (!word_suffix.empty()) {
+#endif
         auto state = temp_states[j];
         state->transitions.for_each_arc([&](char arc) {
           state->prepend_suffix_to_output(arc, word_suffix);
@@ -425,7 +486,8 @@ inline std::shared_ptr<StateMachine> make_state_machine(T input) {
           state->prepend_suffix_to_state_outputs(word_suffix);
         }
       }
-      current_output = current_output.substr(common_prefix_length);
+
+      current_output = get_suffix(current_output, common_prefix);
     }
 
     if (current_word == previous_word) {
@@ -454,7 +516,7 @@ inline std::shared_ptr<StateMachine> make_state_machine(T input) {
 }
 
 inline std::shared_ptr<StateMachine> make_state_machine(
-    const std::vector<std::pair<std::string, std::string>>& input) {
+    const std::vector<std::pair<std::string, output_t>>& input) {
   return make_state_machine([&](const auto& feed) {
     for (const auto& item : input) {
       feed(item.first, item.second);
@@ -518,13 +580,18 @@ union Ope {
     JumpOffsetEnd
   };
 
-  enum OutputType { OutputNone = 0, OutputOne, OutputTwo, OutputLength };
+  enum OutputLengthType {
+    OutputLengthNone = 0,
+    OutputLengthOne,
+    OutputLengthTwo,
+    OutputLength
+  };
 
   struct {
     unsigned type : 1;
     unsigned final : 1;
     unsigned last_transition : 1;
-    unsigned output_type : 2;
+    unsigned output_length_type : 2;
     unsigned has_state_outputs : 1;
     unsigned jump_offset_type : 2;
   } arc;
@@ -548,11 +615,11 @@ struct Command {
   bool final;
   bool last_transition;
   char arc;
-  Ope::OutputType output_type;
-  std::string output;
-  std::vector<std::string> state_outputs;
+  Ope::OutputLengthType output_length_type;
+  output_t output;
+  std::vector<output_t> state_outputs;
   Ope::JumpOffsetType jump_offset_type;
-  int jump_offset;
+  size_t jump_offset;
   bool use_jump_table;
 
   // Jmp
@@ -568,24 +635,41 @@ struct Command {
         size += sizeof(uint8_t);
       }
 
-      // output
+// output
+#ifdef USE_UINT32_OUTPUT_T
+      // if (output != 0) {
+      //   size += sizeof(output_t);
+      // }
+      if (output > 0xffff) {
+        size += sizeof(output_t);
+      } else if (output > 0xff) {
+        size += sizeof(uint16_t);
+      } else if (output > 0) {
+        size += sizeof(uint8_t);
+      }
+#else
       if (output.length() > 2) {
         size += sizeof(uint8_t);
       }
       size += output.length();
+#endif
 
       // state_outputs
       if (has_state_outputs()) {
         size += sizeof(uint8_t);
         for (const auto& state_output : state_outputs) {
+#ifdef USE_UINT32_OUTPUT_T
+          size += sizeof(state_output);
+#else
           size += sizeof(uint8_t);
           size += state_output.length();
+#endif
         }
       }
 
       // jump_offset
       if (jump_offset > 0) {
-        size += vb_encode_value_length<uint32_t>(jump_offset);
+        size += vb_encode_value_length(jump_offset);
       }
     } else {  // type == Jmp
       // arc_jump_offsets
@@ -612,7 +696,7 @@ struct Command {
       Ope ope = {Ope::Arc,
                  final,
                  last_transition,
-                 (unsigned int)output_type,
+                 (unsigned int)output_length_type,
                  has_state_outputs(),
                  (unsigned int)jump_offset_type};
       byte_code.push_back(ope.byte);
@@ -622,21 +706,51 @@ struct Command {
         byte_code.push_back(arc);
       }
 
-      // output
+// output
+#ifdef USE_UINT32_OUTPUT_T
+      // if (output != 0) {
+      //   byte_code.insert(
+      //       byte_code.end(), reinterpret_cast<const char*>(&output),
+      //       reinterpret_cast<const char*>(&output) + sizeof(output));
+      // }
+      if (output > 0xffff) {
+        byte_code.insert(
+            byte_code.end(), reinterpret_cast<const char*>(&output),
+            reinterpret_cast<const char*>(&output) + sizeof(output));
+      } else if (output > 0xff) {
+        uint16_t val = output;
+        byte_code.insert(
+            byte_code.end(), reinterpret_cast<const char*>(&val),
+            reinterpret_cast<const char*>(&val) + sizeof(val));
+      } else if (output > 0) {
+        uint8_t val = output;
+        byte_code.insert(
+            byte_code.end(), reinterpret_cast<const char*>(&val),
+            reinterpret_cast<const char*>(&val) + sizeof(val));
+      }
+#else
       if (output.length() > 2) {
         byte_code.push_back((char)output.length());
       }
       for (auto ch : output) {
         byte_code.push_back(ch);
       }
+#endif
 
       // state_outputs
       if (has_state_outputs()) {
         byte_code.push_back((char)state_outputs.size());
         for (const auto& state_output : state_outputs) {
+#ifdef USE_UINT32_OUTPUT_T
+          byte_code.insert(byte_code.end(),
+                           reinterpret_cast<const char*>(&state_output),
+                           reinterpret_cast<const char*>(&state_output) +
+                               sizeof(state_output));
+#else
           byte_code.push_back((char)state_output.length());
           byte_code.insert(byte_code.end(), state_output.data(),
                            state_output.data() + state_output.length());
+#endif
         }
       }
 
@@ -678,11 +792,7 @@ struct Command {
   }
 
  private:
-  // NOTE: for better state_outputs compression
-  bool has_state_outputs() const {
-    return !(state_outputs.empty() ||
-             (state_outputs.size() == 1 && state_outputs.front().empty()));
-  }
+  bool has_state_outputs() const { return !state_outputs.empty(); }
 
   void scan_arc_jump_offsets(bool& need_2byte, size_t& start,
                              size_t& end) const {
@@ -718,7 +828,7 @@ inline size_t compile_core(State::pointer state, Commands& commands,
   auto arcs_count = state->transitions.arcs.size();
 
   state->transitions.for_each_reverse(
-      [&](char arc, const State::Transition& t, int i) {
+      [&](char arc, const State::Transition& t, size_t i) {
         auto next_state = t.state;
         if (next_state->transitions.arcs.size() > 0) {
           position = compile_core(next_state, commands, state_positions,
@@ -732,7 +842,7 @@ inline size_t compile_core(State::pointer state, Commands& commands,
   memset(arc_positions, -1, sizeof(arc_positions));
 
   state->transitions.for_each_reverse([&](char arc, const State::Transition& t,
-                                          int i) {
+                                          size_t i) {
     auto next_state = t.state;
 
     Command cmd;
@@ -743,19 +853,31 @@ inline size_t compile_core(State::pointer state, Commands& commands,
     cmd.last_transition = (i + 1 == arcs_count);
     cmd.arc = arc;
     cmd.output = t.output;
-    if (cmd.output.empty()) {
-      cmd.output_type = Ope::OutputNone;
-    } else if (cmd.output.length() == 1) {
-      cmd.output_type = Ope::OutputOne;
-    } else if (cmd.output.length() == 2) {
-      cmd.output_type = Ope::OutputTwo;
+#ifdef USE_UINT32_OUTPUT_T
+    auto output_len = 0;
+    if (t.output > 0xffff) {
+      output_len = sizeof(output_t);
+    } else if (t.output > 0xff) {
+      output_len = sizeof(uint16_t);
+    } else if (t.output > 0) {
+      output_len = sizeof(uint8_t);
+    }
+#else
+    auto output_len = cmd.output.length();
+#endif
+    if (output_len == 0) {
+      cmd.output_length_type = Ope::OutputLengthNone;
+    } else if (output_len == 1) {
+      cmd.output_length_type = Ope::OutputLengthOne;
+    } else if (output_len == 2) {
+      cmd.output_length_type = Ope::OutputLengthTwo;
     } else {
-      cmd.output_type = Ope::OutputLength;
+      cmd.output_length_type = Ope::OutputLength;
     }
     cmd.state_outputs = next_state->state_outputs;
     if (next_state->transitions.arcs.size() == 0) {
       cmd.jump_offset_type = Ope::JumpOffsetNone;
-      cmd.jump_offset = -1;
+      cmd.jump_offset = 0;
     } else {
       auto offset = position - state_positions[next_state->id];
       if (offset == 0) {
@@ -830,7 +952,7 @@ inline std::vector<char> build(
 }
 
 inline std::vector<char> build(
-    const std::vector<std::pair<std::string, std::string>>& input,
+    const std::vector<std::pair<std::string, output_t>>& input,
     size_t min_arcs_for_jump_table = DEFAULT_MIN_ARCS_FOR_JUMP_TABLE) {
   return build(
       [&](const auto& feed) {
@@ -846,32 +968,63 @@ inline const char* read_byte_code_arc(
     const char*& output, size_t& state_outputs_size, const char*& state_output,
     Ope::JumpOffsetType& jump_offset_type, size_t& jump_offset) {
   // output
-  auto output_type = (Ope::OutputType)((ope & 0x18) >> 3);
-  if (output_type == Ope::OutputNone) {
+  auto output_length_type = (Ope::OutputLengthType)((ope & 0x18) >> 3);
+#ifdef USE_UINT32_OUTPUT_T
+  // if (output_length_type == Ope::OutputLengthNone) {
+  //   output_len = 0;
+  // } else {  // Ope::OutputLength
+  //   output_len = sizeof(output_t);
+  //   output = p;
+  // }
+  if (output_length_type == Ope::OutputLengthNone) {
     output_len = 0;
-  } else if (output_type == Ope::OutputOne) {
+  } else if (output_length_type == Ope::OutputLengthOne) {
     output_len = 1;
     output = p;
-  } else if (output_type == Ope::OutputTwo) {
+  } else if (output_length_type == Ope::OutputLengthTwo) {
     output_len = 2;
     output = p;
   } else {  // Ope::OutputLength
-    output_len = *p++;
+    output_len = sizeof(output_t);
     output = p;
   }
+#else
+  if (output_length_type == Ope::OutputLengthNone) {
+    output_len = 0;
+  } else if (output_length_type == Ope::OutputLengthOne) {
+    output_len = 1;
+    output = p;
+  } else if (output_length_type == Ope::OutputLengthTwo) {
+    output_len = 2;
+    output = p;
+  } else {  // Ope::OutputLength
+    output_len = (uint8_t)*p++;
+    output = p;
+  }
+#endif
   p += output_len;
 
   // state_outputs
   if (ope & 0x20) {  // has_state_outputs
-    state_outputs_size = *p++;
+    state_outputs_size = (uint8_t)*p++;
     state_output = p;
+#ifdef USE_UINT32_OUTPUT_T
     if (state_outputs_size == 1) {
-      p += 1 + *p;
+      p += sizeof(output_t);
     } else {
       for (auto i = 0u; i < state_outputs_size; i++) {
-        p += 1 + *p;
+        p += sizeof(output_t);
       }
     }
+#else
+    if (state_outputs_size == 1) {
+      p += sizeof(uint8_t) + (uint8_t)*p;
+    } else {
+      for (auto i = 0u; i < state_outputs_size; i++) {
+        p += sizeof(uint8_t) + (uint8_t)*p;
+      }
+    }
+#endif
   } else {
     state_outputs_size = 0;
   }
@@ -916,8 +1069,12 @@ inline const char* read_byte_code_jmp(uint8_t ope, uint8_t arc, const char* p,
 template <typename Begin, typename Value, typename End>
 inline void run(const char* byte_code, size_t size, const char* str,
                 Begin output_begin, Value output_value, End output_end) {
+#ifdef USE_UINT32_OUTPUT_T
+  output_t prefix = 0;
+#else
   char prefix[BUFSIZ];
   size_t prefix_len = 0;
+#endif
 
   auto p = byte_code;
   auto end = byte_code + size;
@@ -943,12 +1100,33 @@ inline void run(const char* byte_code, size_t size, const char* str,
                              jump_offset);
 
       if (arc2 == arc) {
+#ifdef USE_UINT32_OUTPUT_T
+        // if (output_len > 0) {
+        //   assert(output_len == sizeof(output_t));
+        //   auto val = *reinterpret_cast<const output_t*>(output);
+        //   prefix += val;
+        // }
+        if (output_len == 0) {
+          ;
+        } else if (output_len == 1) {
+          auto val = *reinterpret_cast<const uint8_t*>(output);
+          prefix += val;
+        } else if (output_len == 2) {
+          auto val = *reinterpret_cast<const uint16_t*>(output);
+          prefix += val;
+        } else {
+          assert(output_len == sizeof(output_t));
+          auto val = *reinterpret_cast<const output_t*>(output);
+          prefix += val;
+        }
+#else
         if (output_len == 1) {
           prefix[prefix_len++] = *output;
         } else if (output_len > 1) {
           memcpy(&prefix[prefix_len], output, output_len);
           prefix_len += output_len;
         }
+#endif
 
         pstr++;
         if (ope & 0x02) {  // final
@@ -956,16 +1134,27 @@ inline void run(const char* byte_code, size_t size, const char* str,
 
           // NOTE: for better state_outputs compression
           if (state_outputs_size == 0) {
+#ifdef USE_UINT32_OUTPUT_T
+            output_value(prefix);
+#else
             output_value(prefix, prefix_len);
+#endif
           } else {
             for (auto i = 0u; i < state_outputs_size; i++) {
-              size_t state_output_len = *state_output++;
+#ifdef USE_UINT32_OUTPUT_T
+              auto final_state_output =
+                  prefix + *reinterpret_cast<const output_t*>(state_output);
+              output_value(final_state_output);
+              state_output += sizeof(output_t);
+#else
+              size_t state_output_len = (uint8_t)*state_output++;
               char final_state_output[BUFSIZ];
               memcpy(&final_state_output[0], prefix, prefix_len);
               memcpy(&final_state_output[prefix_len], state_output,
                      state_output_len);
               output_value(final_state_output, prefix_len + state_output_len);
               state_output += state_output_len;
+#endif
             }
           }
 
@@ -1011,10 +1200,18 @@ inline bool exact_match_search(const char* byte_code, size_t size,
   run(byte_code, size, str,
       // begin
       [&](const char* pstr) { ret = (*pstr == '\0'); },
-      // value
+// value
+#ifdef USE_UINT32_OUTPUT_T
+      [&](output_t val) {
+#else
       [&](const char* s, size_t l) {
+#endif
         if (ret) {
+#ifdef USE_UINT32_OUTPUT_T
+          callback(val);
+#else
           callback(s, l);
+#endif
         }
       },
       // end
@@ -1023,19 +1220,24 @@ inline bool exact_match_search(const char* byte_code, size_t size,
   return ret;
 }
 
-inline std::vector<std::string> exact_match_search(const char* byte_code,
-                                                   size_t size,
-                                                   const char* str) {
-  std::vector<std::string> outputs;
+inline std::vector<output_t> exact_match_search(const char* byte_code,
+                                                size_t size, const char* str) {
+  std::vector<output_t> outputs;
+#ifdef USE_UINT32_OUTPUT_T
+  fst::exact_match_search(byte_code, size, str, [&](fst::output_t val) {
+    outputs.emplace_back(val);
+  });
+#else
   fst::exact_match_search(byte_code, size, str, [&](const char* s, size_t l) {
     outputs.emplace_back(s, l);
   });
+#endif
   return outputs;
 }
 
 struct CommonPrefixSearchResult {
   size_t length;
-  std::vector<std::string> outputs;
+  std::vector<output_t> outputs;
 };
 
 template <typename T>
@@ -1049,8 +1251,12 @@ inline void common_prefix_search(const char* byte_code, size_t size,
         result.length = pstr - str;
         result.outputs.clear();
       },
-      // value
+// value
+#ifdef USE_UINT32_OUTPUT_T
+      [&](output_t val) { result.outputs.emplace_back(val); },
+#else
       [&](const char* s, size_t l) { result.outputs.emplace_back(s, l); },
+#endif
       // end
       [&]() {
         callback(result);
@@ -1080,7 +1286,11 @@ inline std::string join(const Cont& cont, const char* delm) {
     if (i != 0) {
       s += delm;
     }
+#ifdef USE_UINT32_OUTPUT_T
+    s += std::to_string(cont[i]);
+#else
     s += cont[i];
+#endif
   }
   return s;
 }
@@ -1170,17 +1380,21 @@ inline void dot_core(State::pointer state, std::set<size_t>& check,
     os << "  s" << id << " [ shape = circle ];" << std::endl;
   }
 
-  state->transitions.for_each([&](char arc, const State::Transition& t, int i) {
-    os << "  s" << id << "->s" << t.state->id << " [ label = \"" << arc;
-    if (!t.output.empty()) {
-      os << "/" << t.output;
-    }
-    os << "\" ];" << std::endl;
-  });
+  state->transitions.for_each(
+      [&](char arc, const State::Transition& t, size_t i) {
+        os << "  s" << id << "->s" << t.state->id << " [ label = \"" << arc;
+#ifdef USE_UINT32_OUTPUT_T
+        if (t.output != 0) {
+#else
+        if (!t.output.empty()) {
+#endif
+          os << "/" << t.output;
+        }
+        os << "\" ];" << std::endl;
+      });
 
-  state->transitions.for_each([&](char arc, const State::Transition& t, int i) {
-    dot_core(t.state, check, os);
-  });
+  state->transitions.for_each([&](char arc, const State::Transition& t,
+                                  size_t i) { dot_core(t.state, check, os); });
 }
 
 inline void dot(const StateMachine& sm, std::ostream& os) {
@@ -1191,32 +1405,43 @@ inline void dot(const StateMachine& sm, std::ostream& os) {
   os << "}" << std::endl;
 }
 
-inline std::vector<std::string> exact_match_search(const StateMachine& sm,
-                                                   const std::string s) {
+//-----------------------------------------------------------------------------
+// state machine tree interpreter - slow...
+//-----------------------------------------------------------------------------
+
+inline std::vector<output_t> exact_match_search(const StateMachine& sm,
+                                                const std::string s) {
   auto state = sm.root;
-  std::string prefix;
+#ifdef USE_UINT32_OUTPUT_T
+  output_t prefix = 0;
+#else
+  output_t prefix;
+#endif
 
   auto it = s.begin();
   while (it != s.end()) {
     auto arc = *it;
     auto next_state = state->next_state(arc);
     if (!next_state) {
-      return std::vector<std::string>();
+      return std::vector<output_t>();
     }
     prefix += state->output(arc);
     state = next_state;
     ++it;
   }
   if (!state->final || it != s.end()) {
-    return std::vector<std::string>();
+    return std::vector<output_t>();
   } else {
-    // NOTE: for better state_outputs compression
-    std::vector<std::string> ret;
+    std::vector<output_t> ret;
     if (!state->state_outputs.empty()) {
       for (const auto& suffix : state->state_outputs) {
         ret.push_back(prefix + suffix);
       }
+#ifdef USE_UINT32_OUTPUT_T
+    } else if (prefix != 0) {
+#else
     } else if (!prefix.empty()) {
+#endif
       ret.push_back(prefix);
     }
     return ret;

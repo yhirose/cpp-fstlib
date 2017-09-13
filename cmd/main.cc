@@ -28,16 +28,24 @@ std::vector<std::string> split(const std::string& input, char delimiter) {
   return result;
 }
 
-vector<pair<string, string>> load_input(istream& fin) {
-  vector<pair<string, string>> input;
+vector<pair<string, fst::output_t>> load_input(istream& fin) {
+  vector<pair<string, fst::output_t>> input;
 
   string line;
   while (getline(fin, line)) {
     auto fields = split(line, ',');
     if (fields.size() > 1) {
+#ifdef USE_UINT32_OUTPUT_T
+      input.emplace_back(fields[0], std::stoi(fields[1]));
+#else
       input.emplace_back(fields[0], fields[1]);
+#endif
     } else {
+#ifdef USE_UINT32_OUTPUT_T
+      input.emplace_back(line, input.size());
+#else
       input.emplace_back(line, to_string(input.size()));
+#endif
     }
   }
 
