@@ -1213,6 +1213,19 @@ inline std::vector<output_t> exact_match_search(const char* byte_code,
   return outputs;
 }
 
+inline bool exact_match_search(const char* byte_code, size_t size,
+                               const char* str, output_t& output) {
+#ifdef USE_UINT32_OUTPUT_T
+  return fst::exact_match_search(byte_code, size, str, [&](fst::output_t val) {
+    output = val;
+  });
+#else
+  return fst::exact_match_search(byte_code, size, str, [&](const char* s, size_t l) {
+    output.assign(s, l);
+  });
+#endif
+}
+
 struct CommonPrefixSearchResult {
   size_t length;
   std::vector<output_t> outputs;
@@ -1282,9 +1295,9 @@ inline void print(
   compile_core(sm.root, commands, state_positions, 0, min_arcs_for_jump_table);
 
   os << "Ope\tArc\tAddr\tNxtAdr\tID\tNextID\tSize\tLast\tFinal\tOutput\tStOuts"
-        "\tJpOffSz\tJmpOff\n";
+        "\tJpOffTy\tJpOffSz\tJmpOff\n";
   os << "------\t------\t------\t------\t------\t------\t------\t------\t------"
-        "\t------\t------\t------\t------\n";
+        "\t------\t------\t------\t------\t------\n";
 
   size_t addr = 0;
 

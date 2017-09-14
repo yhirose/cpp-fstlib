@@ -294,3 +294,27 @@ TEST_CASE("Invalid arc jump test", "[string]")
 
   REQUIRE(exact_match(byte_code, "az").empty());
 }
+
+TEST_CASE("Single output value test", "[general]")
+{
+  vector<pair<string, fst::output_t>> input = {
+    { "a",  V(0) },
+    { "ab", V(1) },
+  };
+
+  auto sm = fst::make_state_machine(input);
+
+  REQUIRE(sm->count == 3);
+
+  auto byte_code = fst::compile(*sm);
+
+  fst::output_t output;
+  auto ret = fst::exact_match_search(byte_code.data(), byte_code.size(), "a", output);
+  REQUIRE(ret);
+  REQUIRE(output == V(0));
+
+  ret = fst::exact_match_search(byte_code.data(), byte_code.size(), "ab", output);
+  REQUIRE(ret);
+  REQUIRE(output == V(1));
+}
+
