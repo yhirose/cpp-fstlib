@@ -20,7 +20,6 @@
 #include <unordered_map>
 #include <vector>
 
-#define USE_JUMP_OFFSET_END
 #define USE_UINT32_OUTPUT_T
 
 namespace fst {
@@ -573,12 +572,7 @@ inline size_t vb_decode_value(const char* data, Val& n) {
 union Ope {
   enum OpeType { Arc = 0, Jmp };
 
-  enum JumpOffsetType {
-    JumpOffsetNone = 0,
-    JumpOffsetZero,
-    JumpOffsetCurrent,
-    JumpOffsetEnd
-  };
+  enum JumpOffsetType { JumpOffsetNone = 0, JumpOffsetZero, JumpOffsetCurrent };
 
   enum OutputLengthType {
     OutputLengthNone = 0,
@@ -719,14 +713,12 @@ struct Command {
             reinterpret_cast<const char*>(&output) + sizeof(output));
       } else if (output > 0xff) {
         uint16_t val = output;
-        byte_code.insert(
-            byte_code.end(), reinterpret_cast<const char*>(&val),
-            reinterpret_cast<const char*>(&val) + sizeof(val));
+        byte_code.insert(byte_code.end(), reinterpret_cast<const char*>(&val),
+                         reinterpret_cast<const char*>(&val) + sizeof(val));
       } else if (output > 0) {
         uint8_t val = output;
-        byte_code.insert(
-            byte_code.end(), reinterpret_cast<const char*>(&val),
-            reinterpret_cast<const char*>(&val) + sizeof(val));
+        byte_code.insert(byte_code.end(), reinterpret_cast<const char*>(&val),
+                         reinterpret_cast<const char*>(&val) + sizeof(val));
       }
 #else
       if (output.length() > 2) {
@@ -841,69 +833,58 @@ inline size_t compile_core(State::pointer state, Commands& commands,
   size_t arc_positions[256];
   memset(arc_positions, -1, sizeof(arc_positions));
 
-  state->transitions.for_each_reverse([&](char arc, const State::Transition& t,
-                                          size_t i) {
-    auto next_state = t.state;
+  state->transitions.for_each_reverse(
+      [&](char arc, const State::Transition& t, size_t i) {
+        auto next_state = t.state;
 
-    Command cmd;
-    cmd.type = Ope::Arc;
-    cmd.id = state->id;
-    cmd.next_id = next_state->id;
-    cmd.final = next_state->final;
-    cmd.last_transition = (i + 1 == arcs_count);
-    cmd.arc = arc;
-    cmd.output = t.output;
+        Command cmd;
+        cmd.type = Ope::Arc;
+        cmd.id = state->id;
+        cmd.next_id = next_state->id;
+        cmd.final = next_state->final;
+        cmd.last_transition = (i + 1 == arcs_count);
+        cmd.arc = arc;
+        cmd.output = t.output;
 #ifdef USE_UINT32_OUTPUT_T
-    auto output_len = 0;
-    if (t.output > 0xffff) {
-      output_len = sizeof(output_t);
-    } else if (t.output > 0xff) {
-      output_len = sizeof(uint16_t);
-    } else if (t.output > 0) {
-      output_len = sizeof(uint8_t);
-    }
-#else
-    auto output_len = cmd.output.length();
-#endif
-    if (output_len == 0) {
-      cmd.output_length_type = Ope::OutputLengthNone;
-    } else if (output_len == 1) {
-      cmd.output_length_type = Ope::OutputLengthOne;
-    } else if (output_len == 2) {
-      cmd.output_length_type = Ope::OutputLengthTwo;
-    } else {
-      cmd.output_length_type = Ope::OutputLength;
-    }
-    cmd.state_outputs = next_state->state_outputs;
-    if (next_state->transitions.arcs.size() == 0) {
-      cmd.jump_offset_type = Ope::JumpOffsetNone;
-      cmd.jump_offset = 0;
-    } else {
-      auto offset = position - state_positions[next_state->id];
-      if (offset == 0) {
-        cmd.jump_offset_type = Ope::JumpOffsetZero;
-      } else {
-#ifdef USE_JUMP_OFFSET_END
-        auto cur_byte = vb_encode_value_length(offset);
-        auto end_byte = vb_encode_value_length(state_positions[next_state->id]);
-        if (end_byte < cur_byte) {
-          offset = state_positions[next_state->id];
-          cmd.jump_offset_type = Ope::JumpOffsetEnd;
-        } else {
-          cmd.jump_offset_type = Ope::JumpOffsetCurrent;
+        auto output_len = 0;
+        if (t.output > 0xffff) {
+          output_len = sizeof(output_t);
+        } else if (t.output > 0xff) {
+          output_len = sizeof(uint16_t);
+        } else if (t.output > 0) {
+          output_len = sizeof(uint8_t);
         }
 #else
-        cmd.jump_offset_type = Ope::JumpOffsetCurrent;
+        auto output_len = cmd.output.length();
 #endif
-      }
-      cmd.jump_offset = offset;
-    }
-    cmd.use_jump_table = use_jump_table;
+        if (output_len == 0) {
+          cmd.output_length_type = Ope::OutputLengthNone;
+        } else if (output_len == 1) {
+          cmd.output_length_type = Ope::OutputLengthOne;
+        } else if (output_len == 2) {
+          cmd.output_length_type = Ope::OutputLengthTwo;
+        } else {
+          cmd.output_length_type = Ope::OutputLength;
+        }
+        cmd.state_outputs = next_state->state_outputs;
+        if (next_state->transitions.arcs.size() == 0) {
+          cmd.jump_offset_type = Ope::JumpOffsetNone;
+          cmd.jump_offset = 0;
+        } else {
+          auto offset = position - state_positions[next_state->id];
+          if (offset == 0) {
+            cmd.jump_offset_type = Ope::JumpOffsetZero;
+          } else {
+            cmd.jump_offset_type = Ope::JumpOffsetCurrent;
+          }
+          cmd.jump_offset = offset;
+        }
+        cmd.use_jump_table = use_jump_table;
 
-    position += cmd.byte_code_size();
-    commands.emplace_back(std::move(cmd));
-    arc_positions[(uint8_t)arc] = position;
-  });
+        position += cmd.byte_code_size();
+        commands.emplace_back(std::move(cmd));
+        arc_positions[(uint8_t)arc] = position;
+      });
 
   if (use_jump_table) {
     Command cmd;
@@ -1031,8 +1012,7 @@ inline const char* read_byte_code_arc(
 
   // jump_offset
   jump_offset_type = (Ope::JumpOffsetType)((ope & 0xC0) >> 6);
-  if (jump_offset_type == Ope::JumpOffsetCurrent ||
-      jump_offset_type == Ope::JumpOffsetEnd) {
+  if (jump_offset_type == Ope::JumpOffsetCurrent) {
     p += vb_decode_value(p, jump_offset);
   }
 
@@ -1167,8 +1147,6 @@ inline void run(const char* byte_code, size_t size, const char* str,
           return;
         } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
           p += jump_offset;
-        } else if (jump_offset_type == Ope::JumpOffsetEnd) {
-          p = end - jump_offset;
         }
       } else {
         if (ope & 0x04) {  // last_transition
@@ -1308,16 +1286,9 @@ inline void print(
   os << "------\t------\t------\t------\t------\t------\t------\t------\t------"
         "\t------\t------\t------\t------\n";
 
-  size_t end = 0;
-  auto rit = commands.rbegin();
-  while (rit != commands.rend()) {
-    end += rit->byte_code_size();
-    ++rit;
-  }
-
   size_t addr = 0;
 
-  rit = commands.rbegin();
+  auto rit = commands.rbegin();
   while (rit != commands.rend()) {
     const auto& cmd = *rit;
     auto size = cmd.byte_code_size();
@@ -1327,8 +1298,6 @@ inline void print(
         next_addr = addr + size;
       } else if (cmd.jump_offset_type == Ope::JumpOffsetCurrent) {
         next_addr = addr + size + cmd.jump_offset;
-      } else if (cmd.jump_offset_type == Ope::JumpOffsetEnd) {
-        next_addr = end - cmd.jump_offset;
       }
       auto jump_offset_bytes =
           (cmd.jump_offset > 0 ? vb_encode_value_length(cmd.jump_offset) : 0);
