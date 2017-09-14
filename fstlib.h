@@ -201,7 +201,7 @@ class State {
 #ifdef USE_UINT32_OUTPUT_T
       output += val;
 #else
-      output.insert(output.begin(), val.begin(), val.end());
+      output.insert(0, val);
 #endif
     }
 
@@ -631,9 +631,6 @@ struct Command {
 
 // output
 #ifdef USE_UINT32_OUTPUT_T
-      // if (output != 0) {
-      //   size += sizeof(output_t);
-      // }
       if (output > 0xffff) {
         size += sizeof(output_t);
       } else if (output > 0xff) {
@@ -702,11 +699,6 @@ struct Command {
 
 // output
 #ifdef USE_UINT32_OUTPUT_T
-      // if (output != 0) {
-      //   byte_code.insert(
-      //       byte_code.end(), reinterpret_cast<const char*>(&output),
-      //       reinterpret_cast<const char*>(&output) + sizeof(output));
-      // }
       if (output > 0xffff) {
         byte_code.insert(
             byte_code.end(), reinterpret_cast<const char*>(&output),
@@ -951,12 +943,6 @@ inline const char* read_byte_code_arc(
   // output
   auto output_length_type = (Ope::OutputLengthType)((ope & 0x18) >> 3);
 #ifdef USE_UINT32_OUTPUT_T
-  // if (output_length_type == Ope::OutputLengthNone) {
-  //   output_len = 0;
-  // } else {  // Ope::OutputLength
-  //   output_len = sizeof(output_t);
-  //   output = p;
-  // }
   if (output_length_type == Ope::OutputLengthNone) {
     output_len = 0;
   } else if (output_length_type == Ope::OutputLengthOne) {
@@ -1081,11 +1067,6 @@ inline void run(const char* byte_code, size_t size, const char* str,
 
       if (arc2 == arc) {
 #ifdef USE_UINT32_OUTPUT_T
-        // if (output_len > 0) {
-        //   assert(output_len == sizeof(output_t));
-        //   auto val = *reinterpret_cast<const output_t*>(output);
-        //   prefix += val;
-        // }
         if (output_len == 0) {
           ;
         } else if (output_len == 1) {
