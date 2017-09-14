@@ -1314,6 +1314,7 @@ inline void print(
       os << cmd.final << "\t";
       os << cmd.output << "\t";
       os << join(cmd.state_outputs, "/") << "\t";
+      os << cmd.jump_offset_type << "\t";
       os << jump_offset_bytes << "\t";
       os << (int)cmd.jump_offset << std::endl;
     } else {  // Jmp
