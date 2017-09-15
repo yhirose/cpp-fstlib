@@ -5,6 +5,35 @@
 
 using namespace std;
 
+typedef uint32_t output_t;
+//typedef string output_t;
+
+template <typename T>
+struct traints {
+  static T convert(uint32_t n) {}
+  static T convert(const std::string& s) {}
+};
+
+template <>
+struct traints<uint32_t> {
+  static uint32_t convert(uint32_t n) {
+    return n;
+  }
+  static uint32_t convert(const std::string& s) {
+    return stoi(s);
+  }
+};
+
+template <>
+struct traints<string> {
+  static string convert(uint32_t n) {
+    return std::to_string(n);
+  }
+  static string convert(const std::string& s) {
+    return s;
+  }
+};
+
 void usage() {
   cout << R"(usage: fst <command> [<args>]
 
@@ -18,34 +47,26 @@ void usage() {
 }
 
 // TODO: Support full CSV and TSV format
-std::vector<std::string> split(const std::string& input, char delimiter) {
-  std::istringstream stream(input);
-  std::string field;
-  std::vector<std::string> result;
-  while (std::getline(stream, field, delimiter)) {
+vector<string> split(const string& input, char delimiter) {
+  istringstream stream(input);
+  string field;
+  vector<string> result;
+  while (getline(stream, field, delimiter)) {
     result.push_back(field);
   }
   return result;
 }
 
-vector<pair<string, fst::output_t>> load_input(istream& fin) {
-  vector<pair<string, fst::output_t>> input;
+vector<pair<string, output_t>> load_input(istream& fin) {
+  vector<pair<string, output_t>> input;
 
   string line;
   while (getline(fin, line)) {
     auto fields = split(line, ',');
     if (fields.size() > 1) {
-#ifdef USE_UINT32_OUTPUT_T
-      input.emplace_back(fields[0], std::stoi(fields[1]));
-#else
-      input.emplace_back(fields[0], fields[1]);
-#endif
+      input.emplace_back(fields[0], traints<output_t>::convert(fields[1]));
     } else {
-#ifdef USE_UINT32_OUTPUT_T
-      input.emplace_back(line, input.size());
-#else
-      input.emplace_back(line, to_string(input.size()));
-#endif
+      input.emplace_back(line, traints<output_t>::convert(input.size()));
     }
   }
 
@@ -98,8 +119,7 @@ int main(int argc, const char** argv) {
         return 1;
       }
 
-      auto sm = fst::make_state_machine(load_input(fin));
-      auto byte_code = fst::compile(*sm);
+      auto byte_code = fst::build(load_input(fin));
       fout.write(byte_code.data(), byte_code.size());
 
     } else if (cmd == "search" || cmd == "prefix") {
@@ -123,7 +143,7 @@ int main(int argc, const char** argv) {
       string line;
       while (getline(cin, line)) {
         if (cmd == "search") {
-          auto outputs = fst::exact_match_search(
+          auto outputs = fst::exact_match_search<output_t>(
               byte_code.data(), byte_code.size(), line.c_str());
           for (const auto& item : outputs) {
             cout << item << endl;
@@ -132,7 +152,7 @@ int main(int argc, const char** argv) {
             cout << "not found..." << endl;
           }
         } else {  // "prefix"
-          auto results = fst::common_prefix_search(
+          auto results = fst::common_prefix_search<output_t>(
               byte_code.data(), byte_code.size(), line.c_str());
           for (const auto& result : results) {
             cout << "length: " << result.length << endl;
@@ -159,7 +179,7 @@ int main(int argc, const char** argv) {
       }
 
       auto sm = fst::make_state_machine(load_input(fin));
-      dot(*sm, cout);
+      fst::dot(*sm, cout);
 
     } else if (cmd == "dump") {
       if (argi >= argc) {
@@ -202,7 +222,7 @@ int main(int argc, const char** argv) {
 
       cerr << "# test all words..." << endl;
       for (const auto& item : input) {
-        auto results = fst::exact_match_search(
+        auto results = fst::exact_match_search<output_t>(
             byte_code.data(), byte_code.size(), item.first.c_str());
         if (results.empty()) {
           cout << item.first << ": NG" << endl;
