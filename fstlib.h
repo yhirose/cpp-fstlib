@@ -320,24 +320,15 @@ class State {
     state_outputs.clear();
   }
 
-  static pointer New(size_t state_id = -1) {
+  static pointer New(std::vector<pointer>& objects_, size_t state_id = -1) {
     auto p = new State(state_id);
     objects_.push_back(p);
     return p;
   }
 
-  static void ClearMemory() {
-    for (auto p : objects_) {
-      delete p;
-    }
-    objects_.clear();
-  }
-
  private:
   State(const State&) = delete;
   State(State&&) = delete;
-
-  static std::vector<pointer> objects_;
 };
 
 template <typename output_t>
@@ -367,21 +358,27 @@ inline uint64_t State<output_t>::hash() const {
 }
 
 template <typename output_t>
-std::vector<typename State<output_t>::pointer> State<output_t>::objects_;
-
-template <typename output_t>
 class StateMachine {
  public:
   size_t count;
   typename State<output_t>::pointer root;
 
-  StateMachine(size_t count, typename State<output_t>::pointer root)
-      : count(count), root(root) {}
-  ~StateMachine() { State<output_t>::ClearMemory(); }
+  StateMachine(
+      std::vector<typename State<output_t>::pointer>&& objects,
+      size_t count,
+      typename State<output_t>::pointer root)
+      : objects_(objects), count(count), root(root) {}
+  ~StateMachine() {
+    for (auto p : objects_) {
+      delete p;
+    }
+    objects_.clear();
+  }
 
  private:
   StateMachine(const StateMachine&) = delete;
   StateMachine(StateMachine&&) = delete;
+  std::vector<typename State<output_t>::pointer> objects_;
 };
 
 // NOTE: unordered_set is not used here, because it uses size_t as hash value
@@ -426,12 +423,13 @@ inline void get_common_prefix_and_word_suffix(const output_t& current_output,
 template <typename output_t, typename Input>
 inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
   Dictionary<output_t> dictionary;
+  std::vector<typename State<output_t>::pointer> objects;
   size_t state_id = 0;
 
   // Main algorithm ported from the technical paper
   std::vector<typename State<output_t>::pointer> temp_states;
   std::string previous_word;
-  temp_states.push_back(State<output_t>::New(state_id++));
+  temp_states.push_back(State<output_t>::New(objects, state_id++));
 
   input([&](const std::string& current_word, output_t current_output) {
     // The following loop caluculates the length of the longest common
@@ -447,7 +445,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
       if (!found) {
         // Ownership of the object in temp_states[i] has been moved to the
         // dictionary...
-        temp_states[i] = State<output_t>::New();
+        temp_states[i] = State<output_t>::New(objects);
       }
       temp_states[i - 1]->set_transition(arc, state);
     }
@@ -456,7 +454,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
     for (auto i = prefix_length + 1; i <= current_word.length(); i++) {
       assert(i <= temp_states.size());
       if (i == temp_states.size()) {
-        temp_states.push_back(State<output_t>::New(state_id++));
+        temp_states.push_back(State<output_t>::New(objects, state_id++));
       } else {
         temp_states[i]->reuse(state_id++);
       }
@@ -522,7 +520,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
   bool found;
   auto root =
       find_minimized<output_t>(temp_states[0], dictionary, state_id, found);
-  return std::make_shared<StateMachine<output_t>>(state_id, root);
+  return std::make_shared<StateMachine<output_t>>(std::move(objects), state_id, root);
 }
 
 template <typename output_t>

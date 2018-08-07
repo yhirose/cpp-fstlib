@@ -344,6 +344,25 @@ TEST_CASE("Auto Index Build interface test", "[general]")
   REQUIRE(exact_match_t<uint32_t>(byte_code, "b")[0] == 1);
 }
 
+TEST_CASE("Nested Build interface test", "[general]")
+{
+  auto byte_code = fst::build<output_t>([](auto add_entry) {
+    add_entry("a", V(0));
+    add_entry("b", V(1));
+
+    auto byte_code = fst::build<output_t>([](auto add_entry) {
+      add_entry("a1", V(0));
+      add_entry("b1", V(1));
+    });
+
+    REQUIRE(exact_match(byte_code, "a1")[0] == V(0));
+    REQUIRE(exact_match(byte_code, "b1")[0] == V(1));
+  });
+
+  REQUIRE(exact_match(byte_code, "a")[0] == V(0));
+  REQUIRE(exact_match(byte_code, "b")[0] == V(1));
+}
+
 TEST_CASE("Exact match search", "[readme]")
 {
   std::vector<std::pair<std::string, uint32_t>> input = {
