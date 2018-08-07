@@ -305,9 +305,9 @@ public:
     state_outputs.clear();
   }
 
-  static pointer New(std::vector<pointer> &objects_, size_t state_id = -1) {
+  static pointer New(std::vector<pointer> &objects, size_t state_id = -1) {
     auto p = new State(state_id);
-    objects_.push_back(p);
+    objects.push_back(p);
     return p;
   }
 
