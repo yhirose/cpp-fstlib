@@ -73,6 +73,30 @@ TEST_CASE("Simple virtual machine test", "[general]") {
   REQUIRE(exact_match(byte_code, "ap").empty());
   REQUIRE(exact_match(byte_code, "ap_").empty());
   REQUIRE(exact_match(byte_code, "apr_").empty());
+
+  vector<pair<string, output_t>> entries;
+  fst::decompile<output_t>(byte_code.data(), byte_code.size(),
+                           [&](const std::string &key, output_t &output) {
+                             entries.emplace_back(key, output);
+                           });
+
+  REQUIRE(entries.size() == 8);
+  REQUIRE(entries[0].first == "apr");
+  REQUIRE(entries[0].second == V(30));
+  REQUIRE(entries[1].first == "aug");
+  REQUIRE(entries[1].second == V(31));
+  REQUIRE(entries[2].first == "dec");
+  REQUIRE(entries[2].second == V(31));
+  REQUIRE(entries[3].first == "feb");
+  REQUIRE(entries[3].second == V(28));
+  REQUIRE(entries[4].first == "feb");
+  REQUIRE(entries[4].second == V(29));
+  REQUIRE(entries[5].first == "jan");
+  REQUIRE(entries[5].second == V(31));
+  REQUIRE(entries[6].first == "jul");
+  REQUIRE(entries[6].second == V(31));
+  REQUIRE(entries[7].first == "jun");
+  REQUIRE(entries[7].second == V(30));
 }
 
 TEST_CASE("Edge case test1", "[general]") {

@@ -1369,13 +1369,10 @@ inline void run_all(const char *byte_code, size_t size, int32_t offset,
   return;
 }
 
-template <typename output_t>
-inline void decompile(const char *byte_code, size_t size) {
+template <typename output_t, typename Value>
+inline void decompile(const char *byte_code, size_t size, Value output_value) {
   run_all<output_t>(byte_code, size, 0, std::string(),
-                    OutputTraits<output_t>::initial_value(),
-                    [](const std::string &key, output_t &output) {
-                      std::cout << key << "," << output << std::endl;
-                    });
+                    OutputTraits<output_t>::initial_value(), output_value);
 }
 
 //-----------------------------------------------------------------------------

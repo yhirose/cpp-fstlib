@@ -201,7 +201,10 @@ int main(int argc, const char **argv) {
       vector<char> byte_code(size);
       fin.read(byte_code.data(), size);
 
-      fst::decompile<output_t>(byte_code.data(), byte_code.size());
+      fst::decompile<output_t>(byte_code.data(), byte_code.size(),
+                               [](const std::string &key, output_t &output) {
+                                 std::cout << key << "," << output << std::endl;
+                               });
 
     } else if (cmd == "test") {
       if (argi >= argc) {
