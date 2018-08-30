@@ -184,15 +184,24 @@ public:
       return -1;
     }
 
-    const Transition &state_and_output(char arc) const {
+    const Transition *state_and_output(char arc) const {
       auto idx = get_index(arc);
-      return states_and_outputs[idx];
+      if (idx != -1) {
+        return &states_and_outputs[idx];
+      }
+      return nullptr;
     }
 
-    pointer next_state(char arc) const { return state_and_output(arc).state; }
+    pointer next_state(char arc) const {
+      auto transition = state_and_output(arc);
+      if (transition) {
+        return transition->state;
+      }
+      return nullptr;
+    }
 
     const output_t &output(char arc) const {
-      return state_and_output(arc).output;
+      return state_and_output(arc)->output;
     }
 
     template <typename Functor> void for_each(Functor fn) const {

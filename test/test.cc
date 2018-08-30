@@ -57,6 +57,9 @@ TEST_CASE("Simple virtual machine test", "[general]") {
   REQUIRE(ret.size() == 1);
   REQUIRE(ret[0] == V(31));
 
+  ret = fst::exact_match_search<output_t>(*sm, "???");
+  REQUIRE(ret.size() == 0);
+
   auto byte_code = fst::compile(*sm);
 
   REQUIRE(exact_match(byte_code, "apr")[0] == V(30));
