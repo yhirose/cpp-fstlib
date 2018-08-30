@@ -12,9 +12,9 @@
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#include <list>
 #include <map>
 #include <memory>
-#include <list>
 #include <numeric>
 #include <set>
 #include <string>
@@ -1074,7 +1074,8 @@ inline const char *read_byte_code_jmp(uint8_t ope, uint8_t arc, const char *p,
 }
 
 inline const char *skip_byte_code_jmp(uint8_t ope, const char *p,
-                                      const char *end, std::list<uint8_t> &arcs) {
+                                      const char *end,
+                                      std::list<uint8_t> &arcs) {
   auto start = (uint8_t)*p++;
   auto count = ((uint8_t)*p++) + 1; // count is stored from 0 to 255
 
@@ -1086,9 +1087,7 @@ inline const char *skip_byte_code_jmp(uint8_t ope, const char *p,
       jump_offset = *(((const uint8_t *)p) + i);
       if (jump_offset == (uint8_t)-1) { jump_offset = -1; }
     }
-    if (jump_offset != -1) {
-      arcs.push_back(start + i);
-    }
+    if (jump_offset != -1) { arcs.push_back(start + i); }
   }
 
   if (ope & 0x02) { // need_2byte
@@ -1293,7 +1292,9 @@ common_prefix_search(const char *byte_code, size_t size, const char *str) {
 }
 
 template <typename output_t, typename Value>
-inline void run_all(const char *byte_code, size_t size, int32_t offset, std::string prefix_key, output_t prefix_output, Value output_value) {
+inline void run_all(const char *byte_code, size_t size, int32_t offset,
+                    std::string prefix_key, output_t prefix_output,
+                    Value output_value) {
   auto p = byte_code + offset;
   auto end = byte_code + size;
 
@@ -1308,7 +1309,7 @@ inline void run_all(const char *byte_code, size_t size, int32_t offset, std::str
 
   while (p < end) {
     ope = *p++;
-    assert ((ope & 0x01) == Ope::Arc);
+    assert((ope & 0x01) == Ope::Arc);
 
     uint8_t arc = 0;
     if (arcs.empty()) {
@@ -1352,10 +1353,12 @@ inline void run_all(const char *byte_code, size_t size, int32_t offset, std::str
     }
 
     if (jump_offset_type == Ope::JumpOffsetZero) {
-      run_all<output_t>(byte_code, size,  (p - byte_code), prefix_key_new, prefix_output_new, output_value);
+      run_all<output_t>(byte_code, size, (p - byte_code), prefix_key_new,
+                        prefix_output_new, output_value);
     } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
       auto p2 = p + jump_offset;
-      run_all<output_t>(byte_code, size,  (p2 - byte_code), prefix_key_new, prefix_output_new, output_value);
+      run_all<output_t>(byte_code, size, (p2 - byte_code), prefix_key_new,
+                        prefix_output_new, output_value);
     }
 
     if (ope & 0x04) { // last_transition
@@ -1368,9 +1371,11 @@ inline void run_all(const char *byte_code, size_t size, int32_t offset, std::str
 
 template <typename output_t>
 inline void decompile(const char *byte_code, size_t size) {
-  run_all<output_t>(byte_code, size, 0, std::string(), OutputTraits<output_t>::initial_value(), [](const std::string& key, output_t& output) {
-      std::cout << key << "," << output << std::endl;
-      });
+  run_all<output_t>(byte_code, size, 0, std::string(),
+                    OutputTraits<output_t>::initial_value(),
+                    [](const std::string &key, output_t &output) {
+                      std::cout << key << "," << output << std::endl;
+                    });
 }
 
 //-----------------------------------------------------------------------------

@@ -6,32 +6,21 @@
 using namespace std;
 
 typedef uint32_t output_t;
-//typedef string output_t;
+// typedef string output_t;
 
-template <typename T>
-struct traints {
+template <typename T> struct traints {
   static T convert(uint32_t n) {}
-  static T convert(const std::string& s) {}
+  static T convert(const std::string &s) {}
 };
 
-template <>
-struct traints<uint32_t> {
-  static uint32_t convert(uint32_t n) {
-    return n;
-  }
-  static uint32_t convert(const std::string& s) {
-    return stoi(s);
-  }
+template <> struct traints<uint32_t> {
+  static uint32_t convert(uint32_t n) { return n; }
+  static uint32_t convert(const std::string &s) { return stoi(s); }
 };
 
-template <>
-struct traints<string> {
-  static string convert(uint32_t n) {
-    return std::to_string(n);
-  }
-  static string convert(const std::string& s) {
-    return s;
-  }
+template <> struct traints<string> {
+  static string convert(uint32_t n) { return std::to_string(n); }
+  static string convert(const std::string &s) { return s; }
 };
 
 void usage() {
@@ -48,7 +37,7 @@ void usage() {
 }
 
 // TODO: Support full CSV and TSV format
-vector<string> split(const string& input, char delimiter) {
+vector<string> split(const string &input, char delimiter) {
   istringstream stream(input);
   string field;
   vector<string> result;
@@ -58,7 +47,7 @@ vector<string> split(const string& input, char delimiter) {
   return result;
 }
 
-vector<pair<string, output_t>> load_input(istream& fin) {
+vector<pair<string, output_t>> load_input(istream &fin) {
   vector<pair<string, output_t>> input;
 
   string line;
@@ -72,12 +61,12 @@ vector<pair<string, output_t>> load_input(istream& fin) {
   }
 
   sort(input.begin(), input.end(),
-       [](const auto& a, const auto& b) { return a.first < b.first; });
+       [](const auto &a, const auto &b) { return a.first < b.first; });
 
   return input;
 }
 
-vector<char> load_byte_code(istream& is) {
+vector<char> load_byte_code(istream &is) {
   is.seekg(0, ios_base::end);
   auto size = (unsigned int)is.tellg();
   is.seekg(0, ios_base::beg);
@@ -86,7 +75,7 @@ vector<char> load_byte_code(istream& is) {
   return byte_code;
 }
 
-int main(int argc, const char** argv) {
+int main(int argc, const char **argv) {
   int argi = 1;
 
   if (argi >= argc) {
@@ -146,24 +135,20 @@ int main(int argc, const char** argv) {
         if (cmd == "search") {
           auto outputs = fst::exact_match_search<output_t>(
               byte_code.data(), byte_code.size(), line.c_str());
-          for (const auto& item : outputs) {
+          for (const auto &item : outputs) {
             cout << item << endl;
           }
-          if (outputs.empty()) {
-            cout << "not found..." << endl;
-          }
-        } else {  // "prefix"
+          if (outputs.empty()) { cout << "not found..." << endl; }
+        } else { // "prefix"
           auto results = fst::common_prefix_search<output_t>(
               byte_code.data(), byte_code.size(), line.c_str());
-          for (const auto& result : results) {
+          for (const auto &result : results) {
             cout << "length: " << result.length << endl;
-            for (const auto& item : result.outputs) {
+            for (const auto &item : result.outputs) {
               cout << item << endl;
             }
           }
-          if (results.empty()) {
-            cout << "not found..." << endl;
-          }
+          if (results.empty()) { cout << "not found..." << endl; }
         }
       }
 
@@ -242,20 +227,16 @@ int main(int argc, const char** argv) {
       cerr << "# byte code size: " << byte_code.size() << endl;
 
       cerr << "# test all words..." << endl;
-      for (const auto& item : input) {
+      for (const auto &item : input) {
         auto results = fst::exact_match_search<output_t>(
             byte_code.data(), byte_code.size(), item.first.c_str());
-        if (results.empty()) {
-          cout << item.first << ": NG" << endl;
-        }
+        if (results.empty()) { cout << item.first << ": NG" << endl; }
       }
     } else {
       usage();
       return 1;
     }
-  } catch (const runtime_error& err) {
-    cerr << err.what() << endl;
-  }
+  } catch (const runtime_error &err) { cerr << err.what() << endl; }
 
   return 0;
 }
