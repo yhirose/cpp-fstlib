@@ -38,6 +38,7 @@ void usage() {
   cout << R"(usage: fst <command> [<args>]
 
     compile     DictionaryFile FstFile     - make fst byte code
+    decompile   FstFile                    - decompile fst byte code
 
     search      FstFile                    - exact match search
     prefix      FstFile                    - common prefix search
@@ -196,6 +197,26 @@ int main(int argc, const char** argv) {
 
       auto sm = fst::make_state_machine(load_input(fin));
       fst::print(*sm, cout);
+
+    } else if (cmd == "decompile") {
+      if (argi >= argc) {
+        usage();
+        return 1;
+      }
+
+      ifstream fin(argv[argi++], ios_base::binary);
+      if (!fin) {
+        usage();
+        return 1;
+      }
+
+      fin.seekg(0, ios_base::end);
+      auto size = (unsigned int)fin.tellg();
+      fin.seekg(0, ios_base::beg);
+      vector<char> byte_code(size);
+      fin.read(byte_code.data(), size);
+
+      fst::decompile<output_t>(byte_code.data(), byte_code.size());
 
     } else if (cmd == "test") {
       if (argi >= argc) {

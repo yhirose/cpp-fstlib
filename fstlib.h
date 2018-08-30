@@ -14,6 +14,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <list>
 #include <numeric>
 #include <set>
 #include <string>
@@ -1047,7 +1048,6 @@ read_byte_code_arc(uint8_t ope, const char *p, const char *end,
   return p;
 }
 
-template <typename output_t>
 inline const char *read_byte_code_jmp(uint8_t ope, uint8_t arc, const char *p,
                                       const char *end, int32_t &jump_offset) {
   auto start = (uint8_t)*p++;
@@ -1067,6 +1067,33 @@ inline const char *read_byte_code_jmp(uint8_t ope, uint8_t arc, const char *p,
     } else {
       jump_offset = -1;
     }
+    p += count;
+  }
+
+  return p;
+}
+
+inline const char *skip_byte_code_jmp(uint8_t ope, const char *p,
+                                      const char *end, std::list<uint8_t> &arcs) {
+  auto start = (uint8_t)*p++;
+  auto count = ((uint8_t)*p++) + 1; // count is stored from 0 to 255
+
+  for (auto i = 0; i < count; i++) {
+    int32_t jump_offset = -1;
+    if (ope & 0x02) { // need_2byte
+      jump_offset = *(((const int16_t *)p) + i);
+    } else {
+      jump_offset = *(((const uint8_t *)p) + i);
+      if (jump_offset == (uint8_t)-1) { jump_offset = -1; }
+    }
+    if (jump_offset != -1) {
+      arcs.push_back(start + i);
+    }
+  }
+
+  if (ope & 0x02) { // need_2byte
+    p += sizeof(int16_t) * count;
+  } else {
     p += count;
   }
 
@@ -1184,7 +1211,7 @@ inline void run(const char *byte_code, size_t size, const char *str,
       use_jump_table = false;
     } else { // Jmp
       int32_t jump_offset;
-      p = read_byte_code_jmp<output_t>(ope, arc, p, end, jump_offset);
+      p = read_byte_code_jmp(ope, arc, p, end, jump_offset);
       if (jump_offset == -1) { return; }
       p += jump_offset;
 
@@ -1263,6 +1290,87 @@ common_prefix_search(const char *byte_code, size_t size, const char *str) {
       byte_code, size, str,
       [&](const auto &result) { ret.emplace_back(result); });
   return ret;
+}
+
+template <typename output_t, typename Value>
+inline void run_all(const char *byte_code, size_t size, int32_t offset, std::string prefix_key, output_t prefix_output, Value output_value) {
+  auto p = byte_code + offset;
+  auto end = byte_code + size;
+
+  auto ope = *p++;
+
+  std::list<uint8_t> arcs;
+  if ((ope & 0x01) == Ope::Jmp) {
+    p = skip_byte_code_jmp(ope, p, end, arcs);
+  } else {
+    p--;
+  }
+
+  while (p < end) {
+    ope = *p++;
+    assert ((ope & 0x01) == Ope::Arc);
+
+    uint8_t arc = 0;
+    if (arcs.empty()) {
+      arc = (uint8_t)*p++;
+    } else {
+      arc = arcs.front();
+      arcs.pop_front();
+    }
+
+    auto prefix_key_new = prefix_key + (char)arc;
+
+    size_t output_len;
+    const char *output;
+    size_t state_outputs_size;
+    const char *state_output;
+    Ope::JumpOffsetType jump_offset_type;
+    size_t jump_offset;
+
+    p = read_byte_code_arc<output_t>(ope, p, end, output_len, output,
+                                     state_outputs_size, state_output,
+                                     jump_offset_type, jump_offset);
+
+    auto prefix_output_new = prefix_output;
+    Helper_run<output_t>::read_output(prefix_output_new, output, output_len);
+
+    if (ope & 0x02) { // final
+      // NOTE: for better state_outputs compression
+      if (state_outputs_size == 0) {
+        output_value(prefix_key_new, prefix_output_new);
+      } else {
+        for (auto i = 0u; i < state_outputs_size; i++) {
+          auto final_state_output = prefix_output_new;
+
+          state_output = Helper_run<output_t>::read_state_output(
+              final_state_output, state_output);
+
+          output_value(prefix_key_new, final_state_output);
+        }
+        p = state_output;
+      }
+    }
+
+    if (jump_offset_type == Ope::JumpOffsetZero) {
+      run_all<output_t>(byte_code, size,  (p - byte_code), prefix_key_new, prefix_output_new, output_value);
+    } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
+      auto p2 = p + jump_offset;
+      run_all<output_t>(byte_code, size,  (p2 - byte_code), prefix_key_new, prefix_output_new, output_value);
+    }
+
+    if (ope & 0x04) { // last_transition
+      return;
+    }
+  }
+
+  return;
+}
+
+template <typename output_t>
+inline void decompile(const char *byte_code, size_t size) {
+  run_all<output_t>(byte_code, size, 0, std::string(), OutputTraits<output_t>::initial_value(), [](const std::string& key, output_t& output) {
+      std::cout << key << "," << output << std::endl;
+      });
 }
 
 //-----------------------------------------------------------------------------
