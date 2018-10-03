@@ -39,7 +39,7 @@ inline vector<output_t> exact_match(const vector<char> &byte_code,
   return exact_match_t<output_t>(byte_code, str);
 }
 
-TEST_CASE("Simple virtual machine test", "[general]") {
+void StateMachineInterpreterTest(bool optimize) {
   vector<pair<string, output_t>> input = {
       {"apr", V(30)}, {"aug", V(31)}, {"dec", V(31)}, {"feb", V(28)},
       {"feb", V(29)}, {"jan", V(31)}, {"jul", V(31)}, {"jun", V(30)},
@@ -47,6 +47,10 @@ TEST_CASE("Simple virtual machine test", "[general]") {
 
   auto sm = fst::make_state_machine(input);
   REQUIRE(sm->count == 13);
+
+  if (optimize) {
+    fst::optimize(*sm);
+  }
 
   auto ret = fst::exact_match_search<output_t>(*sm, "feb");
   REQUIRE(ret.size() == 2);
@@ -59,6 +63,26 @@ TEST_CASE("Simple virtual machine test", "[general]") {
 
   ret = fst::exact_match_search<output_t>(*sm, "???");
   REQUIRE(ret.size() == 0);
+}
+
+TEST_CASE("State machine interpreter test", "[general]") {
+  StateMachineInterpreterTest(true);
+  StateMachineInterpreterTest(false);
+}
+
+void SimpleVirtualMachineTest(bool optimize) {
+  vector<pair<string, output_t>> input = {
+      {"apr", V(30)}, {"aug", V(31)}, {"dec", V(31)}, {"feb", V(28)},
+      {"feb", V(29)}, {"jan", V(31)}, {"jul", V(31)}, {"jun", V(30)},
+  };
+
+  auto sm = fst::make_state_machine(input);
+  REQUIRE(sm->count == 13);
+
+  if (optimize) {
+    fst::optimize(*sm);
+    REQUIRE(sm->count == 6);
+  }
 
   auto byte_code = fst::compile(*sm);
 
@@ -100,6 +124,11 @@ TEST_CASE("Simple virtual machine test", "[general]") {
   REQUIRE(entries[6].second == V(31));
   REQUIRE(entries[7].first == "jun");
   REQUIRE(entries[7].second == V(30));
+}
+
+TEST_CASE("Simple virtual machine test", "[general]") {
+  SimpleVirtualMachineTest(true);
+  SimpleVirtualMachineTest(false);
 }
 
 TEST_CASE("Edge case test1", "[general]") {

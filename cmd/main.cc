@@ -165,6 +165,7 @@ int main(int argc, const char **argv) {
       }
 
       auto sm = fst::make_state_machine(load_input(fin));
+      optimize(*sm);
       fst::dot(*sm, cout);
 
     } else if (cmd == "dump") {
@@ -181,7 +182,8 @@ int main(int argc, const char **argv) {
       }
 
       auto sm = fst::make_state_machine(load_input(fin));
-      fst::print(*sm, cout);
+      optimize(*sm);
+      fst::dump(*sm, cout);
 
     } else if (cmd == "decompile") {
       if (argi >= argc) {
@@ -223,6 +225,8 @@ int main(int argc, const char **argv) {
 
       cerr << "# making fst..." << endl;
       auto sm = fst::make_state_machine(input);
+      cerr << "# state count: " << sm->count << endl;
+      optimize(*sm);
       cerr << "# state count: " << sm->count << endl;
 
       cerr << "# compile fst..." << endl;
