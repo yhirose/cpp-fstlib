@@ -11,7 +11,7 @@ Usage
   2. Build a FST database
   3. Try 'exact match search' or 'common prefix search'
 
-  NOTE: Key type should be `std:stirng`. Value type can be either `uint32_t` or `std::string`. If value is not provided, value type will be `uint32_t` and the value starts with 0.
+  NOTE: Key type should be `std::string`. Value type can be either `uint32_t` or `std::string`. If value is not provided, value type will be `uint32_t` and the value starts with 0.
 
 ### Exact match search
 
