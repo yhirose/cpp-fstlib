@@ -35,7 +35,7 @@ inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
   const uint32_t m = 0x5bd1e995;
   const size_t r = 24;
 
-  uint32_t h1 = uint32_t(seed) ^ len;
+  uint32_t h1 = uint32_t(seed) ^ uint32_t(len);
   uint32_t h2 = uint32_t(seed >> 32);
 
   const uint32_t *data = (const uint32_t *)key;
@@ -183,7 +183,7 @@ public:
 
     int get_index(char arc) const {
       for (size_t i = 0; i < arcs.size(); i++) {
-        if (arcs[i] == arc) { return i; }
+        if (arcs[i] == arc) { return static_cast<int>(i); }
       }
       return -1;
     }
@@ -195,7 +195,7 @@ public:
       auto idx = get_index(arc);
       if (idx != -1) {
         const auto &s = text[idx];
-        auto size = end - p;
+        auto size = static_cast<size_t>(end - p);
         if (s.empty() || (s.size() <= size && s == std::string(p, s.size()))) {
           read_bytes = s.size() + 1;
           return states_and_outputs[idx].state;
@@ -252,7 +252,7 @@ public:
     void set_transition(char arc, pointer state) {
       auto idx = get_index(arc);
       if (idx == -1) {
-        idx = arcs.size();
+        idx = static_cast<int>(arcs.size());
         arcs.push_back(arc);
         states_and_outputs.emplace_back(Transition());
         text.push_back(std::string());
@@ -366,7 +366,7 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
 
   transitions.for_each([&](char arc, const State::Transition &t, size_t i) {
     buff[buff_len++] = arc;
-    uint32_t val = t.state->id;
+    auto val = static_cast<uint32_t>(t.state->id);
     memcpy(&buff[buff_len], &val, sizeof(val));
     buff_len += sizeof(val);
     OutputTraits<output_t>::write_value(buff, buff_len, t.output);
@@ -831,9 +831,9 @@ template <typename output_t> struct Command {
           t = Ope::ArcFinal;
         }
       }
-      Ope ope = {t, !text.empty(), last_transition,
-                 (unsigned int)output_length_type,
-                 (unsigned int)jump_offset_type};
+      Ope ope = {static_cast<unsigned>(t), !text.empty(), last_transition,
+                 static_cast<unsigned>(output_length_type),
+                 static_cast<unsigned>(jump_offset_type)};
       byte_code.push_back(ope.byte);
 
       // arc
@@ -1061,7 +1061,7 @@ build(Input input,
   return build<uint32_t>(
       [&](const auto &add_entry) {
         size_t i = 0;
-        input([&](const std::string &item) { add_entry(item, i++); });
+        input([&](const std::string &item) { add_entry(item, static_cast<uint32_t>(i++)); });
       },
       min_arcs_for_jump_table);
 }
@@ -1086,7 +1086,7 @@ build(const std::vector<std::string> &input,
       [&](const auto &add_entry) {
         size_t i = 0;
         for (const auto &item : input) {
-          add_entry(item, i++);
+          add_entry(item, static_cast<uint32_t>(i++));
         }
       },
       min_arcs_for_jump_table);
@@ -1502,11 +1502,11 @@ inline void run_all(const char *byte_code, size_t size, int32_t offset,
     }
 
     if (jump_offset_type == Ope::JumpOffsetZero) {
-      run_all<output_t>(byte_code, size, (p - byte_code), prefix_key_new,
+      run_all<output_t>(byte_code, size, static_cast<int32_t>(p - byte_code), prefix_key_new,
                         prefix_output_new, output_value);
     } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
       auto p2 = p + jump_offset;
-      run_all<output_t>(byte_code, size, (p2 - byte_code), prefix_key_new,
+      run_all<output_t>(byte_code, size, static_cast<int32_t>(p2 - byte_code), prefix_key_new,
                         prefix_output_new, output_value);
     }
 

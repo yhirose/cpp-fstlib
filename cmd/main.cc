@@ -56,7 +56,7 @@ vector<pair<string, output_t>> load_input(istream &fin) {
     if (fields.size() > 1) {
       input.emplace_back(fields[0], traints<output_t>::convert(fields[1]));
     } else {
-      input.emplace_back(line, traints<output_t>::convert(input.size()));
+      input.emplace_back(line, traints<output_t>::convert(static_cast<output_t>(input.size())));
     }
   }
 
