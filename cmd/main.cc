@@ -26,17 +26,17 @@ template <> struct traints<string> {
 void usage() {
   cout << R"(usage: fst <command> [<args>]
 
-    compile     DictionaryFile FstFile     - make fst byte code
-    decompile   FstFile                    - decompile fst byte code
+    compile     DictionaryFile FstFile  - make fst byte code
+    decompile   FstFile                 - decompile fst byte code
 
-    search      FstFile                    - exact match search
-    prefix      FstFile                    - common prefix search
+    search      FstFile                 - exact match search
+    prefix      FstFile                 - common prefix search
 
-    dot         DictionaryFile             - convert to dot format
+    dot         DictionaryFile          - convert to dot format
+                On macOS: `./fst dot DictionaryFile | dot -T png | open -a Preview.app -f`
 )";
 }
 
-// TODO: Support full CSV and TSV format
 vector<string> split(const string &input, char delimiter) {
   istringstream stream(input);
   string field;
@@ -47,12 +47,12 @@ vector<string> split(const string &input, char delimiter) {
   return result;
 }
 
-vector<pair<string, output_t>> load_input(istream &fin) {
+vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
   vector<pair<string, output_t>> input;
 
   string line;
   while (getline(fin, line)) {
-    auto fields = split(line, ',');
+    auto fields = split(line, delimiter);
     if (fields.size() > 1) {
       input.emplace_back(fields[0], traints<output_t>::convert(fields[1]));
     } else {
@@ -84,6 +84,9 @@ int main(int argc, const char **argv) {
   }
 
   try {
+    // TODO: Support full CSV and TSV format
+    char delimiter = '\t';
+
     string cmd = argv[argi++];
 
     if (cmd == "compile") {
@@ -109,7 +112,7 @@ int main(int argc, const char **argv) {
         return 1;
       }
 
-      auto byte_code = fst::build(load_input(fin));
+      auto byte_code = fst::build(load_input(fin, delimiter));
       fout.write(byte_code.data(), byte_code.size());
 
     } else if (cmd == "search" || cmd == "prefix") {
@@ -164,7 +167,7 @@ int main(int argc, const char **argv) {
         return 1;
       }
 
-      auto sm = fst::make_state_machine(load_input(fin));
+      auto sm = fst::make_state_machine(load_input(fin, delimiter));
       optimize(*sm);
       fst::dot(*sm, cout);
 
@@ -181,7 +184,7 @@ int main(int argc, const char **argv) {
         return 1;
       }
 
-      auto sm = fst::make_state_machine(load_input(fin));
+      auto sm = fst::make_state_machine(load_input(fin, delimiter));
       optimize(*sm);
       fst::dump(*sm, cout);
 
@@ -204,8 +207,8 @@ int main(int argc, const char **argv) {
       fin.read(byte_code.data(), size);
 
       fst::decompile<output_t>(byte_code.data(), byte_code.size(),
-                               [](const std::string &key, output_t &output) {
-                                 std::cout << key << "," << output << std::endl;
+                               [&](const std::string &key, output_t &output) {
+                                 std::cout << key << delimiter << output << std::endl;
                                });
 
     } else if (cmd == "test") {
@@ -221,7 +224,7 @@ int main(int argc, const char **argv) {
       }
 
       cerr << "# loading dictionary..." << endl;
-      auto input = load_input(fin);
+      auto input = load_input(fin, delimiter);
 
       cerr << "# making fst..." << endl;
       auto sm = fst::make_state_machine(input);
