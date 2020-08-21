@@ -128,17 +128,7 @@ std::vector<CommonPrefixSearchResult> common_prefix_search(
   const char* str)
 ```
 
-Tested compilers
-----------------
-
-  * Visual Studio 2017
-  * Visual Studio 2015
-  * Clang 4
-  * Clang 3.8
-  * Clang 3.5
-  * g++ 5.4
-
 License
 -------
 
-MIT license (© 2015 Yuji Hirose)
+MIT license (© 2020 Yuji Hirose)
