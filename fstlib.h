@@ -1,12 +1,12 @@
 //
 //  fstlib.h
 //
-//  Copyright (c) 2018 Yuji Hirose. All rights reserved.
+//  Copyright (c) 2020 Yuji Hirose. All rights reserved.
 //  MIT License
 //
 
-#ifndef _CPPFSTLIB_FSTLIB_H_
-#define _CPPFSTLIB_FSTLIB_H_
+#ifndef CPPFSTLIB_FSTLIB_H_
+#define CPPFSTLIB_FSTLIB_H_
 
 #include <algorithm>
 #include <cassert>
@@ -101,7 +101,7 @@ inline size_t get_prefix_length(const std::string &s1, const std::string &s2) {
 template <typename output_t> struct OutputTraits {};
 
 template <> struct OutputTraits<uint32_t> {
-  typedef uint32_t value_type;
+  using value_type = uint32_t;
 
   static value_type initial_value() { return 0; }
 
@@ -117,14 +117,14 @@ template <> struct OutputTraits<uint32_t> {
     return std::min(a, b);
   }
 
-  static void write_value(char *buff, size_t &buff_len, value_type val) {
+  static size_t write_value(char *buff, size_t buff_len, value_type val) {
     memcpy(&buff[buff_len], &val, sizeof(val));
-    buff_len += sizeof(val);
+    return sizeof(val);
   }
 };
 
 template <> struct OutputTraits<std::string> {
-  typedef std::string value_type;
+  using value_type = std::string;
 
   static value_type initial_value() { return value_type(); }
 
@@ -145,15 +145,16 @@ template <> struct OutputTraits<std::string> {
     return a.substr(0, get_prefix_length(a, b));
   }
 
-  static void write_value(char *buff, size_t &buff_len, const value_type &val) {
+  static size_t write_value(char *buff, size_t buff_len,
+                            const value_type &val) {
     memcpy(&buff[buff_len], val.data(), val.size());
-    buff_len += val.size();
+    return val.size();
   }
 };
 
 template <typename output_t> class State {
 public:
-  typedef State *pointer;
+  using pointer = State *;
 
   struct Transition {
     pointer state;
@@ -327,8 +328,8 @@ public:
       // NOTE: The following code makes good performance...
       state_outputs.push_back(suffix);
     } else {
-      for (auto &state_output : state_outputs) {
-        OutputTraits<output_t>::prepend_value(state_output, suffix);
+      for (auto &output : state_outputs) {
+        OutputTraits<output_t>::prepend_value(output, suffix);
       }
     }
   }
@@ -356,8 +357,8 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
   size_t buff_len = 0;
 
   if (final) {
-    for (const auto &state_output : state_outputs) {
-      OutputTraits<output_t>::write_value(buff, buff_len, state_output);
+    for (const auto &output : state_outputs) {
+      buff_len += OutputTraits<output_t>::write_value(buff, buff_len, output);
       buff[buff_len++] = '\t';
     }
   }
@@ -369,7 +370,7 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
     auto val = static_cast<uint32_t>(t.state->id);
     memcpy(&buff[buff_len], &val, sizeof(val));
     buff_len += sizeof(val);
-    OutputTraits<output_t>::write_value(buff, buff_len, t.output);
+    buff_len += OutputTraits<output_t>::write_value(buff, buff_len, t.output);
     buff[buff_len++] = '\t';
   });
 
@@ -380,10 +381,10 @@ template <typename output_t> class StateMachine {
 public:
   size_t last_id;
   size_t count;
-  typename State<output_t>::pointer root;
+  State<output_t> *root;
 
-  StateMachine(std::vector<typename State<output_t>::pointer> &&objects,
-               size_t id, typename State<output_t>::pointer root)
+  StateMachine(std::vector<State<output_t> *> &&objects, size_t id,
+               State<output_t> *root)
       : objects_(objects), last_id(id), count(id), root(root) {}
   ~StateMachine() {
     for (auto p : objects_) {
@@ -395,37 +396,71 @@ public:
 private:
   StateMachine(const StateMachine &) = delete;
   StateMachine(StateMachine &&) = delete;
-  std::vector<typename State<output_t>::pointer> objects_;
+  std::vector<State<output_t> *> objects_;
 };
 
-// NOTE: unordered_set is not used here, because it uses size_t as hash value
-// which becomes 32-bit on 32-bit platforms. But we want to use 64-bit hash
-// value.
-template <typename output_t>
-using Dictionary =
-    std::unordered_map<uint64_t, typename State<output_t>::pointer>;
+#if 0
+template <typename output_t> class Dictionary {
+public:
+  bool exist(uint64_t key) const { return map_.count(key) > 0; }
+
+  State<output_t> *get(uint64_t key) {
+    auto it = map_.find(key);
+    return it->second;
+  }
+
+  void put(uint64_t key, State<output_t> *state) { map_.emplace(key, state); }
+
+private:
+  std::unordered_map<uint64_t, State<output_t> *> map_;
+};
+#else
+template <typename output_t> class Dictionary {
+public:
+  bool exist(uint64_t key) const { return iter_map_.count(key) > 0; }
+
+  State<output_t> *get(uint64_t key) {
+    auto it = iter_map_.find(key);
+    states_.splice(states_.begin(), states_, it->second);
+    return it->second->second;
+  }
+
+  void put(uint64_t key, State<output_t> *state) {
+    auto it = iter_map_.find(key);
+    if (it != iter_map_.end()) {
+      states_.erase(it->second);
+      iter_map_.erase(it);
+    }
+    states_.push_front(std::make_pair(key, state));
+    iter_map_.emplace(key, states_.begin());
+    while (states_.size() > 10000) {
+      auto it = states_.end();
+      --it;
+      iter_map_.erase(it->first);
+      states_.pop_back();
+    }
+  }
+
+private:
+  std::list<std::pair<uint64_t, State<output_t> *>> states_;
+  std::unordered_map<uint64_t, decltype(states_.begin())> iter_map_;
+};
+#endif
 
 template <typename output_t>
-inline typename State<output_t>::pointer
-find_minimized(typename State<output_t>::pointer state,
-               Dictionary<output_t> &dictionary, size_t &state_id,
-               bool &found) {
+inline std::pair<bool, State<output_t> *>
+find_minimized(State<output_t> *state, Dictionary<output_t> &dictionary) {
   auto h = state->hash();
 
-  auto it = dictionary.find(h);
-  if (it != dictionary.end()) {
-    if (*it->second == *state) {
-      state_id--;
-      found = true;
-      return it->second;
-    }
+  if (dictionary.exist(h)) {
+    auto r = dictionary.get(h);
+    if (*r == *state) { return std::make_pair(true, r); }
   }
 
   // NOTE: COPY_STATE is very expensive...
   state->in_dictionary = true;
-  dictionary[h] = state;
-  found = false;
-  return state;
+  dictionary.put(h, state);
+  return std::make_pair(false, state);
 };
 
 template <typename output_t>
@@ -441,13 +476,13 @@ inline void get_common_prefix_and_word_suffix(const output_t &current_output,
 template <typename output_t, typename Input>
 inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
   Dictionary<output_t> dictionary;
-  std::vector<typename State<output_t>::pointer> objects;
-  size_t state_id = 0;
+  std::vector<State<output_t> *> objects;
+  size_t next_state_id = 0;
 
   // Main algorithm ported from the technical paper
-  std::vector<typename State<output_t>::pointer> temp_states;
+  std::vector<State<output_t> *> temp_states;
   std::string previous_word;
-  temp_states.push_back(State<output_t>::New(objects, state_id++));
+  temp_states.push_back(State<output_t>::New(objects, next_state_id++));
 
   input([&](const std::string &current_word, output_t current_output) {
     // The following loop caluculates the length of the longest common
@@ -455,23 +490,23 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
     auto prefix_length = get_prefix_length(previous_word, current_word);
 
     // We minimize the states from the suffix of the previous word
-    typename State<output_t>::pointer prev_state = nullptr;
+    State<output_t> *prev_state = nullptr;
     for (auto i = previous_word.length(); i > prefix_length; i--) {
-      auto arc = previous_word[i - 1];
-
-      bool found;
-      auto state =
-          find_minimized<output_t>(temp_states[i], dictionary, state_id, found);
-
+      auto [found, state] =
+          find_minimized<output_t>(temp_states[i], dictionary);
       if (found) {
+        next_state_id--;
         if (prev_state) { prev_state->parent_count--; }
       } else {
         // Ownership of the object in temp_states[i] has been moved to the
         // dictionary...
         temp_states[i] = State<output_t>::New(objects);
       }
+
       state->parent_count++;
+      auto arc = previous_word[i - 1];
       temp_states[i - 1]->set_transition(arc, state);
+
       prev_state = state;
     }
 
@@ -479,9 +514,9 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
     for (auto i = prefix_length + 1; i <= current_word.length(); i++) {
       assert(i <= temp_states.size());
       if (i == temp_states.size()) {
-        temp_states.push_back(State<output_t>::New(objects, state_id++));
+        temp_states.push_back(State<output_t>::New(objects, next_state_id++));
       } else {
-        temp_states[i]->reuse(state_id++);
+        temp_states[i]->reuse(next_state_id++);
       }
       auto arc = current_word[i - 1];
       temp_states[i - 1]->set_transition(arc, temp_states[i]);
@@ -534,28 +569,24 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
   });
 
   // Here we are minimizing the states of the last word
-  typename State<output_t>::pointer prev_state = nullptr;
-  for (auto i = previous_word.length(); i > 0; i--) {
-    auto arc = previous_word[i - 1];
-
-    bool found;
-    auto state =
-        find_minimized<output_t>(temp_states[i], dictionary, state_id, found);
-
+  State<output_t> *prev_state = nullptr;
+  for (auto i = static_cast<int>(previous_word.length()); i >= 0; i--) {
+    auto [found, state] = find_minimized<output_t>(temp_states[i], dictionary);
     if (found) {
+      next_state_id--;
       if (prev_state) { prev_state->parent_count--; }
     }
 
-    state->parent_count++;
-    temp_states[i - 1]->set_transition(arc, state);
+    if (i > 0) {
+      state->parent_count++;
+      auto arc = previous_word[i - 1];
+      temp_states[i - 1]->set_transition(arc, state);
+    }
     prev_state = state;
   }
 
-  bool found;
-  auto root =
-      find_minimized<output_t>(temp_states[0], dictionary, state_id, found);
-  return std::make_shared<StateMachine<output_t>>(std::move(objects), state_id,
-                                                  root);
+  return std::make_shared<StateMachine<output_t>>(std::move(objects),
+                                                  next_state_id, prev_state);
 }
 
 template <typename output_t>
@@ -568,8 +599,7 @@ make_state_machine(const std::vector<std::pair<std::string, output_t>> &input) {
   });
 }
 
-template <class output_t>
-inline bool connectable(typename State<output_t>::pointer state) {
+template <class output_t> inline bool connectable(State<output_t> *state) {
   if (state->final) { return false; }
 
   if (state->transitions.size() > 1) { return false; }
@@ -580,8 +610,7 @@ inline bool connectable(typename State<output_t>::pointer state) {
 }
 
 template <class output_t>
-inline void optimize_core(StateMachine<output_t> &sm,
-                          typename State<output_t>::pointer state,
+inline void optimize_core(StateMachine<output_t> &sm, State<output_t> *state,
                           std::set<size_t> &check) {
   auto id = state->id;
 
@@ -915,8 +944,7 @@ private:
 template <class output_t> using Commands = std::vector<Command<output_t>>;
 
 template <class output_t>
-inline size_t compile_core(typename State<output_t>::pointer state,
-                           Commands<output_t> &commands,
+inline size_t compile_core(State<output_t> *state, Commands<output_t> &commands,
                            std::vector<size_t> &state_positions,
                            size_t position, size_t min_arcs_for_jump_table) {
   assert(state->transitions.arcs.size() > 0);
@@ -1061,7 +1089,9 @@ build(Input input,
   return build<uint32_t>(
       [&](const auto &add_entry) {
         size_t i = 0;
-        input([&](const std::string &item) { add_entry(item, static_cast<uint32_t>(i++)); });
+        input([&](const std::string &item) {
+          add_entry(item, static_cast<uint32_t>(i++));
+        });
       },
       min_arcs_for_jump_table);
 }
@@ -1370,15 +1400,16 @@ inline bool exact_match_search(const char *byte_code, size_t size,
                                const char *str, Callback callback) {
   bool ret = false;
 
-  run<output_t>(byte_code, size, str,
-                // begin
-                [&](const char *pstr) { ret = (*pstr == '\0'); },
-                // value
-                [&](const output_t &val) {
-                  if (ret) { callback(val); }
-                },
-                // end
-                [&]() { return ret; });
+  run<output_t>(
+      byte_code, size, str,
+      // begin
+      [&](const char *pstr) { ret = (*pstr == '\0'); },
+      // value
+      [&](const output_t &val) {
+        if (ret) { callback(val); }
+      },
+      // end
+      [&]() { return ret; });
 
   return ret;
 }
@@ -1410,19 +1441,20 @@ inline void common_prefix_search(const char *byte_code, size_t size,
                                  const char *str, Callback callback) {
   CommonPrefixSearchResult<output_t> result;
 
-  run<output_t>(byte_code, size, str,
-                // begin
-                [&](const char *pstr) {
-                  result.length = pstr - str;
-                  result.outputs.clear();
-                },
-                // value
-                [&](const output_t &val) { result.outputs.emplace_back(val); },
-                // end
-                [&]() {
-                  callback(result);
-                  return false;
-                });
+  run<output_t>(
+      byte_code, size, str,
+      // begin
+      [&](const char *pstr) {
+        result.length = pstr - str;
+        result.outputs.clear();
+      },
+      // value
+      [&](const output_t &val) { result.outputs.emplace_back(val); },
+      // end
+      [&]() {
+        callback(result);
+        return false;
+      });
 }
 
 template <typename output_t>
@@ -1502,12 +1534,12 @@ inline void run_all(const char *byte_code, size_t size, int32_t offset,
     }
 
     if (jump_offset_type == Ope::JumpOffsetZero) {
-      run_all<output_t>(byte_code, size, static_cast<int32_t>(p - byte_code), prefix_key_new,
-                        prefix_output_new, output_value);
+      run_all<output_t>(byte_code, size, static_cast<int32_t>(p - byte_code),
+                        prefix_key_new, prefix_output_new, output_value);
     } else if (jump_offset_type == Ope::JumpOffsetCurrent) {
       auto p2 = p + jump_offset;
-      run_all<output_t>(byte_code, size, static_cast<int32_t>(p2 - byte_code), prefix_key_new,
-                        prefix_output_new, output_value);
+      run_all<output_t>(byte_code, size, static_cast<int32_t>(p2 - byte_code),
+                        prefix_key_new, prefix_output_new, output_value);
     }
 
     if (ope.arc.last_transition) { return; }
@@ -1608,8 +1640,8 @@ dump(const StateMachine<output_t> &sm, std::ostream &os,
 }
 
 template <typename output_t>
-inline void dot_core(typename State<output_t>::pointer state,
-                     std::set<size_t> &check, std::ostream &os) {
+inline void dot_core(State<output_t> *state, std::set<size_t> &check,
+                     std::ostream &os) {
   auto id = state->id;
 
   if (check.find(id) != check.end()) { return; }
@@ -1689,4 +1721,4 @@ exact_match_search(const StateMachine<output_t> &sm, const std::string s) {
 
 } // namespace fst
 
-#endif
+#endif // CPPFSTLIB_FSTLIB_H_
