@@ -9,6 +9,7 @@
 #define CPPFSTLIB_FSTLIB_H_
 
 #include <algorithm>
+#include <any>
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -16,20 +17,82 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <queue>
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace fst {
 
 //-----------------------------------------------------------------------------
-// state machine
+// variable byte encoding
 //-----------------------------------------------------------------------------
 
+template <typename Val> inline size_t vb_encode_value_length(Val n) {
+  size_t len = 0;
+  while (n >= 128) {
+    len++;
+    n >>= 7;
+  }
+  len++;
+  return len;
+}
+
+template <typename Val> inline size_t vb_encode_value(Val n, char *out) {
+  size_t len = 0;
+  while (n >= 128) {
+    out[len] = (char)(n & 0x7f);
+    len++;
+    n >>= 7;
+  }
+  out[len] = (char)(n + 128);
+  len++;
+  return len;
+}
+
+template <typename Val>
+inline size_t vb_encode_value_reverse(Val n, char *out) {
+  auto len = vb_encode_value(n, out);
+  for (size_t i = 0; i < len / 2; i++) {
+    std::swap(out[i], out[len - i - 1]);
+  }
+  return len;
+}
+
+template <typename Val>
+inline size_t vb_decode_value(const char *data, Val &n) {
+  auto p = (const uint8_t *)data;
+  size_t len = 0;
+  n = 0;
+  size_t cnt = 0;
+  while (p[len] < 128) {
+    n += (p[len++] << (7 * cnt++));
+  }
+  n += (p[len++] - 128) << (7 * cnt);
+  return len;
+}
+
+template <typename Val>
+inline size_t vb_decode_value_reverse(const char *data, Val &n) {
+  auto p = (const uint8_t *)data;
+  int i = 0;
+  n = 0;
+  size_t cnt = 0;
+  while (p[i] < 128) {
+    n += (p[i--] << (7 * cnt++));
+  }
+  n += (p[i--] - 128) << (7 * cnt);
+  return i * -1;
+}
+
+//-----------------------------------------------------------------------------
 // MurmurHash64B - 64-bit MurmurHash2 for 32-bit platforms
+//
 // URL:: https://github.com/aappleby/smhasher/blob/master/src/MurmurHash2.cpp
 // License: Public Domain
+//-----------------------------------------------------------------------------
 
 inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
   const uint32_t m = 0x5bd1e995;
@@ -90,13 +153,34 @@ inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
   return h;
 }
 
+//-----------------------------------------------------------------------------
+// get_prefix_length
+//-----------------------------------------------------------------------------
+
 inline size_t get_prefix_length(const std::string &s1, const std::string &s2) {
   size_t i = 0;
-  while (i < s1.length() && i < s2.length() && s1[i] == s2[i]) {
+  while (i < s1.size() && i < s2.size() && s1[i] == s2[i]) {
     i++;
   }
   return i;
 }
+
+inline bool get_prefix_length(const std::string &s1, const std::string &s2,
+                              size_t &l) {
+  l = 0;
+  while (l < s1.size() && l < s2.size()) {
+    auto ch1 = static_cast<uint8_t>(s1[l]);
+    auto ch2 = static_cast<uint8_t>(s2[l]);
+    if (ch1 < ch2) { break; }
+    if (ch1 > ch2) { return false; }
+    l++;
+  }
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+// state machine
+//-----------------------------------------------------------------------------
 
 template <typename output_t> struct OutputTraits {};
 
@@ -120,6 +204,26 @@ template <> struct OutputTraits<uint32_t> {
   static size_t write_value(char *buff, size_t buff_len, value_type val) {
     memcpy(&buff[buff_len], &val, sizeof(val));
     return sizeof(val);
+  }
+
+  static size_t get_byte_value_size(value_type val) {
+    return vb_encode_value_length(val);
+  }
+
+  static void write_byte_value(std::ostream &os, value_type val) {
+    auto vb_len = vb_encode_value_length(val);
+    std::vector<char> vb(vb_len, 0);
+    vb_encode_value_reverse(val, vb.data());
+    os.write(vb.data(), vb.size());
+  }
+
+  static size_t read_byte_value(const char *p, value_type &val) {
+    return vb_decode_value_reverse(p, val);
+  }
+
+  static size_t skip_byte_value(const char *p) {
+    value_type val;
+    return vb_decode_value_reverse(p, val);
   }
 };
 
@@ -150,7 +254,42 @@ template <> struct OutputTraits<std::string> {
     memcpy(&buff[buff_len], val.data(), val.size());
     return val.size();
   }
+
+  static size_t get_byte_value_size(const value_type &val) {
+    return vb_encode_value_length(val.size()) + val.size();
+  }
+
+  static void write_byte_value(std::ostream &os, const value_type &val) {
+    os.write(val.data(), val.size());
+    OutputTraits<uint32_t>::write_byte_value(os, val.size());
+  }
+
+  static size_t read_byte_value(const char *p, value_type &val) {
+    uint32_t str_len = 0;
+    auto vb_len = OutputTraits<uint32_t>::read_byte_value(p, str_len);
+
+    val.resize(str_len);
+    memcpy(val.data(), p - vb_len - str_len + 1, str_len);
+
+    return vb_len + str_len;
+  }
+
+  static size_t skip_byte_value(const char *p) {
+    uint32_t str_len = 0;
+    auto vb_len = OutputTraits<uint32_t>::read_byte_value(p, str_len);
+    return vb_len + str_len;
+  }
 };
+
+template <typename output_t, typename Cont>
+inline std::string join(const Cont &cont, const char *delm) {
+  std::string s;
+  for (auto i = 0u; i < cont.size(); i++) {
+    if (i != 0) { s += delm; }
+    s += OutputTraits<output_t>::to_string(cont[i]);
+  }
+  return s;
+}
 
 template <typename output_t> class State {
 public:
@@ -168,7 +307,6 @@ public:
 
   class Transitions {
   public:
-    // TODO:
     std::vector<char> arcs;
     std::vector<Transition> states_and_outputs;
     std::vector<std::string> text;
@@ -181,6 +319,7 @@ public:
     }
 
     size_t size() const { return arcs.size(); }
+    bool empty() const { return !size(); }
 
     int get_index(char arc) const {
       for (size_t i = 0; i < arcs.size(); i++) {
@@ -276,14 +415,13 @@ public:
   };
 
   size_t id;
-  bool in_dictionary;
-  bool final;
+  bool final = false;
   Transitions transitions;
   std::vector<output_t> state_outputs;
-  size_t parent_count;
+  size_t parent_count = 0;
+  size_t ref_count = 0;
 
-  State(size_t id)
-      : id(id), in_dictionary(false), final(false), parent_count(0) {}
+  State(size_t id) : id(id) {}
 
   pointer next_state(const char *p, const char *end, size_t &read_bytes) const {
     return transitions.next_state(p, end, read_bytes);
@@ -339,11 +477,14 @@ public:
     set_final(false);
     transitions.clear();
     state_outputs.clear();
+    parent_count = 0;
+    ref_count = 0;
   }
 
-  static pointer New(std::vector<pointer> &objects, size_t state_id = -1) {
+  static pointer New(std::unordered_set<pointer> &object_pool,
+                     size_t state_id = -1) {
     auto p = new State(state_id);
-    objects.push_back(p);
+    object_pool.insert(p);
     return p;
   }
 
@@ -363,7 +504,7 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
     }
   }
 
-  buff[buff_len++] = '\n';
+  buff[buff_len++] = '\0';
 
   transitions.for_each([&](char arc, const State::Transition &t, size_t i) {
     buff[buff_len++] = arc;
@@ -383,83 +524,128 @@ public:
   size_t count;
   State<output_t> *root;
 
-  StateMachine(std::vector<State<output_t> *> &&objects, size_t id,
+  StateMachine(std::unordered_set<State<output_t> *> &&object_pool, size_t id,
                State<output_t> *root)
-      : objects_(objects), last_id(id), count(id), root(root) {}
+      : object_pool_(object_pool), last_id(id), count(id), root(root) {}
   ~StateMachine() {
-    for (auto p : objects_) {
+    for (auto p : object_pool_) {
       delete p;
     }
-    objects_.clear();
+    object_pool_.clear();
   }
 
 private:
   StateMachine(const StateMachine &) = delete;
   StateMachine(StateMachine &&) = delete;
-  std::vector<State<output_t> *> objects_;
+  std::unordered_set<State<output_t> *> object_pool_;
 };
 
-#if 0
 template <typename output_t> class Dictionary {
 public:
-  bool exist(uint64_t key) const { return map_.count(key) > 0; }
+  Dictionary() {}
 
-  State<output_t> *get(uint64_t key) {
-    auto it = map_.find(key);
-    return it->second;
+  Dictionary(std::unordered_set<State<output_t> *> &object_pool)
+      : object_pool_(&object_pool) {}
+
+  bool exist(uint64_t key, State<output_t> *state) const {
+    auto it = buckets_.find(key);
+    if (it != buckets_.end()) {
+      auto &l = it->second;
+      for (auto [st, dummy] : l) {
+        if (*st == *state) { return true; }
+      }
+    }
+    return false;
   }
 
-  void put(uint64_t key, State<output_t> *state) { map_.emplace(key, state); }
-
-private:
-  std::unordered_map<uint64_t, State<output_t> *> map_;
-};
-#else
-template <typename output_t> class Dictionary {
-public:
-  bool exist(uint64_t key) const { return iter_map_.count(key) > 0; }
-
-  State<output_t> *get(uint64_t key) {
-    auto it = iter_map_.find(key);
-    states_.splice(states_.begin(), states_, it->second);
-    return it->second->second;
+  State<output_t> *get(uint64_t key, State<output_t> *state) {
+    auto it = buckets_.find(key);
+    if (it != buckets_.end()) {
+      auto &bucket = it->second;
+      auto bucket_iter = bucket.begin();
+      while (bucket_iter != bucket.end()) {
+        auto [st, any_val] = *bucket_iter;
+        if (*st == *state) {
+          bucket.splice(bucket.begin(), bucket, bucket_iter);
+          auto index_iter = std::any_cast<typename Index::iterator>(any_val);
+          index_.splice(index_.begin(), index_, index_iter);
+          return st;
+        }
+      }
+    }
+    return nullptr;
   }
 
   void put(uint64_t key, State<output_t> *state) {
-    auto it = iter_map_.find(key);
-    if (it != iter_map_.end()) {
-      states_.erase(it->second);
-      iter_map_.erase(it);
-    }
-    states_.push_front(std::make_pair(key, state));
-    iter_map_.emplace(key, states_.begin());
-    while (states_.size() > 10000) {
-      auto it = states_.end();
-      --it;
-      iter_map_.erase(it->first);
-      states_.pop_back();
+    static auto dummy = index_.begin();
+    auto &bucket = buckets_[key];
+
+    bucket.push_front(std::make_pair(state, dummy));
+    auto bucket_iter = bucket.begin();
+
+    index_.push_front(std::make_pair(key, bucket_iter));
+    auto index_iter = index_.begin();
+
+    bucket_iter->second = index_iter;
+
+    if (index_.size() > 10000) {
+      // TODO: Use rbegin()...
+      auto index_iter = index_.end();
+      --index_iter;
+
+      size_t i = 0;
+      for (;;) {
+        const auto &[key, any_value] = *index_iter;
+        auto bucket_iter = std::any_cast<typename Bucket::iterator>(any_value);
+        auto st = (*bucket_iter).first;
+
+        if (st->ref_count == 0) {
+          if (object_pool_) {
+            object_pool_->erase(st);
+            delete st;
+
+            buckets_[key].erase(bucket_iter);
+            index_.erase(index_iter);
+          }
+          break;
+        }
+
+        --index_iter;
+        if (index_iter == index_.begin()) { break; }
+      }
     }
   }
 
 private:
-  std::list<std::pair<uint64_t, State<output_t> *>> states_;
-  std::unordered_map<uint64_t, decltype(states_.begin())> iter_map_;
+  using Index = std::list<std::pair<
+      uint64_t,
+      typename std::list<std::pair<State<output_t> *, std::any>>::iterator>>;
+  using Bucket = std::list<std::pair<State<output_t> *, std::any>>;
+  using Buckets = std::unordered_map<uint64_t, Bucket>;
+
+  std::unordered_set<State<output_t> *> *object_pool_ = nullptr;
+  Buckets buckets_;
+  Index index_;
 };
-#endif
 
 template <typename output_t>
 inline std::pair<bool, State<output_t> *>
 find_minimized(State<output_t> *state, Dictionary<output_t> &dictionary) {
   auto h = state->hash();
 
-  if (dictionary.exist(h)) {
-    auto r = dictionary.get(h);
-    if (*r == *state) { return std::make_pair(true, r); }
+  if (dictionary.exist(h, state)) {
+    auto st = dictionary.get(h, state);
+    st->ref_count++;
+    st->transitions.for_each(
+        [&](char arc, auto &t, size_t i) { t.state->ref_count--; });
+    return std::make_pair(true, st);
   }
 
   // NOTE: COPY_STATE is very expensive...
-  state->in_dictionary = true;
   dictionary.put(h, state);
+  state->ref_count++;
+  state->transitions.for_each(
+      [&](char arc, auto &t, size_t i) { t.state->ref_count--; });
   return std::make_pair(false, state);
 };
 
@@ -475,14 +661,14 @@ inline void get_common_prefix_and_word_suffix(const output_t &current_output,
 
 template <typename output_t, typename Input>
 inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
+  std::unordered_set<State<output_t> *> object_pool;
   Dictionary<output_t> dictionary;
-  std::vector<State<output_t> *> objects;
   size_t next_state_id = 0;
 
   // Main algorithm ported from the technical paper
   std::vector<State<output_t> *> temp_states;
   std::string previous_word;
-  temp_states.push_back(State<output_t>::New(objects, next_state_id++));
+  temp_states.push_back(State<output_t>::New(object_pool, next_state_id++));
 
   input([&](const std::string &current_word, output_t current_output) {
     // The following loop caluculates the length of the longest common
@@ -491,7 +677,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
 
     // We minimize the states from the suffix of the previous word
     State<output_t> *prev_state = nullptr;
-    for (auto i = previous_word.length(); i > prefix_length; i--) {
+    for (auto i = previous_word.size(); i > prefix_length; i--) {
       auto [found, state] =
           find_minimized<output_t>(temp_states[i], dictionary);
       if (found) {
@@ -500,7 +686,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
       } else {
         // Ownership of the object in temp_states[i] has been moved to the
         // dictionary...
-        temp_states[i] = State<output_t>::New(objects);
+        temp_states[i] = State<output_t>::New(object_pool);
       }
 
       state->parent_count++;
@@ -511,10 +697,11 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
     }
 
     // This loop initializes the tail states for the current word
-    for (auto i = prefix_length + 1; i <= current_word.length(); i++) {
+    for (auto i = prefix_length + 1; i <= current_word.size(); i++) {
       assert(i <= temp_states.size());
       if (i == temp_states.size()) {
-        temp_states.push_back(State<output_t>::New(objects, next_state_id++));
+        temp_states.push_back(
+            State<output_t>::New(object_pool, next_state_id++));
       } else {
         temp_states[i]->reuse(next_state_id++);
       }
@@ -523,7 +710,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
     }
 
     if (current_word != previous_word) {
-      auto state = temp_states[current_word.length()];
+      auto state = temp_states[current_word.size()];
       state->set_final(true);
       // NOTE: The following code causes bad performance...
       // state->push_to_state_outputs("");
@@ -557,7 +744,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
     }
 
     if (current_word == previous_word) {
-      auto state = temp_states[current_word.length()];
+      auto state = temp_states[current_word.size()];
       state->push_to_state_outputs(current_output);
     } else {
       auto state = temp_states[prefix_length];
@@ -570,7 +757,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
 
   // Here we are minimizing the states of the last word
   State<output_t> *prev_state = nullptr;
-  for (auto i = static_cast<int>(previous_word.length()); i >= 0; i--) {
+  for (auto i = static_cast<int>(previous_word.size()); i >= 0; i--) {
     auto [found, state] = find_minimized<output_t>(temp_states[i], dictionary);
     if (found) {
       next_state_id--;
@@ -585,7 +772,7 @@ inline std::shared_ptr<StateMachine<output_t>> make_state_machine(Input input) {
     prev_state = state;
   }
 
-  return std::make_shared<StateMachine<output_t>>(std::move(objects),
+  return std::make_shared<StateMachine<output_t>>(std::move(object_pool),
                                                   next_state_id, prev_state);
 }
 
@@ -601,11 +788,8 @@ make_state_machine(const std::vector<std::pair<std::string, output_t>> &input) {
 
 template <class output_t> inline bool connectable(State<output_t> *state) {
   if (state->final) { return false; }
-
   if (state->transitions.size() > 1) { return false; }
-
   if (state->parent_count > 1) { return false; }
-
   return true;
 }
 
@@ -639,41 +823,6 @@ template <typename output_t> inline void optimize(StateMachine<output_t> &sm) {
 //-----------------------------------------------------------------------------
 
 const size_t DEFAULT_MIN_ARCS_FOR_JUMP_TABLE = 6;
-
-template <typename Val> inline size_t vb_encode_value_length(Val n) {
-  size_t len = 0;
-  while (n >= 128) {
-    len++;
-    n >>= 7;
-  }
-  len++;
-  return len;
-}
-
-template <typename Val> inline size_t vb_encode_value(Val n, char *out) {
-  size_t len = 0;
-  while (n >= 128) {
-    out[len] = (char)(n & 0x7f);
-    len++;
-    n >>= 7;
-  }
-  out[len] = (char)(n + 128);
-  len++;
-  return len;
-}
-
-template <typename Val>
-inline size_t vb_decode_value(const char *data, Val &n) {
-  auto p = (const uint8_t *)data;
-  size_t len = 0;
-  n = 0;
-  size_t cnt = 0;
-  while (p[len] < 128) {
-    n += (p[len++] << (7 * cnt++));
-  }
-  n += (p[len++] - 128) << (7 * cnt);
-  return len;
-}
 
 union Ope {
   enum OpeType { ArcNotFinal = 0, ArcFinal, ArcFinalWithStateOutput, Jmp };
@@ -752,8 +901,8 @@ template <typename output_t> struct Command {
 
   size_t output_length(const std::string &output) const {
     size_t size = 0;
-    if (output.length() > 2) { size += sizeof(uint8_t); }
-    size += output.length();
+    if (output.size() > 2) { size += sizeof(uint8_t); }
+    size += output.size();
     return size;
   }
 
@@ -762,7 +911,7 @@ template <typename output_t> struct Command {
   }
 
   size_t state_output_length(const std::string &state_output) const {
-    return sizeof(uint8_t) + state_output.length();
+    return sizeof(uint8_t) + state_output.size();
   }
 
   size_t byte_code_size() const {
@@ -829,7 +978,7 @@ template <typename output_t> struct Command {
 
   void write_output(std::vector<char> &byte_code,
                     const std::string &output) const {
-    if (output.length() > 2) { byte_code.push_back((char)output.length()); }
+    if (output.size() > 2) { byte_code.push_back((char)output.size()); }
     byte_code.insert(byte_code.end(), output.begin(), output.end());
   }
 
@@ -842,7 +991,7 @@ template <typename output_t> struct Command {
 
   void write_state_output(std::vector<char> &byte_code,
                           const std::string &state_output) const {
-    byte_code.push_back((char)state_output.length());
+    byte_code.push_back((char)state_output.size());
     byte_code.insert(byte_code.end(), state_output.begin(), state_output.end());
   }
 
@@ -965,7 +1114,7 @@ inline size_t compile_core(State<output_t> *state, Commands<output_t> &commands,
     }
 
     static size_t output_length(const std::string &output) {
-      return output.length();
+      return output.size();
     }
   };
 
@@ -1558,16 +1707,6 @@ inline void decompile(const char *byte_code, size_t size, Value output_value) {
 // formatter
 //-----------------------------------------------------------------------------
 
-template <typename output_t, typename Cont>
-inline std::string join(const Cont &cont, const char *delm) {
-  std::string s;
-  for (auto i = 0u; i < cont.size(); i++) {
-    if (i != 0) { s += delm; }
-    s += OutputTraits<output_t>::to_string(cont[i]);
-  }
-  return s;
-}
-
 template <typename output_t>
 inline void
 dump(const StateMachine<output_t> &sm, std::ostream &os,
@@ -1576,12 +1715,10 @@ dump(const StateMachine<output_t> &sm, std::ostream &os,
   std::vector<size_t> state_positions(sm.last_id);
   compile_core(sm.root, commands, state_positions, 0, min_arcs_for_jump_table);
 
-  os << "Ope\tArc\t\tAddr\tNxtAdr\tID\tNextID\tSize\tLast\tFinal\tOutput\tStOut"
-        "s"
-        "\tJpOffTy\tJpOffSz\tJmpOff\n";
-  os << "------\t--------------\t------\t------\t------\t------\t------\t------"
-        "\t------"
-        "\t------\t------\t------\t------\t------\n";
+  os << "Ope\tID\tArc\t\tNextID\tLast\tFinal\tOutput\tStOuts\tAddr\tSize\tJmpOf"
+        "f\tNxtAdr\tJpOffTy\tJpOffSz\t\n";
+  os << "------\t------\t--------------\t------\t------\t------\t------\t------"
+        "\t------\t------\t------\t------\t------\t------\n";
 
   size_t addr = 0;
 
@@ -1606,32 +1743,35 @@ dump(const StateMachine<output_t> &sm, std::ostream &os,
 
       os << "Arc"
          << "\t";
-      os << (int)(uint8_t)cmd.arc << "\t";
+      os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << "\t";
       os << cmd.arc;
       if (!cmd.text.empty()) { os << cmd.text; }
       os << "\t";
-      os << addr << "\t";
-      os << (int)next_addr << "\t";
-      os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << "\t";
+      if (cmd.text.size() < 7) { os << "\t"; }
       os << (cmd.next_id == -1 ? "" : std::to_string(cmd.next_id)) << "\t";
-      os << size << "\t";
-      os << cmd.last_transition << "\t";
-      os << cmd.final << "\t";
-      os << cmd.output << "\t";
+      os << (cmd.last_transition ? "_" : " ") << "\t";
+      os << (cmd.final ? "f" : " ") << "\t";
+      os << (OutputTraits<output_t>::empty(cmd.output)
+                 ? ""
+                 : OutputTraits<output_t>::to_string(cmd.output))
+         << "\t";
       os << join<output_t>(cmd.state_outputs, "/") << "\t";
+      os << addr << "\t";
+      os << size << "\t";
+      os << (int)jump_offset << "\t";
+      os << (int)next_addr << "\t";
       os << cmd.jump_offset_type << "\t";
-      os << jump_offset_bytes << "\t";
-      os << (int)jump_offset << std::endl;
+      os << jump_offset_bytes << std::endl;
     } else { // Jmp
       auto next_addr = addr + size;
 
       os << "Jmp"
-         << "\t\t\t";
-      os << addr << "\t";
-      os << (int)next_addr << "\t";
+         << "\t";
       os << (cmd.id == -1 ? "" : std::to_string(cmd.id)) << "\t";
-      os << "\t";
-      os << size << std::endl;
+      os << "\t\t\t\t\t\t\t";
+      os << addr << "\t";
+      os << size << "\t\t";
+      os << (int)next_addr << std::endl;
     }
     addr += size;
     ++rit;
@@ -1718,6 +1858,581 @@ exact_match_search(const StateMachine<output_t> &sm, const std::string s) {
     return std::vector<output_t>();
   }
 }
+
+//-----------------------------------------------------------------------------
+// new implementation
+//-----------------------------------------------------------------------------
+
+enum class ContainerType { Set, Map };
+enum class ValueType { Uint32, String };
+
+template <typename output_t> struct FstTraits {};
+
+template <> struct FstTraits<uint32_t> {
+  static ValueType get_value_type() { return ValueType::Uint32; }
+};
+
+template <> struct FstTraits<std::string> {
+  static ValueType get_value_type() { return ValueType::String; }
+};
+
+struct FstHeader {
+  static const size_t CHAR_INDEX_SIZE = 8;
+
+  uint8_t container_type = 0;
+  uint8_t value_type = 0;
+  uint16_t reserved = 0;
+  uint32_t start_address = 0;
+  char char_index[CHAR_INDEX_SIZE] = {0};
+
+  FstHeader() {}
+
+  FstHeader(ContainerType container_type, ValueType value_type,
+            size_t start_address, const std::map<char, size_t> &char_index_map)
+      : container_type(static_cast<uint8_t>(container_type)),
+        value_type(static_cast<uint8_t>(value_type)),
+        start_address(start_address) {
+    for (auto [ch, index] : char_index_map) {
+      if (index < CHAR_INDEX_SIZE) { char_index[index] = ch; }
+    }
+  }
+
+  void write(std::ostream &os) {
+    os.write(reinterpret_cast<const char *>(this), sizeof(*this));
+  }
+};
+
+template <typename output_t> struct FstRecord {
+  union {
+    struct {
+      unsigned no_address : 1;
+      unsigned last_transition : 1;
+      unsigned final : 1;
+      unsigned has_output : 1;
+      unsigned has_state_output : 1;
+      unsigned label_index : 3;
+    } data;
+    uint8_t byte;
+  } flags;
+
+  char label = 0;
+  size_t delta = 0;
+  const output_t *output = nullptr;
+  const output_t *state_output = nullptr;
+
+  size_t byte_size() const {
+    size_t sz = 1;
+    if (flags.data.label_index == 0) { sz += 1; }
+    if (!flags.data.no_address) { sz += vb_encode_value_length(delta); }
+    if (flags.data.has_output) {
+      sz += OutputTraits<output_t>::get_byte_value_size(*output);
+    }
+    if (flags.data.has_state_output) {
+      sz += OutputTraits<output_t>::get_byte_value_size(*state_output);
+    }
+    return sz;
+  }
+
+  void write(std::ostream &os) {
+    if (flags.data.has_state_output) {
+      OutputTraits<output_t>::write_byte_value(os, *state_output);
+    }
+    if (flags.data.has_output) {
+      OutputTraits<output_t>::write_byte_value(os, *output);
+    }
+    if (!flags.data.no_address) {
+      auto vb_len = vb_encode_value_length(delta);
+      std::vector<char> vb(vb_len, 0);
+      vb_encode_value_reverse(delta, vb.data());
+      os.write(vb.data(), vb.size());
+    }
+    if (flags.data.label_index == 0) { os << label; }
+    os.write(reinterpret_cast<const char *>(&flags.byte), sizeof(flags.byte));
+  }
+};
+
+template <typename output_t, typename Input> class ByteCodeBuilder {
+public:
+  std::ostream &os_;
+  bool need_output_ = true;
+  size_t trace_ = true;
+
+  std::map<char, size_t> char_index_map_;
+
+  size_t record_index_ = 0;
+  std::map<size_t, size_t> record_index_map_;
+
+  size_t address_ = 0;
+  std::map<size_t, size_t> address_map_;
+
+  size_t total_byte_size_ = 0;
+
+  ByteCodeBuilder(const Input &input, std::ostream &os, bool need_output,
+                  bool trace)
+      : os_(os), need_output_(need_output), trace_(trace) {
+
+    intialize_char_index_map_(input);
+
+    if (trace_) {
+      std::cout << "Address\tArc\tN F L\tNxtAddr";
+      if (need_output_) { std::cout << "\tOutput\tStOuts"; }
+      std::cout << std::endl;
+      std::cout << "-------\t------\t-----\t-------";
+      if (need_output_) { std::cout << "\t------\t------"; }
+      std::cout << std::endl;
+    }
+  }
+
+  ~ByteCodeBuilder() {
+    auto container_type =
+        need_output_ ? ContainerType::Map : ContainerType::Set;
+    auto start_byte_adress = address_map_[record_index_ - 1];
+
+    FstHeader header(container_type, FstTraits<output_t>::get_value_type(),
+                     start_byte_adress, char_index_map_);
+
+    header.write(os_);
+
+    if (trace_) {
+      std::cout << "# byte code size: " << total_byte_size_ + sizeof(header)
+                << std::endl;
+    }
+  }
+
+  void write(const State<output_t> *state) {
+    const auto &transitions = state->transitions;
+
+    transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
+      auto has_address =
+          record_index_map_.find(t.state->id) != record_index_map_.end();
+      auto last_transition = transitions.size() - 1 == i;
+      auto no_address = last_transition && has_address &&
+                        record_index_map_[t.state->id] == record_index_ - 1;
+
+      FstRecord<output_t> rec;
+      rec.flags.data.no_address = no_address;
+      rec.flags.data.last_transition = last_transition;
+      rec.flags.data.final = t.state->final;
+
+      auto index = char_index_map_[arc];
+      if (index < FstHeader::CHAR_INDEX_SIZE) {
+        rec.flags.data.label_index = index;
+      } else {
+        rec.flags.data.label_index = 0;
+        rec.label = arc;
+      }
+
+      rec.delta = 0;
+      if (!no_address) {
+        if (has_address) {
+          rec.delta = address_ - address_map_[record_index_map_[t.state->id]];
+        }
+      }
+
+      rec.flags.data.has_output = false;
+      if (need_output_) {
+        if (!OutputTraits<output_t>::empty(t.output)) {
+          rec.flags.data.has_output = true;
+          rec.output = &t.output;
+        }
+      }
+
+      rec.flags.data.has_state_output = false;
+      if (need_output_) {
+        if (!t.state->state_outputs.empty()) {
+          if (!OutputTraits<output_t>::empty(t.state->state_outputs[0])) {
+            rec.flags.data.has_state_output = true;
+            rec.state_output = &t.state->state_outputs[0];
+          }
+        }
+      }
+
+      rec.write(os_);
+
+      auto byte_size = rec.byte_size();
+      auto accessible_address = address_ + byte_size - 1;
+
+      address_map_[record_index_] = accessible_address;
+
+      if (trace_) {
+        // Byte address
+        std::cout << address_map_[record_index_] << "\t";
+
+        // Arc
+        {
+          if (arc < 0x20) {
+            std::cout << std::hex << (int)(uint8_t)arc << std::dec;
+          } else {
+            std::cout << arc;
+          }
+          std::cout << "\t";
+        }
+
+        // Flags
+        {
+          std::cout << (no_address ? "↑" : " ") << ' '
+                    << (t.state->final ? '*' : ' ') << ' '
+                    << (last_transition ? "‾" : " ") << "\t";
+        }
+
+        // Next Address
+        {
+          if (!no_address) {
+            if (rec.delta > 0) {
+              std::cout << address_ - rec.delta;
+            } else {
+              std::cout << "x";
+            }
+          }
+          std::cout << "\t";
+        }
+
+        // Output
+        {
+          if (need_output_) {
+            if (!OutputTraits<output_t>::empty(t.output)) {
+              std::cout << t.output;
+            }
+          }
+          std::cout << "\t";
+        }
+
+        // State Output
+        {
+          if (need_output_) {
+            if (!t.state->state_outputs.empty()) {
+              if (!OutputTraits<output_t>::empty(t.state->state_outputs[0])) {
+                std::cout << t.state->id << ":" << t.state->state_outputs[0];
+              }
+            }
+          }
+          std::cout << "\t";
+        }
+
+        std::cout << std::endl;
+      }
+
+      total_byte_size_ += byte_size;
+
+      record_index_ += 1;
+      address_ += byte_size;
+    });
+
+    if (!state->transitions.empty()) {
+      record_index_map_[state->id] = record_index_ - 1;
+    }
+  }
+
+private:
+  void intialize_char_index_map_(const Input &input) {
+    char_index_map_.emplace('\0', 0);
+
+    std::map<char, size_t> char_count;
+    for (const auto &[word, _] : input) {
+      for (auto ch : word) {
+        char_count[ch]++;
+      }
+    }
+
+    struct second_order {
+      bool operator()(const std::pair<char, size_t> &x,
+                      const std::pair<char, size_t> &y) const {
+        return x.second < y.second;
+      }
+    };
+
+    std::priority_queue<std::pair<char, size_t>,
+                        std::vector<std::pair<char, size_t>>, second_order>
+        que;
+
+    for (auto x : char_count) {
+      que.push(x);
+    }
+
+    while (!que.empty()) {
+      auto [ch, count] = que.top();
+      char_index_map_[ch] = char_index_map_.size();
+      que.pop();
+    }
+  }
+};
+
+enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
+
+template <typename output_t, typename Input>
+inline std::pair<Result, size_t> make_fst(const Input &input, std::ostream &os,
+                                          bool need_output,
+                                          bool trace = false) {
+
+  ByteCodeBuilder<output_t, Input> builder(input, os, need_output, trace);
+
+  std::unordered_set<State<output_t> *> object_pool;
+  Dictionary<output_t> dictionary(object_pool);
+  size_t next_state_id = 0;
+  size_t line = 1;
+  Result result = Result::Success;
+
+  // Main algorithm ported from the technical paper
+  std::vector<State<output_t> *> temp_states;
+  std::string previous_word;
+  temp_states.push_back(State<output_t>::New(object_pool, next_state_id++));
+
+  for (const auto &[current_word, _current_output] : input) {
+    auto current_output = _current_output;
+
+    if (current_word.empty()) {
+      result = Result::EmptyKey;
+      return std::make_pair(result, line);
+    }
+
+    // The following loop caluculates the length of the longest common
+    // prefix of 'current_word' and 'previous_word'
+    // auto prefix_length = get_prefix_length(previous_word, current_word);
+    size_t prefix_length;
+    if (!get_prefix_length(previous_word, current_word, prefix_length)) {
+      result = Result::UnsortedKey;
+      return std::make_pair(result, line);
+    }
+
+    if (previous_word.size() == current_word.size() &&
+        previous_word == current_word) {
+      result = Result::DuplicateKey;
+      return std::make_pair(result, line);
+    }
+
+    // We minimize the states from the suffix of the previous word
+    for (auto i = previous_word.size(); i > prefix_length; i--) {
+      auto [found, state] =
+          find_minimized<output_t>(temp_states[i], dictionary);
+
+      if (found) {
+        next_state_id--;
+      } else {
+        builder.write(state);
+
+        // Ownership of the object in temp_states[i] has been moved to the
+        // dictionary...
+        temp_states[i] = State<output_t>::New(object_pool);
+      }
+
+      auto arc = previous_word[i - 1];
+      temp_states[i - 1]->set_transition(arc, state);
+    }
+
+    // This loop initializes the tail states for the current word
+    for (auto i = prefix_length + 1; i <= current_word.size(); i++) {
+      assert(i <= temp_states.size());
+      if (i == temp_states.size()) {
+        temp_states.push_back(
+            State<output_t>::New(object_pool, next_state_id++));
+      } else {
+        temp_states[i]->reuse(next_state_id++);
+      }
+      auto arc = current_word[i - 1];
+      temp_states[i - 1]->set_transition(arc, temp_states[i]);
+    }
+
+    if (current_word != previous_word) {
+      auto state = temp_states[current_word.size()];
+      state->set_final(true);
+      // NOTE: The following code causes bad performance...
+      // state->push_to_state_outputs("");
+    }
+
+    for (auto j = 1u; j <= prefix_length; j++) {
+      auto prev_state = temp_states[j - 1];
+      auto arc = current_word[j - 1];
+
+      const auto &output = prev_state->output(arc);
+
+      auto common_prefix = OutputTraits<output_t>::initial_value();
+      auto word_suffix = OutputTraits<output_t>::initial_value();
+      get_common_prefix_and_word_suffix(current_output, output, common_prefix,
+                                        word_suffix);
+
+      prev_state->set_output(arc, common_prefix);
+
+      if (!OutputTraits<output_t>::empty(word_suffix)) {
+        auto state = temp_states[j];
+        state->transitions.for_each_arc([&](char arc) {
+          state->prepend_suffix_to_output(arc, word_suffix);
+        });
+        if (state->final) {
+          state->prepend_suffix_to_state_outputs(word_suffix);
+        }
+      }
+
+      current_output =
+          OutputTraits<output_t>::get_suffix(current_output, common_prefix);
+    }
+
+    if (current_word == previous_word) {
+      auto state = temp_states[current_word.size()];
+      state->push_to_state_outputs(current_output);
+    } else {
+      auto state = temp_states[prefix_length];
+      auto arc = current_word[prefix_length];
+      state->set_output(arc, current_output);
+    }
+
+    previous_word = current_word;
+    line++;
+  }
+
+  // Here we are minimizing the states of the last word
+  for (auto i = static_cast<int>(previous_word.size()); i >= 0; i--) {
+    auto [found, state] = find_minimized<output_t>(temp_states[i], dictionary);
+
+    if (found) {
+      next_state_id--;
+    } else {
+      builder.write(state);
+    }
+
+    if (i > 0) {
+      auto arc = previous_word[i - 1];
+      temp_states[i - 1]->set_transition(arc, state);
+    }
+  }
+
+  for (auto p : object_pool) {
+    delete p;
+  }
+
+  return std::make_pair(Result::Success, line);
+}
+
+template <typename output_t> class container {
+public:
+  container(const char *byte_code, size_t byte_code_size, bool need_output)
+      : byte_code_(byte_code), byte_code_size_(byte_code_size),
+        need_output_(need_output) {
+
+    if (byte_code_size < sizeof(header_)) { return; }
+
+    auto p = byte_code_ + (byte_code_size - sizeof(header_));
+    memcpy(reinterpret_cast<char *>(&header_), p, sizeof(header_));
+
+    if (static_cast<ContainerType>(header_.container_type) !=
+        (need_output ? ContainerType::Map : ContainerType::Set)) {
+      return;
+    }
+
+    if (static_cast<ValueType>(header_.value_type) !=
+        FstTraits<output_t>::get_value_type()) {
+      return;
+    }
+
+    is_valid_ = true;
+  }
+
+  bool is_valid() const { return is_valid_; }
+
+  void set_trace(bool on) { trace_ = on; }
+
+  bool query(const char *str, size_t len, output_t &value) const {
+    auto ret = false;
+    auto address = header_.start_address;
+
+    if (trace_) {
+      std::cout << "Char\tAddress\tArc\tN F L\tNxtAddr\tOutput\tStOuts"
+                << std::endl;
+      std::cout << "----\t-------\t---\t-----\t-------\t------\t------"
+                << std::endl;
+    }
+
+    size_t i = 0;
+    while (i < len) {
+      auto ch = str[i];
+      auto end = byte_code_ + address;
+      auto p = end;
+
+      FstRecord<output_t> rec;
+      rec.flags.byte = *p--;
+
+      auto index = rec.flags.data.label_index;
+      char arc = 0;
+      if (index == 0) {
+        arc = *p--;
+      } else {
+        arc = header_.char_index[index];
+      }
+
+      size_t delta = 0;
+      if (!rec.flags.data.no_address) {
+        p -= vb_decode_value_reverse(p, delta);
+      }
+
+      auto output = OutputTraits<output_t>::initial_value();
+      if (rec.flags.data.has_output) {
+        p -= OutputTraits<output_t>::read_byte_value(p, output);
+      }
+
+      auto state_output = OutputTraits<output_t>::initial_value();
+      if (rec.flags.data.has_state_output) {
+        p -= OutputTraits<output_t>::read_byte_value(p, state_output);
+      }
+
+      auto byte_size = std::distance(p, end);
+
+      auto next_address = 0;
+      if (rec.flags.data.no_address) {
+        next_address = address - byte_size;
+      } else {
+        if (delta) { next_address = address - byte_size - delta + 1; }
+      }
+
+      if (trace_) {
+        std::cout << ch << "\t";
+        std::cout << address << "\t";
+        std::cout << arc << "\t";
+        std::cout << (rec.flags.data.no_address ? "↑" : " ") << ' '
+                  << (rec.flags.data.final ? '*' : ' ') << ' '
+                  << (rec.flags.data.last_transition ? "‾" : " ") << "\t";
+
+        // Next Address
+        if (!rec.flags.data.no_address) {
+          if (delta) {
+            std::cout << next_address;
+          } else {
+            std::cout << "x";
+          }
+        }
+        std::cout << "\t";
+
+        if (rec.flags.data.has_output) { std::cout << output; }
+        std::cout << "\t";
+
+        if (rec.flags.data.has_state_output) { std::cout << state_output; }
+
+        std::cout << std::endl;
+      }
+
+      if (ch == arc) {
+        value += output;
+        i++;
+        ret = rec.flags.data.final && i == len;
+        if (ret) { value += state_output; }
+        if (!next_address) { break; }
+        address = next_address;
+      } else {
+        if (rec.flags.data.last_transition) { break; }
+        address = address - byte_size;
+      }
+    }
+
+    return ret;
+  }
+
+private:
+  const char *byte_code_;
+  size_t byte_code_size_;
+  bool need_output_ = false;
+
+  FstHeader header_;
+  bool is_valid_ = false;
+  bool trace_ = false;
+};
 
 } // namespace fst
 

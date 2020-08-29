@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0)
 
-add_definitions("-std=c++1y")
-add_definitions("-Wno-deprecated-register")
+add_definitions("-std=c++17")
+add_definitions("-Wno-register")
 
 include_directories(
     ..

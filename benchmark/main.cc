@@ -1,18 +1,16 @@
 
-#include <chrono>
-#include <fstream>
 #include "darts/darts.h"
 #include "fstlib.h"
 #include "marisa.h"
 #include "ux-trie/ux.hpp"
+#include <chrono>
+#include <fstream>
 
 using namespace std;
 
-bool read_file(const char* path, vector<char>& buff) {
+bool read_file(const char *path, vector<char> &buff) {
   ifstream ifs(path, ios::in | ios::binary);
-  if (ifs.fail()) {
-    return false;
-  }
+  if (ifs.fail()) { return false; }
 
   buff.resize(static_cast<unsigned int>(ifs.seekg(0, ios::end).tellg()));
   if (!buff.empty()) {
@@ -21,7 +19,7 @@ bool read_file(const char* path, vector<char>& buff) {
   return true;
 }
 
-vector<pair<string, uint32_t>> load_input(istream& in) {
+vector<pair<string, uint32_t>> load_input(istream &in) {
   vector<pair<string, uint32_t>> input;
   string word;
 
@@ -30,13 +28,13 @@ vector<pair<string, uint32_t>> load_input(istream& in) {
   }
 
   sort(input.begin(), input.end(),
-       [](const auto& a, const auto& b) { return a.first < b.first; });
+       [](const auto &a, const auto &b) { return a.first < b.first; });
 
   return input;
 }
 
 struct StopWatch {
-  StopWatch(const char* label) : label_(label) {
+  StopWatch(const char *label) : label_(label) {
     start_ = chrono::system_clock::now();
   }
   ~StopWatch() {
@@ -45,17 +43,17 @@ struct StopWatch {
     auto count = chrono::duration_cast<chrono::milliseconds>(diff).count();
     cout << label_ << "\t" << count << " millisec." << endl;
   }
-  const char* label_;
+  const char *label_;
   chrono::system_clock::time_point start_;
 };
 
-size_t file_size(const char* path) {
+size_t file_size(const char *path) {
   ifstream fin(path, ios_base::binary);
   fin.seekg(0, ios_base::end);
   return fin.tellg();
 }
 
-int main(int argc, const char** argv) {
+int main(int argc, const char **argv) {
   if (argc < 2) {
     cerr << "usage: benchmark <dictionary file>" << endl;
     return 1;
@@ -69,9 +67,9 @@ int main(int argc, const char** argv) {
 
   auto input = load_input(fin);
 
-  vector<const char*> keys;
+  vector<const char *> keys;
   vector<size_t> lengths;
-  for (const auto& item : input) {
+  for (const auto &item : input) {
     keys.push_back(item.first.c_str());
     lengths.push_back(item.first.length());
   }
@@ -83,6 +81,7 @@ int main(int argc, const char** argv) {
   bool ux = true;
   bool marisa = true;
   bool fstlib = true;
+  bool fstlib2 = true;
 
   int count = 5;
 
@@ -95,7 +94,7 @@ int main(int argc, const char** argv) {
   // Darts
   if (darts) {
     cout << "#### darts (double array) ####" << endl;
-    const char* PATH = "darts.bin";
+    const char *PATH = "darts.bin";
 
     if (build) {
       Darts::DoubleArray da;
@@ -140,10 +139,10 @@ int main(int argc, const char** argv) {
   // Ux-trie
   if (ux) {
     cout << "#### ux (louds) ####" << endl;
-    const char* PATH = "ux.bin";
+    const char *PATH = "ux.bin";
 
     vector<string> keys;
-    for (const auto& item : input) {
+    for (const auto &item : input) {
       keys.push_back(item.first);
     }
 
@@ -193,12 +192,12 @@ int main(int argc, const char** argv) {
   // Marisa-trie
   if (marisa) {
     marisa::Keyset keyset;
-    for (const auto& item : input) {
+    for (const auto &item : input) {
       keyset.push_back(item.first.c_str());
     }
 
     cout << "#### marisa (louds) ####" << endl;
-    const char* PATH = "marisa.bin";
+    const char *PATH = "marisa.bin";
 
     if (build) {
       marisa::Trie ma;
@@ -249,7 +248,7 @@ int main(int argc, const char** argv) {
   if (fstlib) {
     for (size_t min_arcs = 8; min_arcs <= 8; min_arcs += 2) {
       cout << "#### fstlib (mast:" << min_arcs << ") ####" << endl;
-      const char* PATH = "fstlib.bin";
+      const char *PATH = "fstlib.bin";
 
       std::shared_ptr<fst::StateMachine<uint32_t>> sm;
 
@@ -277,7 +276,7 @@ int main(int argc, const char** argv) {
           for (int i = 0; i < count; i++) {
             for (auto key : keys) {
               if (!fst::exact_match_search<uint32_t>(
-                      data, size, key, [](const uint32_t& val) {})) {
+                      data, size, key, [](const uint32_t &val) {})) {
                 cerr << "error: (" << strlen(key) << ")" << endl;
                 auto outputs = fst::exact_match_search(*sm, key);
                 if (outputs.empty()) {
@@ -295,7 +294,7 @@ int main(int argc, const char** argv) {
           for (int i = 0; i < count; i++) {
             for (auto key : keys) {
               fst::common_prefix_search<uint32_t>(data, size, key,
-                                                  [](const auto& result) {});
+                                                  [](const auto &result) {});
             }
           }
         }
@@ -303,6 +302,47 @@ int main(int argc, const char** argv) {
 
       cout << endl;
     }
+  }
+
+  // fstlib2
+  if (fstlib2) {
+    cout << "#### fstlib2 ####" << endl;
+    const char *PATH = "fstlib2.bin";
+
+    std::shared_ptr<fst::StateMachine<uint32_t>> sm;
+
+    if (build) {
+      StopWatch sw("build");
+      ofstream fout(PATH, ios_base::binary);
+      auto [result, line] = fst::make_fst<uint32_t>(input, fout, true);
+      fout.close();
+
+      fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
+              (double)(file_size(PATH) * 100 / 1024 / 1024) / 100.0,
+              (int)file_size(PATH));
+    }
+
+    {
+      vector<char> byte_code;
+      read_file(PATH, byte_code);
+
+      if (exact) {
+        StopWatch sw("exact");
+
+        fst::container<uint32_t> cont(byte_code.data(), byte_code.size(), true);
+
+        for (int i = 0; i < count; i++) {
+          for (auto key : keys) {
+            auto value = fst::OutputTraits<uint32_t>::initial_value();
+            if (!cont.query(key, strlen(key), value)) {
+              cerr << "error: (" << strlen(key) << ")" << endl;
+            }
+          }
+        }
+      }
+    }
+
+    cout << endl;
   }
 
   cout << (dummy ? " \n" : "  \n") << endl;

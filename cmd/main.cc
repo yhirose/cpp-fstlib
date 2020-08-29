@@ -56,7 +56,7 @@ vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
     if (fields.size() > 1) {
       input.emplace_back(fields[0], traints<output_t>::convert(fields[1]));
     } else {
-      input.emplace_back(line, traints<output_t>::convert(static_cast<output_t>(input.size())));
+      input.emplace_back(line, traints<output_t>::convert(input.size()));
     }
   }
 
@@ -127,11 +127,7 @@ int main(int argc, const char **argv) {
         return 1;
       }
 
-      fin.seekg(0, ios_base::end);
-      auto size = (unsigned int)fin.tellg();
-      fin.seekg(0, ios_base::beg);
-      vector<char> byte_code(size);
-      fin.read(byte_code.data(), size);
+      auto byte_code = load_byte_code(fin);
 
       string line;
       while (getline(cin, line)) {
@@ -200,15 +196,12 @@ int main(int argc, const char **argv) {
         return 1;
       }
 
-      fin.seekg(0, ios_base::end);
-      auto size = (unsigned int)fin.tellg();
-      fin.seekg(0, ios_base::beg);
-      vector<char> byte_code(size);
-      fin.read(byte_code.data(), size);
+      auto byte_code = load_byte_code(fin);
 
       fst::decompile<output_t>(byte_code.data(), byte_code.size(),
                                [&](const std::string &key, output_t &output) {
-                                 std::cout << key << delimiter << output << std::endl;
+                                 std::cout << key << delimiter << output
+                                           << std::endl;
                                });
 
     } else if (cmd == "test") {
@@ -237,11 +230,114 @@ int main(int argc, const char **argv) {
       cerr << "# byte code size: " << byte_code.size() << endl;
 
       cerr << "# test all words..." << endl;
-      for (const auto &item : input) {
+      for (const auto &[word, output] : input) {
         auto results = fst::exact_match_search<output_t>(
-            byte_code.data(), byte_code.size(), item.first.c_str());
-        if (results.empty()) { cout << item.first << ": NG" << endl; }
+            byte_code.data(), byte_code.size(), word.c_str());
+        if (results.empty()) { cout << word << ": NG" << endl; }
       }
+
+    } else if (cmd == "test2") {
+      if (argi >= argc) {
+        usage();
+        return 1;
+      }
+
+      ifstream fin(argv[argi++]);
+      if (!fin) {
+        usage();
+        return 1;
+      }
+
+      auto out_path = argv[argi++];
+      ofstream fout(out_path, ios_base::binary);
+      if (!fout) {
+        usage();
+        return 1;
+      }
+
+      auto need_output = true;
+      if (argi < argc) { need_output = std::string(argv[argi++]) == "true"; }
+
+      auto input = load_input(fin, delimiter);
+
+      auto [result, line] =
+          fst::make_fst<output_t>(input, fout, need_output, false);
+
+      fout.close();
+
+      if (result == fst::Result::Success) {
+        // Internal test
+        ifstream f(out_path, ios_base::binary);
+        auto byte_code = load_byte_code(f);
+
+        fst::container<output_t> cont(byte_code.data(), byte_code.size(),
+                                      need_output);
+        // cont.set_trace(true);
+
+        if (cont.is_valid()) {
+          for (const auto &[word, output] : input) {
+            auto value = fst::OutputTraits<output_t>::initial_value();
+            auto ret = cont.query(word.data(), word.size(), value);
+            if (!ret) {
+              std::cerr << "couldn't find '" << word << "'" << std::endl;
+            } else if (need_output && output != value) {
+              std::cerr << "word: " << word << std::endl;
+              std::cerr << "expected value: " << output << std::endl;
+              std::cerr << "actual value: " << value << std::endl;
+            }
+          }
+        } else {
+          std::cerr << "someting is wrong in byte_code..." << std::endl;
+        }
+      } else {
+        std::string error_message;
+
+        switch (result) {
+        case fst::Result::EmptyKey: error_message = "empty key"; break;
+        case fst::Result::UnsortedKey: error_message = "unsorted key"; break;
+        case fst::Result::DuplicateKey: error_message = "duplicate key"; break;
+        default: error_message = "Unknown"; break;
+        }
+
+        std::cerr << "line " << line << ": " << error_message << std::endl;
+      }
+
+    } else if (cmd == "search2") {
+      if (argi >= argc) {
+        usage();
+        return 1;
+      }
+
+      ifstream fin(argv[argi++], ios_base::binary);
+      if (!fin) {
+        usage();
+        return 1;
+      }
+
+      auto need_output = true;
+      if (argi < argc) { need_output = std::string(argv[argi++]) == "true"; }
+
+      auto byte_code = load_byte_code(fin);
+
+      fst::container<output_t> cont(byte_code.data(), byte_code.size(),
+                                    need_output);
+      // cont.set_trace(true);
+
+      if (cont.is_valid()) {
+        string line;
+        while (getline(cin, line)) {
+          auto value = fst::OutputTraits<output_t>::initial_value();
+          auto ret = cont.query(line.data(), line.size(), value);
+          if (ret) {
+            std::cout << value << endl;
+          } else {
+            std::cout << "not found..." << endl;
+          }
+        }
+      } else {
+        std::cout << "invalid file..." << std::endl;
+      }
+
     } else {
       usage();
       return 1;
