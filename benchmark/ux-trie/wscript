@@ -1,0 +1,43 @@
+APPNAME= 'ux'
+
+top = '.'
+out = 'bin'
+
+def options(ctx):
+  pass
+    
+def configure(ctx):
+  pass
+
+def build(bld):
+  bld.shlib(
+       source       = 'uxTrie.cpp bitVec.cpp rsDic.cpp uxUtil.cpp uxMap.cpp',
+       target       = 'ux',
+       name         = 'UX',
+       includes     = '.')
+  bld.program(
+       source       = 'uxMain.cpp',
+       target       = 'ux',
+       includes     = '.',
+       use          = 'UX')
+  bld.program(
+       features     = 'gtest',
+       source       = 'uxTest.cpp',
+       target       = 'ux_test',
+       use          = 'UX' ,
+       includes     = '.')
+  bld.program(
+       features     = 'gtest',
+       source       = 'bitVecTest.cpp',
+       target       = 'bitvec_test',
+       use          = 'UX',
+       includes     = '.')
+
+  bld.program(
+       features     = 'gtest',
+       source       = 'uxMapTest.cpp',
+       target       = 'uxmap_test',
+       use          = 'UX',
+       includes     = '.')
+
+  bld.install_files('${PREFIX}/include/ux', bld.path.ant_glob('*.hpp'))
