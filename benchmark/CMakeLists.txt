@@ -1,7 +1,8 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.1.0)
+project("benchmark")
 
-add_definitions("-std=c++17")
-add_definitions("-Wno-register")
+set(CMAKE_CXX_STANDARD 17)
+#add_definitions("-Wno-register")
 
 include_directories(
     ..
