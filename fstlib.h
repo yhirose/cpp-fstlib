@@ -211,10 +211,10 @@ template <> struct OutputTraits<uint32_t> {
   }
 
   static void write_byte_value(std::ostream &os, value_type val) {
-    auto vb_len = vb_encode_value_length(val);
-    std::vector<char> vb(vb_len, 0);
-    vb_encode_value_reverse(val, vb.data());
-    os.write(vb.data(), vb.size());
+    // TODO: length check
+    char vb[16];
+    auto vb_len = vb_encode_value_reverse(val, vb);
+    os.write(vb, vb_len);
   }
 
   static size_t read_byte_value(const char *p, value_type &val) {
@@ -540,6 +540,29 @@ private:
   std::unordered_set<State<output_t> *> object_pool_;
 };
 
+#if 0
+template <typename output_t> class Dictionary {
+public:
+  Dictionary() {}
+
+  Dictionary(std::unordered_set<State<output_t> *> &/*object_pool*/) {}
+
+  bool exist(uint64_t key, State<output_t> *state) const {
+    return dic_.find(key) != dic_.end();
+  }
+
+  State<output_t> *get(uint64_t key, State<output_t> *state) {
+    return dic_[key];
+  }
+
+  void put(uint64_t key, State<output_t> *state) {
+    dic_[key] = state;
+  }
+
+private:
+  std::unordered_map<uint64_t, State<output_t> *> dic_;
+};
+#else
 template <typename output_t> class Dictionary {
 public:
   Dictionary() {}
@@ -627,9 +650,10 @@ private:
   Buckets buckets_;
   Index index_;
 };
+#endif
 
 template <typename output_t>
-inline std::pair<bool, State<output_t> *>
+std::pair<bool, State<output_t> *>
 find_minimized(State<output_t> *state, Dictionary<output_t> &dictionary) {
   auto h = state->hash();
 
@@ -1888,12 +1912,13 @@ struct FstHeader {
   FstHeader() {}
 
   FstHeader(ContainerType container_type, ValueType value_type,
-            size_t start_address, const std::map<char, size_t> &char_index_map)
+            size_t start_address, const std::vector<size_t> &char_index_table)
       : container_type(static_cast<uint8_t>(container_type)),
         value_type(static_cast<uint8_t>(value_type)),
         start_address(start_address) {
-    for (auto [ch, index] : char_index_map) {
-      if (index < CHAR_INDEX_SIZE) { char_index[index] = ch; }
+    for (size_t ch = 0; ch < 256; ch++) {
+      auto index = char_index_table[ch];
+      if (0 < index && index < CHAR_INDEX_SIZE) { char_index[index] = static_cast<char>(ch); }
     }
   }
 
@@ -1941,10 +1966,10 @@ template <typename output_t> struct FstRecord {
       OutputTraits<output_t>::write_byte_value(os, *output);
     }
     if (!flags.data.no_address) {
-      auto vb_len = vb_encode_value_length(delta);
-      std::vector<char> vb(vb_len, 0);
-      vb_encode_value_reverse(delta, vb.data());
-      os.write(vb.data(), vb.size());
+      // TODO: length check
+      char vb[16];
+      auto vb_len = vb_encode_value_reverse(delta, vb);
+      os.write(vb, vb_len);
     }
     if (flags.data.label_index == 0) { os << label; }
     os.write(reinterpret_cast<const char *>(&flags.byte), sizeof(flags.byte));
@@ -1957,13 +1982,13 @@ public:
   bool need_output_ = true;
   size_t trace_ = true;
 
-  std::map<char, size_t> char_index_map_;
+  std::vector<size_t> char_index_table_;
 
   size_t record_index_ = 0;
-  std::map<size_t, size_t> record_index_map_;
+  std::unordered_map<size_t, size_t> record_index_map_;
 
   size_t address_ = 0;
-  std::map<size_t, size_t> address_map_;
+  std::vector<size_t> address_table_;
 
   size_t total_byte_size_ = 0;
 
@@ -1971,7 +1996,7 @@ public:
                   bool trace)
       : os_(os), need_output_(need_output), trace_(trace) {
 
-    intialize_char_index_map_(input);
+    intialize_char_index_table_(input);
 
     if (trace_) {
       std::cout << "Address\tArc\tN F L\tNxtAddr";
@@ -1986,10 +2011,10 @@ public:
   ~ByteCodeBuilder() {
     auto container_type =
         need_output_ ? ContainerType::Map : ContainerType::Set;
-    auto start_byte_adress = address_map_[record_index_ - 1];
+    auto start_byte_adress = address_table_[record_index_ - 1];
 
     FstHeader header(container_type, FstTraits<output_t>::get_value_type(),
-                     start_byte_adress, char_index_map_);
+                     start_byte_adress, char_index_table_);
 
     header.write(os_);
 
@@ -2000,12 +2025,12 @@ public:
   }
 
   void write(const State<output_t> *state) {
-    const auto &transitions = state->transitions;
+    auto transition_count = state->transitions.size();
 
-    transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
-      auto has_address =
-          record_index_map_.find(t.state->id) != record_index_map_.end();
-      auto last_transition = transitions.size() - 1 == i;
+    state->transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
+      auto recored_index_iter = record_index_map_.find(t.state->id);
+      auto has_address = recored_index_iter != record_index_map_.end();
+      auto last_transition = transition_count - 1 == i;
       auto no_address = last_transition && has_address &&
                         record_index_map_[t.state->id] == record_index_ - 1;
 
@@ -2014,7 +2039,7 @@ public:
       rec.flags.data.last_transition = last_transition;
       rec.flags.data.final = t.state->final;
 
-      auto index = char_index_map_[arc];
+      auto index = char_index_table_[static_cast<uint8_t>(arc)];
       if (index < FstHeader::CHAR_INDEX_SIZE) {
         rec.flags.data.label_index = index;
       } else {
@@ -2025,7 +2050,7 @@ public:
       rec.delta = 0;
       if (!no_address) {
         if (has_address) {
-          rec.delta = address_ - address_map_[record_index_map_[t.state->id]];
+          rec.delta = address_ - address_table_[recored_index_iter->second];
         }
       }
 
@@ -2052,11 +2077,11 @@ public:
       auto byte_size = rec.byte_size();
       auto accessible_address = address_ + byte_size - 1;
 
-      address_map_[record_index_] = accessible_address;
+      address_table_.push_back(accessible_address);
 
       if (trace_) {
         // Byte address
-        std::cout << address_map_[record_index_] << "\t";
+        std::cout << address_table_[record_index_] << "\t";
 
         // Arc
         {
@@ -2124,8 +2149,8 @@ public:
   }
 
 private:
-  void intialize_char_index_map_(const Input &input) {
-    char_index_map_.emplace('\0', 0);
+  void intialize_char_index_table_(const Input &input) {
+    char_index_table_.assign(256, 0);
 
     std::map<char, size_t> char_count;
     for (const auto &[word, _] : input) {
@@ -2149,9 +2174,10 @@ private:
       que.push(x);
     }
 
+    size_t index = 1;
     while (!que.empty()) {
       auto [ch, count] = que.top();
-      char_index_map_[ch] = char_index_map_.size();
+      char_index_table_[static_cast<uint8_t>(ch)] = index++;
       que.pop();
     }
   }
@@ -2332,7 +2358,7 @@ public:
 
   bool query(const char *str, size_t len, output_t &value) const {
     auto ret = false;
-    auto address = header_.start_address;
+    size_t address = header_.start_address;
 
     if (trace_) {
       std::cout << "Char\tAddress\tArc\tN F L\tNxtAddr\tOutput\tStOuts"
@@ -2375,7 +2401,7 @@ public:
 
       auto byte_size = std::distance(p, end);
 
-      auto next_address = 0;
+      size_t next_address = 0;
       if (rec.flags.data.no_address) {
         next_address = address - byte_size;
       } else {
