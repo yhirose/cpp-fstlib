@@ -2,7 +2,10 @@ cmake_minimum_required(VERSION 3.1.0)
 project("benchmark")
 
 set(CMAKE_CXX_STANDARD 17)
-#add_definitions("-Wno-register")
+
+if(NOT MSVC)
+    add_definitions("-Wno-register")
+endif()
 
 include_directories(
     ..
