@@ -1986,18 +1986,18 @@ template <typename output_t> struct FstRecord {
 template <typename output_t, typename Input> class ByteCodeBuilder {
 public:
   ByteCodeBuilder(const Input &input, std::ostream &os, bool need_output,
-                  bool allow_multi, bool trace)
+                  bool allow_multi, bool dump, bool verbose)
       : os_(os), need_output_(need_output), allow_multi_(allow_multi),
-        trace_(trace) {
+        dump_(dump), verbose_(verbose) {
 
     intialize_char_index_table_(input);
 
-    if (trace_) {
+    if (dump_) {
       std::cout << "Address\tArc\tN F L\tNxtAddr";
-      if (need_output_) { std::cout << "\tOutput\tStOuts"; }
+      if (need_output_) { std::cout << "\tOutput\tStOuts\tSize"; }
       std::cout << std::endl;
-      std::cout << "-------\t------\t-----\t-------";
-      if (need_output_) { std::cout << "\t------\t------"; }
+      std::cout << "-------\t---\t-----\t-------";
+      if (need_output_) { std::cout << "\t------\t------\t----"; }
       std::cout << std::endl;
     }
   }
@@ -2014,8 +2014,11 @@ public:
 
     header.write(os_);
 
-    std::cout << "# unique char count: " << char_count_.size() << std::endl;
-    std::cout << "# total size: " << total_size_ + sizeof(header) << std::endl;
+    if (verbose_) {
+      std::cerr << "# unique char count: " << char_count_.size() << std::endl;
+      std::cerr << "# total size: " << total_size_ + sizeof(header)
+                << std::endl;
+    }
   }
 
   void write(const State<output_t> *state) {
@@ -2064,66 +2067,56 @@ public:
         }
       }
 
-      rec.write(os_);
-
       auto byte_size = rec.byte_size();
       auto accessible_address = address_ + byte_size - 1;
 
       address_table_.push_back(accessible_address);
 
-      if (trace_) {
+      if (!dump_) {
+        rec.write(os_);
+      } else {
         // Byte address
         std::cout << address_table_[record_index_] << "\t";
 
         // Arc
-        {
-          if (arc < 0x20) {
-            std::cout << std::hex << (int)(uint8_t)arc << std::dec;
-          } else {
-            std::cout << arc;
-          }
-          std::cout << "\t";
+        if (arc < 0x20) {
+          std::cout << std::hex << (int)(uint8_t)arc << std::dec;
+        } else {
+          std::cout << arc;
         }
+        std::cout << "\t";
 
         // Flags
-        {
-          std::cout << (no_address ? "↑" : " ") << ' '
-                    << (t.state->final ? '*' : ' ') << ' '
-                    << (last_transition ? "‾" : " ") << "\t";
-        }
+        std::cout << (no_address ? "↑" : " ") << ' '
+                  << (t.state->final ? '*' : ' ') << ' '
+                  << (last_transition ? "‾" : " ") << "\t";
 
         // Next Address
-        {
-          if (!no_address) {
-            if (rec.delta > 0) {
-              std::cout << address_ - rec.delta;
-            } else {
-              std::cout << "x";
-            }
+        if (!no_address) {
+          if (rec.delta > 0) {
+            std::cout << address_ - rec.delta;
+          } else {
+            std::cout << "x";
           }
-          std::cout << "\t";
         }
+        std::cout << "\t";
 
         // Output
-        {
-          if (need_output_) {
-            if (!OutputTraits<output_t>::empty(t.output)) {
-              std::cout << t.output;
-            }
+        if (need_output_) {
+          if (!OutputTraits<output_t>::empty(t.output)) {
+            std::cout << t.output;
           }
-          std::cout << "\t";
         }
+        std::cout << "\t";
 
         // State Output
-        {
-          if (need_output_) {
-            if (!t.state->state_outputs.empty()) {
-              std::cout << join<output_t>(t.state->state_outputs, "/");
-            }
+        if (need_output_) {
+          if (!t.state->state_outputs.empty()) {
+            std::cout << join<output_t>(t.state->state_outputs, "/");
           }
-          std::cout << "\t";
         }
 
+        std::cout << "\t" << byte_size;
         std::cout << std::endl;
       }
 
@@ -2174,7 +2167,8 @@ private:
   std::ostream &os_;
   bool need_output_ = true;
   bool allow_multi_ = true;
-  size_t trace_ = true;
+  size_t dump_ = true;
+  size_t verbose_ = true;
 
   std::map<char, size_t> char_count_;
   std::vector<size_t> char_index_table_;
@@ -2188,15 +2182,48 @@ private:
   size_t total_size_ = 0;
 };
 
+template <typename output_t> class DotBuilder {
+public:
+  DotBuilder(std::ostream &os) : os_(os) {
+    os_ << "digraph{" << std::endl;
+    os_ << "  rankdir = LR;" << std::endl;
+  }
+
+  ~DotBuilder() { os_ << "}" << std::endl; }
+
+  void write(const State<output_t> *state) {
+    if (state->final) {
+      auto state_outputs = join<output_t>(state->state_outputs, "|");
+      os_ << "  s" << state->id << " [ shape = doublecircle, xlabel = \""
+          << state_outputs << "\" ];" << std::endl;
+    } else {
+      os_ << "  s" << state->id << " [ shape = circle ];" << std::endl;
+    }
+
+    state->transitions.for_each_with_text(
+        [&](char arc, const typename State<output_t>::Transition &t, size_t i,
+            const std::string &text) {
+          std::string label;
+          label += arc;
+          if (!text.empty()) { label += text; }
+          os_ << "  s" << state->id << "->s" << t.state->id << " [ label = \""
+              << label;
+          if (!OutputTraits<output_t>::empty(t.output)) {
+            os_ << "/" << t.output;
+          }
+          os_ << "\" ];" << std::endl;
+        });
+  }
+
+private:
+  std::ostream &os_;
+};
+
 enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
-template <typename output_t, typename Input>
-inline std::pair<Result, size_t> make_fst(const Input &input, std::ostream &os,
-                                          bool need_output, bool allow_multi,
-                                          bool trace = false) {
-
-  ByteCodeBuilder<output_t, Input> builder(input, os, need_output, allow_multi,
-                                           trace);
+template <typename output_t, typename Input, typename Builder>
+inline std::pair<Result, size_t>
+make_fst_core(const Input &input, bool allow_multi, Builder &builder) {
 
   std::unordered_set<State<output_t> *> object_pool;
   Dictionary<output_t> dictionary(object_pool);
@@ -2332,6 +2359,33 @@ inline std::pair<Result, size_t> make_fst(const Input &input, std::ostream &os,
   }
 
   return std::make_pair(Result::Success, line);
+}
+
+template <typename output_t, typename Input>
+inline std::pair<Result, size_t> make_fst(const Input &input, std::ostream &os,
+                                          bool need_output, bool allow_multi,
+                                          bool verbose) {
+
+  ByteCodeBuilder<output_t, Input> builder(input, os, need_output, allow_multi,
+                                           false, verbose);
+  return make_fst_core<output_t>(input, allow_multi, builder);
+}
+
+template <typename output_t, typename Input>
+inline std::pair<Result, size_t> dump_fst(const Input &input, std::ostream &os,
+                                          bool verbose) {
+
+  ByteCodeBuilder<output_t, Input> builder(input, os, true, true, true,
+                                           verbose);
+  return make_fst_core<output_t>(input, true, builder);
+}
+
+template <typename output_t, typename Input>
+inline std::pair<Result, size_t> make_dot(const Input &input,
+                                          std::ostream &os) {
+
+  DotBuilder<output_t> builder(os);
+  return make_fst_core<output_t>(input, true, builder);
 }
 
 template <typename output_t> class container {

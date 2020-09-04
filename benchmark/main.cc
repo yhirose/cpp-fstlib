@@ -306,7 +306,7 @@ int main(int argc, const char **argv) {
 
   // fstlib2
   if (fstlib2) {
-    cout << "#### fstlib2 ####" << endl;
+    cout << "#### fstlib2 (mast) ####" << endl;
     const char *PATH = "fstlib2.bin";
 
     std::shared_ptr<fst::StateMachine<uint32_t>> sm;
@@ -314,7 +314,7 @@ int main(int argc, const char **argv) {
     if (build) {
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] = fst::make_fst<uint32_t>(input, fout, true, false);
+      auto [result, line] = fst::make_fst<uint32_t>(input, fout, true, false, false);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",

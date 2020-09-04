@@ -75,6 +75,52 @@ vector<char> load_byte_code(istream &is) {
   return byte_code;
 }
 
+void show_error_message(fst::Result result, size_t line) {
+  std::string error_message;
+
+  switch (result) {
+  case fst::Result::EmptyKey: error_message = "empty key"; break;
+  case fst::Result::UnsortedKey: error_message = "unsorted key"; break;
+  case fst::Result::DuplicateKey: error_message = "duplicate key"; break;
+  default: error_message = "Unknown"; break;
+  }
+
+  std::cerr << "line " << line << ": " << error_message << std::endl;
+}
+
+void regression_test(const vector<pair<string, output_t>> &input,
+                     const char *out_path, bool need_output, bool allow_multi) {
+  ifstream f(out_path, ios_base::binary);
+  auto byte_code = load_byte_code(f);
+
+  fst::container<output_t> cont(byte_code.data(), byte_code.size(), need_output,
+                                allow_multi);
+
+  if (cont.is_valid()) {
+    for (const auto &[word, output] : input) {
+      std::vector<output_t> outputs;
+      auto ret = cont.query(word.data(), word.size(), [&](const auto &output) {
+        outputs.push_back(output);
+      });
+      if (!ret) {
+        std::cerr << "couldn't find '" << word << "'" << std::endl;
+      } else if (need_output) {
+        if (std::find(outputs.begin(), outputs.end(), output) ==
+            outputs.end()) {
+          for (auto &x : outputs) {
+            std::cerr << x << std::endl;
+          }
+          std::cerr << "word: " << word << std::endl;
+          std::cerr << "expected value: " << output << std::endl;
+          std::cerr << "actual value: " << outputs[0] << std::endl;
+        }
+      }
+    }
+  } else {
+    std::cerr << "someting is wrong in byte_code..." << std::endl;
+  }
+}
+
 int main(int argc, const char **argv) {
   int argi = 1;
 
@@ -264,57 +310,51 @@ int main(int argc, const char **argv) {
       auto input = load_input(fin, delimiter);
 
       auto [result, line] =
-          fst::make_fst<output_t>(input, fout, need_output, allow_multi, false);
+          fst::make_fst<output_t>(input, fout, need_output, allow_multi, true);
 
       fout.close();
 
-      if (result == fst::Result::Success) {
-        // Internal test
-        {
-          ifstream f(out_path, ios_base::binary);
-          auto byte_code = load_byte_code(f);
-
-          fst::container<output_t> cont(byte_code.data(), byte_code.size(),
-                                        need_output, allow_multi);
-          // cont.set_trace(true);
-
-          if (cont.is_valid()) {
-            for (const auto &[word, output] : input) {
-              std::vector<output_t> outputs;
-              auto ret =
-                  cont.query(word.data(), word.size(), [&](const auto &output) {
-                    outputs.push_back(output);
-                  });
-              if (!ret) {
-                std::cerr << "couldn't find '" << word << "'" << std::endl;
-              } else if (need_output) {
-                if (std::find(outputs.begin(), outputs.end(), output) ==
-                    outputs.end()) {
-                  for (auto &x : outputs) {
-                    std::cerr << x << std::endl;
-                  }
-                  std::cerr << "word: " << word << std::endl;
-                  std::cerr << "expected value: " << output << std::endl;
-                  std::cerr << "actual value: " << outputs[0] << std::endl;
-                }
-              }
-            }
-          } else {
-            std::cerr << "someting is wrong in byte_code..." << std::endl;
-          }
-        }
+      if (result != fst::Result::Success) {
+        show_error_message(result, line);
       } else {
-        std::string error_message;
-
-        switch (result) {
-        case fst::Result::EmptyKey: error_message = "empty key"; break;
-        case fst::Result::UnsortedKey: error_message = "unsorted key"; break;
-        case fst::Result::DuplicateKey: error_message = "duplicate key"; break;
-        default: error_message = "Unknown"; break;
-        }
-
-        std::cerr << "line " << line << ": " << error_message << std::endl;
+        regression_test(input, out_path, need_output, allow_multi);
       }
+
+    } else if (cmd == "dump2") {
+      if (argi >= argc) {
+        usage();
+        return 1;
+      }
+
+      ifstream fin(argv[argi++]);
+      if (!fin) {
+        usage();
+        return 1;
+      }
+
+      auto input = load_input(fin, delimiter);
+
+      auto [result, line] = fst::dump_fst<output_t>(input, std::cout, true);
+
+      if (result != fst::Result::Success) { show_error_message(result, line); }
+
+    } else if (cmd == "dot2") {
+      if (argi >= argc) {
+        usage();
+        return 1;
+      }
+
+      ifstream fin(argv[argi++]);
+      if (!fin) {
+        usage();
+        return 1;
+      }
+
+      auto input = load_input(fin, delimiter);
+
+      auto [result, line] = fst::make_dot<output_t>(input, std::cout);
+
+      if (result != fst::Result::Success) { show_error_message(result, line); }
 
     } else if (cmd == "search2") {
       if (argi >= argc) {
@@ -334,11 +374,14 @@ int main(int argc, const char **argv) {
       auto allow_multi = true;
       if (argi < argc) { allow_multi = std::string(argv[argi++]) == "true"; }
 
+      auto trace = false;
+      if (argi < argc) { trace = std::string(argv[argi++]) == "true"; }
+
       auto byte_code = load_byte_code(fin);
 
       fst::container<output_t> cont(byte_code.data(), byte_code.size(),
                                     need_output, allow_multi);
-      // cont.set_trace(true);
+      cont.set_trace(trace);
 
       if (cont.is_valid()) {
         string line;
