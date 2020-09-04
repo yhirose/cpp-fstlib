@@ -236,7 +236,7 @@ int main(int argc, const char **argv) {
         if (results.empty()) { cout << word << ": NG" << endl; }
       }
 
-    } else if (cmd == "test2") {
+    } else if (cmd == "compile2") {
       if (argi >= argc) {
         usage();
         return 1;
@@ -258,36 +258,50 @@ int main(int argc, const char **argv) {
       auto need_output = true;
       if (argi < argc) { need_output = std::string(argv[argi++]) == "true"; }
 
+      auto allow_multi = true;
+      if (argi < argc) { allow_multi = std::string(argv[argi++]) == "true"; }
+
       auto input = load_input(fin, delimiter);
 
       auto [result, line] =
-          fst::make_fst<output_t>(input, fout, need_output, false);
+          fst::make_fst<output_t>(input, fout, need_output, allow_multi, false);
 
       fout.close();
 
       if (result == fst::Result::Success) {
         // Internal test
-        ifstream f(out_path, ios_base::binary);
-        auto byte_code = load_byte_code(f);
+        {
+          ifstream f(out_path, ios_base::binary);
+          auto byte_code = load_byte_code(f);
 
-        fst::container<output_t> cont(byte_code.data(), byte_code.size(),
-                                      need_output);
-        // cont.set_trace(true);
+          fst::container<output_t> cont(byte_code.data(), byte_code.size(),
+                                        need_output, allow_multi);
+          // cont.set_trace(true);
 
-        if (cont.is_valid()) {
-          for (const auto &[word, output] : input) {
-            auto value = fst::OutputTraits<output_t>::initial_value();
-            auto ret = cont.query(word.data(), word.size(), value);
-            if (!ret) {
-              std::cerr << "couldn't find '" << word << "'" << std::endl;
-            } else if (need_output && output != value) {
-              std::cerr << "word: " << word << std::endl;
-              std::cerr << "expected value: " << output << std::endl;
-              std::cerr << "actual value: " << value << std::endl;
+          if (cont.is_valid()) {
+            for (const auto &[word, output] : input) {
+              std::vector<output_t> outputs;
+              auto ret =
+                  cont.query(word.data(), word.size(), [&](const auto &output) {
+                    outputs.push_back(output);
+                  });
+              if (!ret) {
+                std::cerr << "couldn't find '" << word << "'" << std::endl;
+              } else if (need_output) {
+                if (std::find(outputs.begin(), outputs.end(), output) ==
+                    outputs.end()) {
+                  for (auto &x : outputs) {
+                    std::cerr << x << std::endl;
+                  }
+                  std::cerr << "word: " << word << std::endl;
+                  std::cerr << "expected value: " << output << std::endl;
+                  std::cerr << "actual value: " << outputs[0] << std::endl;
+                }
+              }
             }
+          } else {
+            std::cerr << "someting is wrong in byte_code..." << std::endl;
           }
-        } else {
-          std::cerr << "someting is wrong in byte_code..." << std::endl;
         }
       } else {
         std::string error_message;
@@ -317,22 +331,30 @@ int main(int argc, const char **argv) {
       auto need_output = true;
       if (argi < argc) { need_output = std::string(argv[argi++]) == "true"; }
 
+      auto allow_multi = true;
+      if (argi < argc) { allow_multi = std::string(argv[argi++]) == "true"; }
+
       auto byte_code = load_byte_code(fin);
 
       fst::container<output_t> cont(byte_code.data(), byte_code.size(),
-                                    need_output);
+                                    need_output, allow_multi);
       // cont.set_trace(true);
 
       if (cont.is_valid()) {
         string line;
         while (getline(cin, line)) {
-          auto value = fst::OutputTraits<output_t>::initial_value();
-          auto ret = cont.query(line.data(), line.size(), value);
-          if (ret) {
-            std::cout << value << endl;
-          } else {
-            std::cout << "not found..." << endl;
-          }
+          std::vector<output_t> outputs;
+          std::vector<output_t> prefixes;
+          auto ret = cont.query(
+              line.data(), line.size(),
+              [&](const auto &output) {
+                std::cout << "output: " << output << endl;
+              },
+              [&](size_t len, const auto &output) {
+                std::cout << "prefix: " << output << " (" << line.substr(0, len)
+                          << ")" << endl;
+              });
+          if (!ret) { std::cout << "not found..." << endl; }
         }
       } else {
         std::cout << "invalid file..." << std::endl;

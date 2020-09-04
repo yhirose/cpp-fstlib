@@ -197,7 +197,7 @@ template <> struct OutputTraits<uint32_t> {
 
   static value_type get_suffix(value_type a, value_type b) { return a - b; }
 
-  static value_type get_common_previx(value_type a, value_type b) {
+  static value_type get_common_prefix(value_type a, value_type b) {
     return std::min(a, b);
   }
 
@@ -244,7 +244,7 @@ template <> struct OutputTraits<std::string> {
     return a.substr(b.size());
   }
 
-  static value_type get_common_previx(const value_type &a,
+  static value_type get_common_prefix(const value_type &a,
                                       const value_type &b) {
     return a.substr(0, get_prefix_length(a, b));
   }
@@ -545,22 +545,26 @@ template <typename output_t> class Dictionary {
 public:
   Dictionary() {}
 
-  Dictionary(std::unordered_set<State<output_t> *> &/*object_pool*/) {}
+  Dictionary(std::unordered_set<State<output_t> *> & /*object_pool*/) {}
 
   bool exist(uint64_t key, State<output_t> *state) const {
-    return dic_.find(key) != dic_.end();
+    auto it = dic_.find(key % kBucketCount);
+    return it != dic_.end() && *it->second == *state;
   }
 
   State<output_t> *get(uint64_t key, State<output_t> *state) {
-    return dic_[key];
+    auto it = dic_.find(key % kBucketCount);
+    if (it != dic_.end() && *it->second == *state) { return it->second; }
+    return nullptr;
   }
 
   void put(uint64_t key, State<output_t> *state) {
-    dic_[key] = state;
+    dic_[key % kBucketCount] = state;
   }
 
 private:
   std::unordered_map<uint64_t, State<output_t> *> dic_;
+  static const size_t kBucketCount = 100000;
 };
 #else
 template <typename output_t> class Dictionary {
@@ -607,20 +611,17 @@ public:
     auto bucket_iter = bucket.begin();
 
     index_.push_front(std::make_pair(key, bucket_iter));
-    auto index_iter = index_.begin();
-
-    bucket_iter->second = index_iter;
+    bucket_iter->second = index_.begin();
 
     if (index_.size() > 10000) {
-      // TODO: Use rbegin()...
-      auto index_iter = index_.end();
-      --index_iter;
+      for (auto rindex_iter = index_.rbegin(); rindex_iter != index_.rend();
+           ++rindex_iter) {
+        auto ri = rindex_iter;
+        auto it = (++ri).base();
 
-      size_t i = 0;
-      for (;;) {
-        const auto &[key, any_value] = *index_iter;
+        const auto &[key, any_value] = *it;
         auto bucket_iter = std::any_cast<typename Bucket::iterator>(any_value);
-        auto st = (*bucket_iter).first;
+        auto st = bucket_iter->first;
 
         if (st->ref_count == 0) {
           if (object_pool_) {
@@ -628,13 +629,10 @@ public:
             delete st;
 
             buckets_[key].erase(bucket_iter);
-            index_.erase(index_iter);
+            index_.erase(it);
           }
           break;
         }
-
-        --index_iter;
-        if (index_iter == index_.begin()) { break; }
       }
     }
   }
@@ -679,7 +677,7 @@ inline void get_common_prefix_and_word_suffix(const output_t &current_output,
                                               output_t &common_prefix,
                                               output_t &word_suffix) {
   common_prefix =
-      OutputTraits<output_t>::get_common_previx(output, current_output);
+      OutputTraits<output_t>::get_common_prefix(output, current_output);
   word_suffix = OutputTraits<output_t>::get_suffix(output, common_prefix);
 }
 
@@ -1904,21 +1902,25 @@ struct FstHeader {
   static const size_t CHAR_INDEX_SIZE = 8;
 
   uint8_t container_type = 0;
+  uint8_t allow_multi = 0;
   uint8_t value_type = 0;
-  uint16_t reserved = 0;
+  uint8_t reserved = 0;
   uint32_t start_address = 0;
   char char_index[CHAR_INDEX_SIZE] = {0};
 
   FstHeader() {}
 
-  FstHeader(ContainerType container_type, ValueType value_type,
-            size_t start_address, const std::vector<size_t> &char_index_table)
+  FstHeader(ContainerType container_type, bool allow_multi,
+            ValueType value_type, size_t start_address,
+            const std::vector<size_t> &char_index_table)
       : container_type(static_cast<uint8_t>(container_type)),
-        value_type(static_cast<uint8_t>(value_type)),
+        allow_multi(allow_multi), value_type(static_cast<uint8_t>(value_type)),
         start_address(start_address) {
     for (size_t ch = 0; ch < 256; ch++) {
       auto index = char_index_table[ch];
-      if (0 < index && index < CHAR_INDEX_SIZE) { char_index[index] = static_cast<char>(ch); }
+      if (0 < index && index < CHAR_INDEX_SIZE) {
+        char_index[index] = static_cast<char>(ch);
+      }
     }
   }
 
@@ -1943,7 +1945,7 @@ template <typename output_t> struct FstRecord {
   char label = 0;
   size_t delta = 0;
   const output_t *output = nullptr;
-  const output_t *state_output = nullptr;
+  const std::vector<output_t> *state_outputs = nullptr;
 
   size_t byte_size() const {
     size_t sz = 1;
@@ -1953,23 +1955,28 @@ template <typename output_t> struct FstRecord {
       sz += OutputTraits<output_t>::get_byte_value_size(*output);
     }
     if (flags.data.has_state_output) {
-      sz += OutputTraits<output_t>::get_byte_value_size(*state_output);
+      sz += vb_encode_value_length(state_outputs->size());
+      for (auto &output : *state_outputs) {
+        sz += OutputTraits<output_t>::get_byte_value_size(output);
+      }
     }
     return sz;
   }
 
   void write(std::ostream &os) {
     if (flags.data.has_state_output) {
-      OutputTraits<output_t>::write_byte_value(os, *state_output);
+      for (auto ri = state_outputs->rbegin(); ri != state_outputs->rend();
+           ++ri) {
+        auto it = (ri + 1).base();
+        OutputTraits<output_t>::write_byte_value(os, *it);
+      }
+      OutputTraits<uint32_t>::write_byte_value(os, state_outputs->size());
     }
     if (flags.data.has_output) {
       OutputTraits<output_t>::write_byte_value(os, *output);
     }
     if (!flags.data.no_address) {
-      // TODO: length check
-      char vb[16];
-      auto vb_len = vb_encode_value_reverse(delta, vb);
-      os.write(vb, vb_len);
+      OutputTraits<uint32_t>::write_byte_value(os, delta);
     }
     if (flags.data.label_index == 0) { os << label; }
     os.write(reinterpret_cast<const char *>(&flags.byte), sizeof(flags.byte));
@@ -1978,23 +1985,10 @@ template <typename output_t> struct FstRecord {
 
 template <typename output_t, typename Input> class ByteCodeBuilder {
 public:
-  std::ostream &os_;
-  bool need_output_ = true;
-  size_t trace_ = true;
-
-  std::vector<size_t> char_index_table_;
-
-  size_t record_index_ = 0;
-  std::unordered_map<size_t, size_t> record_index_map_;
-
-  size_t address_ = 0;
-  std::vector<size_t> address_table_;
-
-  size_t total_byte_size_ = 0;
-
   ByteCodeBuilder(const Input &input, std::ostream &os, bool need_output,
-                  bool trace)
-      : os_(os), need_output_(need_output), trace_(trace) {
+                  bool allow_multi, bool trace)
+      : os_(os), need_output_(need_output), allow_multi_(allow_multi),
+        trace_(trace) {
 
     intialize_char_index_table_(input);
 
@@ -2011,17 +2005,17 @@ public:
   ~ByteCodeBuilder() {
     auto container_type =
         need_output_ ? ContainerType::Map : ContainerType::Set;
+
     auto start_byte_adress = address_table_[record_index_ - 1];
 
-    FstHeader header(container_type, FstTraits<output_t>::get_value_type(),
-                     start_byte_adress, char_index_table_);
+    FstHeader header(container_type, allow_multi_,
+                     FstTraits<output_t>::get_value_type(), start_byte_adress,
+                     char_index_table_);
 
     header.write(os_);
 
-    if (trace_) {
-      std::cout << "# byte code size: " << total_byte_size_ + sizeof(header)
-                << std::endl;
-    }
+    std::cout << "# unique char count: " << char_count_.size() << std::endl;
+    std::cout << "# total size: " << total_size_ + sizeof(header) << std::endl;
   }
 
   void write(const State<output_t> *state) {
@@ -2065,10 +2059,8 @@ public:
       rec.flags.data.has_state_output = false;
       if (need_output_) {
         if (!t.state->state_outputs.empty()) {
-          if (!OutputTraits<output_t>::empty(t.state->state_outputs[0])) {
-            rec.flags.data.has_state_output = true;
-            rec.state_output = &t.state->state_outputs[0];
-          }
+          rec.flags.data.has_state_output = true;
+          rec.state_outputs = &t.state->state_outputs;
         }
       }
 
@@ -2126,9 +2118,7 @@ public:
         {
           if (need_output_) {
             if (!t.state->state_outputs.empty()) {
-              if (!OutputTraits<output_t>::empty(t.state->state_outputs[0])) {
-                std::cout << t.state->id << ":" << t.state->state_outputs[0];
-              }
+              std::cout << join<output_t>(t.state->state_outputs, "/");
             }
           }
           std::cout << "\t";
@@ -2137,7 +2127,7 @@ public:
         std::cout << std::endl;
       }
 
-      total_byte_size_ += byte_size;
+      total_size_ += byte_size;
 
       record_index_ += 1;
       address_ += byte_size;
@@ -2152,10 +2142,9 @@ private:
   void intialize_char_index_table_(const Input &input) {
     char_index_table_.assign(256, 0);
 
-    std::map<char, size_t> char_count;
     for (const auto &[word, _] : input) {
       for (auto ch : word) {
-        char_count[ch]++;
+        char_count_[ch]++;
       }
     }
 
@@ -2170,7 +2159,7 @@ private:
                         std::vector<std::pair<char, size_t>>, second_order>
         que;
 
-    for (auto x : char_count) {
+    for (auto x : char_count_) {
       que.push(x);
     }
 
@@ -2181,16 +2170,33 @@ private:
       que.pop();
     }
   }
+
+  std::ostream &os_;
+  bool need_output_ = true;
+  bool allow_multi_ = true;
+  size_t trace_ = true;
+
+  std::map<char, size_t> char_count_;
+  std::vector<size_t> char_index_table_;
+
+  size_t record_index_ = 0;
+  std::unordered_map<size_t, size_t> record_index_map_;
+
+  size_t address_ = 0;
+  std::vector<size_t> address_table_;
+
+  size_t total_size_ = 0;
 };
 
 enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> make_fst(const Input &input, std::ostream &os,
-                                          bool need_output,
+                                          bool need_output, bool allow_multi,
                                           bool trace = false) {
 
-  ByteCodeBuilder<output_t, Input> builder(input, os, need_output, trace);
+  ByteCodeBuilder<output_t, Input> builder(input, os, need_output, allow_multi,
+                                           trace);
 
   std::unordered_set<State<output_t> *> object_pool;
   Dictionary<output_t> dictionary(object_pool);
@@ -2220,7 +2226,7 @@ inline std::pair<Result, size_t> make_fst(const Input &input, std::ostream &os,
       return std::make_pair(result, line);
     }
 
-    if (previous_word.size() == current_word.size() &&
+    if (!allow_multi && previous_word.size() == current_word.size() &&
         previous_word == current_word) {
       result = Result::DuplicateKey;
       return std::make_pair(result, line);
@@ -2330,9 +2336,10 @@ inline std::pair<Result, size_t> make_fst(const Input &input, std::ostream &os,
 
 template <typename output_t> class container {
 public:
-  container(const char *byte_code, size_t byte_code_size, bool need_output)
+  container(const char *byte_code, size_t byte_code_size, bool need_output,
+            bool allow_multi)
       : byte_code_(byte_code), byte_code_size_(byte_code_size),
-        need_output_(need_output) {
+        need_output_(need_output), allow_multi_(allow_multi) {
 
     if (byte_code_size < sizeof(header_)) { return; }
 
@@ -2343,6 +2350,8 @@ public:
         (need_output ? ContainerType::Map : ContainerType::Set)) {
       return;
     }
+
+    if (header_.allow_multi != allow_multi) { return; }
 
     if (static_cast<ValueType>(header_.value_type) !=
         FstTraits<output_t>::get_value_type()) {
@@ -2356,9 +2365,10 @@ public:
 
   void set_trace(bool on) { trace_ = on; }
 
-  bool query(const char *str, size_t len, output_t &value) const {
-    auto ret = false;
-    size_t address = header_.start_address;
+  bool query(
+      const char *str, size_t len,
+      std::function<void(const output_t &)> outputs = nullptr,
+      std::function<void(size_t, const output_t &)> prefixes = nullptr) const {
 
     if (trace_) {
       std::cout << "Char\tAddress\tArc\tN F L\tNxtAddr\tOutput\tStOuts"
@@ -2367,9 +2377,24 @@ public:
                 << std::endl;
     }
 
+    auto ret = false;
+    auto output = OutputTraits<output_t>::initial_value();
+    std::vector<output_t> state_outputs;
+
+    size_t address = header_.start_address;
     size_t i = 0;
     while (i < len) {
-      auto ch = str[i];
+      uint8_t ch = str[i];
+      state_outputs.clear();
+
+      // TODO:
+      if (i == 0) {
+        auto it = jump_offset_table_.find(ch);
+        if (it != jump_offset_table_.end()) {
+          address = header_.start_address - it->second;
+        }
+      }
+
       auto end = byte_code_ + address;
       auto p = end;
 
@@ -2377,11 +2402,17 @@ public:
       rec.flags.byte = *p--;
 
       auto index = rec.flags.data.label_index;
-      char arc = 0;
+      uint8_t arc = 0;
       if (index == 0) {
         arc = *p--;
       } else {
         arc = header_.char_index[index];
+      }
+
+      // TODO:
+      if (i == 0) {
+        auto off = header_.start_address - address;
+        jump_offset_table_[arc] = off;
       }
 
       size_t delta = 0;
@@ -2389,14 +2420,19 @@ public:
         p -= vb_decode_value_reverse(p, delta);
       }
 
-      auto output = OutputTraits<output_t>::initial_value();
+      auto output_suffix = OutputTraits<output_t>::initial_value();
       if (rec.flags.data.has_output) {
-        p -= OutputTraits<output_t>::read_byte_value(p, output);
+        p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
       }
 
-      auto state_output = OutputTraits<output_t>::initial_value();
       if (rec.flags.data.has_state_output) {
-        p -= OutputTraits<output_t>::read_byte_value(p, state_output);
+        size_t state_outputs_size = 0;
+        p -= vb_decode_value_reverse(p, state_outputs_size);
+
+        for (size_t i = 0; i < state_outputs_size; i++) {
+          state_outputs.emplace_back(OutputTraits<output_t>::initial_value());
+          p -= OutputTraits<output_t>::read_byte_value(p, state_outputs[i]);
+        }
       }
 
       auto byte_size = std::distance(p, end);
@@ -2426,20 +2462,43 @@ public:
         }
         std::cout << "\t";
 
-        if (rec.flags.data.has_output) { std::cout << output; }
+        if (rec.flags.data.has_output) { std::cout << output_suffix; }
         std::cout << "\t";
 
-        if (rec.flags.data.has_state_output) { std::cout << state_output; }
+        if (rec.flags.data.has_state_output) {
+          std::cout << join<output_t>(state_outputs, "/");
+        }
 
         std::cout << std::endl;
       }
 
       if (ch == arc) {
-        value += output;
+        output += output_suffix;
         i++;
-        ret = rec.flags.data.final && i == len;
-        if (ret) { value += state_output; }
-        if (!next_address) { break; }
+        if (rec.flags.data.final) {
+          if (i == len) {
+            if (outputs) {
+              if (state_outputs.empty()) {
+                outputs(output);
+              } else {
+                for (auto &suffix : state_outputs) {
+                  outputs(output + suffix);
+                }
+              }
+            }
+            ret = true;
+            break;
+          }
+          if (prefixes) {
+            if (state_outputs.empty()) {
+              prefixes(i, output);
+            } else {
+              for (auto &suffix : state_outputs) {
+                prefixes(i, output + suffix);
+              }
+            }
+          }
+        }
         address = next_address;
       } else {
         if (rec.flags.data.last_transition) { break; }
@@ -2454,10 +2513,13 @@ private:
   const char *byte_code_;
   size_t byte_code_size_;
   bool need_output_ = false;
+  bool allow_multi_ = false;
 
   FstHeader header_;
   bool is_valid_ = false;
   bool trace_ = false;
+
+  mutable std::unordered_map<uint8_t, uint16_t> jump_offset_table_;
 };
 
 } // namespace fst

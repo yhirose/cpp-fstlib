@@ -314,7 +314,7 @@ int main(int argc, const char **argv) {
     if (build) {
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] = fst::make_fst<uint32_t>(input, fout, true);
+      auto [result, line] = fst::make_fst<uint32_t>(input, fout, true, false);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
@@ -329,14 +329,29 @@ int main(int argc, const char **argv) {
       if (exact) {
         StopWatch sw("exact");
 
-        fst::container<uint32_t> cont(byte_code.data(), byte_code.size(), true);
+        fst::container<uint32_t> cont(byte_code.data(), byte_code.size(), true,
+                                      false);
 
         for (int i = 0; i < count; i++) {
           for (auto key : keys) {
-            auto value = fst::OutputTraits<uint32_t>::initial_value();
-            if (!cont.query(key, strlen(key), value)) {
-              cerr << "error: (" << strlen(key) << ")" << endl;
-            }
+            auto ret = cont.query(key, strlen(key), [&](const auto &output) {});
+            if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
+          }
+        }
+      }
+
+      if (common_prefix) {
+        StopWatch sw("exact");
+
+        fst::container<uint32_t> cont(byte_code.data(), byte_code.size(), true,
+                                      false);
+
+        for (int i = 0; i < count; i++) {
+          for (auto key : keys) {
+            auto ret = cont.query(
+                key, strlen(key), [&](const auto &) {},
+                [&](size_t, const auto &) {});
+            if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
           }
         }
       }
