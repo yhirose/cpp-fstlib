@@ -12,6 +12,7 @@
 #include <any>
 #include <cassert>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <list>
 #include <map>
@@ -540,123 +541,114 @@ private:
   std::unordered_set<State<output_t> *> object_pool_;
 };
 
-#if 0
 template <typename output_t> class Dictionary {
 public:
-  Dictionary() {}
-
-  Dictionary(std::unordered_set<State<output_t> *> & /*object_pool*/) {}
-
-  bool exist(uint64_t key, State<output_t> *state) const {
-    auto it = dic_.find(key % kBucketCount);
-    return it != dic_.end() && *it->second == *state;
+  Dictionary(
+      std::unordered_set<State<output_t> *> * /*object_pool*/ = nullptr) {
+    initialize_items();
   }
 
-  State<output_t> *get(uint64_t key, State<output_t> *state) {
-    auto it = dic_.find(key % kBucketCount);
-    if (it != dic_.end() && *it->second == *state) { return it->second; }
-    return nullptr;
-  }
-
-  void put(uint64_t key, State<output_t> *state) {
-    dic_[key % kBucketCount] = state;
-  }
-
-private:
-  std::unordered_map<uint64_t, State<output_t> *> dic_;
-  static const size_t kBucketCount = 100000;
-};
-#else
-template <typename output_t> class Dictionary {
-public:
-  Dictionary() {}
-
-  Dictionary(std::unordered_set<State<output_t> *> &object_pool)
-      : object_pool_(&object_pool) {}
-
-  bool exist(uint64_t key, State<output_t> *state) const {
-    auto it = buckets_.find(key);
-    if (it != buckets_.end()) {
-      auto &l = it->second;
-      for (auto [st, dummy] : l) {
-        if (*st == *state) { return true; }
+  State<output_t> *get(uint64_t key, State<output_t> *state) const {
+    auto id = bucket_id(key);
+    auto head = &buckets_[id];
+    auto prev = head;
+    auto p = prev->next;
+    while (p) {
+      if (*p->state == *state) {
+        prev->next = p->next;
+        p->next = head->next;
+        head->next = p;
+        return p->state;
       }
-    }
-    return false;
-  }
-
-  State<output_t> *get(uint64_t key, State<output_t> *state) {
-    auto it = buckets_.find(key);
-    if (it != buckets_.end()) {
-      auto &bucket = it->second;
-      auto bucket_iter = bucket.begin();
-      while (bucket_iter != bucket.end()) {
-        auto [st, any_val] = *bucket_iter;
-        if (*st == *state) {
-          bucket.splice(bucket.begin(), bucket, bucket_iter);
-          auto index_iter = std::any_cast<typename Index::iterator>(any_val);
-          index_.splice(index_.begin(), index_, index_iter);
-          return st;
-        }
-      }
+      prev = p;
+      p = p->next;
     }
     return nullptr;
   }
 
   void put(uint64_t key, State<output_t> *state) {
-    static auto dummy = index_.begin();
-    auto &bucket = buckets_[key];
+    auto id = bucket_id(key);
 
-    bucket.push_front(std::make_pair(state, dummy));
-    auto bucket_iter = bucket.begin();
+    {
+      auto head = &buckets_[id];
+      auto prev = head;
+      auto p = prev->next;
+      size_t i = 0;
+      while (p && i < 3) {
+        i++;
+        prev = p;
+        p = p->next;
+      }
 
-    index_.push_front(std::make_pair(key, bucket_iter));
-    bucket_iter->second = index_.begin();
+      while (p) {
+        if (p->state->ref_count == 0) {
+          auto target = p;
+          prev->next = p->next;
+          p = p->next;
 
-    if (index_.size() > 10000) {
-      for (auto rindex_iter = index_.rbegin(); rindex_iter != index_.rend();
-           ++rindex_iter) {
-        auto ri = rindex_iter;
-        auto it = (++ri).base();
+          // TODO: delete target->state
 
-        const auto &[key, any_value] = *it;
-        auto bucket_iter = std::any_cast<typename Bucket::iterator>(any_value);
-        auto st = bucket_iter->first;
-
-        if (st->ref_count == 0) {
-          if (object_pool_) {
-            object_pool_->erase(st);
-            delete st;
-
-            buckets_[key].erase(bucket_iter);
-            index_.erase(it);
-          }
-          break;
+          target->next = free_head->next;
+          free_head = target;
+          free_count++;
+          item_count_in_bucket_[id]--;
+        } else {
+          prev = p;
+          p = p->next;
         }
       }
     }
+
+    auto pnew = free_head;
+    if (!pnew) {
+      // TODO:
+      std::cerr << "Out of Memory..." << std::endl;
+      return;
+    }
+    free_head = pnew->next;
+    free_count--;
+
+    pnew->state = state;
+
+    auto pold = buckets_[id].next;
+    pnew->next = pold;
+    buckets_[id].next = pnew;
+    item_count_in_bucket_[id]++;
   }
 
 private:
-  using Index = std::list<std::pair<
-      uint64_t,
-      typename std::list<std::pair<State<output_t> *, std::any>>::iterator>>;
-  using Bucket = std::list<std::pair<State<output_t> *, std::any>>;
-  using Buckets = std::unordered_map<uint64_t, Bucket>;
+  size_t bucket_id(uint64_t key) const { return key % kBucketCount; }
 
-  std::unordered_set<State<output_t> *> *object_pool_ = nullptr;
-  Buckets buckets_;
-  Index index_;
+  static const size_t kBucketCount = 10000;
+
+  struct Item {
+    Item *next = nullptr;
+    State<output_t> *state = nullptr;
+  };
+  static const size_t kItemCount = 300000;
+
+  void initialize_items() {
+    pool_.resize(kItemCount);
+    for (size_t i = 0; i < kItemCount; i++) {
+      if (i + 1 < kItemCount) { pool_[i].next = &pool_[i + 1]; }
+    }
+    free_head = &pool_[0];
+  }
+
+  std::vector<Item> pool_;
+  mutable Item *free_head = nullptr;
+  mutable size_t free_count = kItemCount;
+  mutable Item buckets_[kBucketCount];
+  mutable size_t item_count_in_bucket_[kBucketCount] = {0};
 };
-#endif
 
 template <typename output_t>
-std::pair<bool, State<output_t> *>
+inline std::pair<bool, State<output_t> *>
 find_minimized(State<output_t> *state, Dictionary<output_t> &dictionary) {
   auto h = state->hash();
 
-  if (dictionary.exist(h, state)) {
-    auto st = dictionary.get(h, state);
+  auto st = dictionary.get(h, state);
+  if (st) {
     st->ref_count++;
     st->transitions.for_each(
         [&](char arc, auto &t, size_t i) { t.state->ref_count--; });
@@ -2226,7 +2218,7 @@ inline std::pair<Result, size_t>
 make_fst_core(const Input &input, bool allow_multi, Builder &builder) {
 
   std::unordered_set<State<output_t> *> object_pool;
-  Dictionary<output_t> dictionary(object_pool);
+  Dictionary<output_t> dictionary(&object_pool);
   size_t next_state_id = 0;
   size_t line = 1;
   Result result = Result::Success;
