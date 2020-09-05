@@ -15,6 +15,7 @@ typedef std::string output_t;
 #define V(x) (#x)
 #endif
 
+#if 0
 inline vector<fst::CommonPrefixSearchResult<output_t>>
 prefix_match(const vector<char> &byte_code, const char *str) {
   vector<fst::CommonPrefixSearchResult<output_t>> ret;
@@ -451,3 +452,4 @@ TEST_CASE("Auto Index Dictionary", "[readme]") {
   REQUIRE(ret[2].length == 7);
   REQUIRE(ret[2].outputs[0] == 2);
 }
+#endif

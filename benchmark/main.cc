@@ -77,11 +77,17 @@ int main(int argc, const char **argv) {
   cout << keys.size() << " keys" << endl;
   cout << endl;
 
+#if 0
   bool darts = true;
   bool ux = true;
   bool marisa = true;
   bool fstlib = true;
-  bool fstlib2 = true;
+#else
+  bool darts = false;
+  bool ux = false;
+  bool marisa = false;
+  bool fstlib = true;
+#endif
 
   int count = 5;
 
@@ -246,75 +252,14 @@ int main(int argc, const char **argv) {
 
   // fstlib
   if (fstlib) {
-    for (size_t min_arcs = 8; min_arcs <= 8; min_arcs += 2) {
-      cout << "#### fstlib (mast:" << min_arcs << ") ####" << endl;
-      const char *PATH = "fstlib.bin";
-
-      std::shared_ptr<fst::StateMachine<uint32_t>> sm;
-
-      if (build) {
-        StopWatch sw("build");
-        sm = fst::make_state_machine(input);
-        fst::optimize(*sm);
-        auto byte_code = fst::compile(*sm, min_arcs);
-        ofstream fout(PATH, ios_base::binary);
-        fout.write(byte_code.data(), byte_code.size());
-        fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
-                (double)(file_size(PATH) * 100 / 1024 / 1024) / 100.0,
-                (int)byte_code.size());
-      }
-
-      {
-        vector<char> byte_code;
-        read_file(PATH, byte_code);
-
-        auto data = byte_code.data();
-        auto size = byte_code.size();
-
-        if (exact) {
-          StopWatch sw("exact");
-          for (int i = 0; i < count; i++) {
-            for (auto key : keys) {
-              if (!fst::exact_match_search<uint32_t>(
-                      data, size, key, [](const uint32_t &val) {})) {
-                cerr << "error: (" << strlen(key) << ")" << endl;
-                auto outputs = fst::exact_match_search(*sm, key);
-                if (outputs.empty()) {
-                  cerr << "state error: " << key << endl;
-                } else {
-                  cerr << "state ok: " << key << endl;
-                }
-              }
-            }
-          }
-        }
-
-        if (common_prefix) {
-          StopWatch sw("prefix");
-          for (int i = 0; i < count; i++) {
-            for (auto key : keys) {
-              fst::common_prefix_search<uint32_t>(data, size, key,
-                                                  [](const auto &result) {});
-            }
-          }
-        }
-      }
-
-      cout << endl;
-    }
-  }
-
-  // fstlib2
-  if (fstlib2) {
-    cout << "#### fstlib2 (mast) ####" << endl;
-    const char *PATH = "fstlib2.bin";
-
-    std::shared_ptr<fst::StateMachine<uint32_t>> sm;
+    cout << "#### fstlib (mast) ####" << endl;
+    const char *PATH = "fstlib.bin";
 
     if (build) {
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] = fst::make_fst<uint32_t>(input, fout, true, false, false);
+      auto [result, line] =
+          fst::compile<uint32_t>(input, fout, true, false, false);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
@@ -329,12 +274,13 @@ int main(int argc, const char **argv) {
       if (exact) {
         StopWatch sw("exact");
 
-        fst::container<uint32_t> cont(byte_code.data(), byte_code.size(), true,
-                                      false);
+        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(), true,
+                                       false);
 
         for (int i = 0; i < count; i++) {
           for (auto key : keys) {
-            auto ret = cont.query(key, strlen(key), [&](const auto &output) {});
+            auto ret =
+                matcher.match(key, strlen(key), [&](const auto &output) {});
             if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
           }
         }
@@ -343,12 +289,12 @@ int main(int argc, const char **argv) {
       if (common_prefix) {
         StopWatch sw("exact");
 
-        fst::container<uint32_t> cont(byte_code.data(), byte_code.size(), true,
-                                      false);
+        fst::Matcher<uint32_t> Matcher(byte_code.data(), byte_code.size(), true,
+                                       false);
 
         for (int i = 0; i < count; i++) {
           for (auto key : keys) {
-            auto ret = cont.query(
+            auto ret = Matcher.match(
                 key, strlen(key), [&](const auto &) {},
                 [&](size_t, const auto &) {});
             if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
