@@ -800,18 +800,20 @@ struct FstHeader {
   }
 };
 
+union FstFlags {
+  struct {
+    unsigned no_address : 1;
+    unsigned last_transition : 1;
+    unsigned final : 1;
+    unsigned has_output : 1;
+    unsigned has_state_output : 1;
+    unsigned label_index : 3;
+  } data;
+  uint8_t byte;
+};
+
 template <typename output_t> struct FstRecord {
-  union {
-    struct {
-      unsigned no_address : 1;
-      unsigned last_transition : 1;
-      unsigned final : 1;
-      unsigned has_output : 1;
-      unsigned has_state_output : 1;
-      unsigned label_index : 3;
-    } data;
-    uint8_t byte;
-  } flags;
+  FstFlags flags;
 
   char label = 0;
   size_t delta = 0;
@@ -1185,10 +1187,10 @@ public:
       auto end = byte_code_ + address;
       auto p = end;
 
-      FstRecord<output_t> rec;
-      rec.flags.byte = *p--;
+      FstFlags flags;
+      flags.byte = *p--;
 
-      auto index = rec.flags.data.label_index;
+      auto index = flags.data.label_index;
       uint8_t arc = 0;
       if (index == 0) {
         arc = *p--;
@@ -1203,16 +1205,14 @@ public:
       }
 
       size_t delta = 0;
-      if (!rec.flags.data.no_address) {
-        p -= vb_decode_value_reverse(p, delta);
-      }
+      if (!flags.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
 
       auto output_suffix = OutputTraits<output_t>::initial_value();
-      if (rec.flags.data.has_output) {
+      if (flags.data.has_output) {
         p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
       }
 
-      if (rec.flags.data.has_state_output) {
+      if (flags.data.has_state_output) {
         size_t state_outputs_size = 0;
         p -= vb_decode_value_reverse(p, state_outputs_size);
 
@@ -1225,7 +1225,7 @@ public:
       auto byte_size = std::distance(p, end);
 
       size_t next_address = 0;
-      if (rec.flags.data.no_address) {
+      if (flags.data.no_address) {
         next_address = address - byte_size;
       } else {
         if (delta) { next_address = address - byte_size - delta + 1; }
@@ -1235,12 +1235,12 @@ public:
         std::cout << ch << "\t";
         std::cout << address << "\t";
         std::cout << arc << "\t";
-        std::cout << (rec.flags.data.no_address ? "↑" : " ") << ' '
-                  << (rec.flags.data.final ? '*' : ' ') << ' '
-                  << (rec.flags.data.last_transition ? "‾" : " ") << "\t";
+        std::cout << (flags.data.no_address ? "↑" : " ") << ' '
+                  << (flags.data.final ? '*' : ' ') << ' '
+                  << (flags.data.last_transition ? "‾" : " ") << "\t";
 
         // Next Address
-        if (!rec.flags.data.no_address) {
+        if (!flags.data.no_address) {
           if (delta) {
             std::cout << next_address;
           } else {
@@ -1249,10 +1249,10 @@ public:
         }
         std::cout << "\t";
 
-        if (rec.flags.data.has_output) { std::cout << output_suffix; }
+        if (flags.data.has_output) { std::cout << output_suffix; }
         std::cout << "\t";
 
-        if (rec.flags.data.has_state_output) {
+        if (flags.data.has_state_output) {
           std::cout << join<output_t>(state_outputs, "/");
         }
 
@@ -1262,7 +1262,7 @@ public:
       if (ch == arc) {
         output += output_suffix;
         i++;
-        if (rec.flags.data.final) {
+        if (flags.data.final) {
           if (i == len) {
             if (outputs) {
               if (state_outputs.empty()) {
@@ -1288,7 +1288,7 @@ public:
         }
         address = next_address;
       } else {
-        if (rec.flags.data.last_transition) { break; }
+        if (flags.data.last_transition) { break; }
         address = address - byte_size;
       }
     }
