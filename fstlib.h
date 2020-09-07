@@ -1225,10 +1225,10 @@ public:
       auto byte_size = std::distance(p, end);
 
       size_t next_address = 0;
-      if (flags.data.no_address) {
-        next_address = address - byte_size;
-      } else {
+      if (!flags.data.no_address) {
         if (delta) { next_address = address - byte_size - delta + 1; }
+      } else {
+        next_address = address - byte_size;
       }
 
       if (trace_) {
@@ -1240,12 +1240,10 @@ public:
                   << (flags.data.last_transition ? "‾" : " ") << "\t";
 
         // Next Address
-        if (!flags.data.no_address) {
-          if (delta) {
-            std::cout << next_address;
-          } else {
-            std::cout << "x";
-          }
+        if (next_address) {
+          std::cout << next_address;
+        } else {
+          std::cout << "x";
         }
         std::cout << "\t";
 
@@ -1255,7 +1253,9 @@ public:
         if (flags.data.has_state_output) {
           std::cout << join<output_t>(state_outputs, "/");
         }
+        std::cout << "\t";
 
+        std::cout << byte_size;
         std::cout << std::endl;
       }
 
@@ -1286,6 +1286,7 @@ public:
             }
           }
         }
+        if (!next_address) { break; }
         address = next_address;
       } else {
         if (flags.data.last_transition) { break; }
