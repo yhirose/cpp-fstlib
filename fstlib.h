@@ -53,6 +53,14 @@ template <typename Val> inline size_t vb_encode_value(Val n, char *out) {
   return len;
 }
 
+template <typename Val, typename Cont> void vb_encode_value(Val n, Cont &out) {
+  while (n >= 128) {
+    out.push_back((typename Cont::value_type)(n & 0x7f));
+    n >>= 7;
+  }
+  out.push_back((typename Cont::value_type)(n + 128));
+}
+
 template <typename Val>
 inline size_t vb_encode_value_reverse(Val n, char *out) {
   auto len = vb_encode_value(n, out);
@@ -885,7 +893,7 @@ public:
                      FstTraits<output_t>::get_value_type(), start_byte_adress,
                      char_index_table_);
 
-    header.write(os_);
+    if (!dump_) { header.write(os_); }
 
     if (verbose_) {
       std::cerr << "# unique char count: " << char_count_.size() << std::endl;
@@ -1173,13 +1181,12 @@ public:
     size_t address = header_.start_address;
     size_t i = 0;
     while (i < len) {
-      uint8_t ch = str[i];
+      auto ch = str[i];
       state_outputs.clear();
 
       // TODO:
       if (i == 0) {
-        auto it = jump_offset_table_.find(ch);
-        if (it != jump_offset_table_.end()) {
+        if (auto it = jump_table_.find(ch); it != jump_table_.end()) {
           address = header_.start_address - it->second;
         }
       }
@@ -1191,7 +1198,7 @@ public:
       flags.byte = *p--;
 
       auto index = flags.data.label_index;
-      uint8_t arc = 0;
+      char arc = 0;
       if (index == 0) {
         arc = *p--;
       } else {
@@ -1199,10 +1206,7 @@ public:
       }
 
       // TODO:
-      if (i == 0) {
-        auto off = header_.start_address - address;
-        jump_offset_table_[arc] = off;
-      }
+      if (i == 0) { jump_table_[arc] = header_.start_address - address; }
 
       size_t delta = 0;
       if (!flags.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
@@ -1307,7 +1311,7 @@ private:
   bool is_valid_ = false;
   bool trace_ = false;
 
-  mutable std::unordered_map<uint8_t, uint16_t> jump_offset_table_;
+  mutable std::unordered_map<char, uint16_t> jump_table_;
 };
 
 } // namespace fst
