@@ -82,7 +82,7 @@ void regression_test(const vector<pair<string, output_t>> &input,
   fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size(),
                                  need_output, allow_multi);
 
-  if (matcher.is_valid()) {
+  if (matcher) {
     for (const auto &[word, output] : input) {
       std::vector<output_t> outputs;
       auto ret =
@@ -233,7 +233,7 @@ int main(int argc, const char **argv) {
                                      need_output, allow_multi);
       matcher.set_trace(trace);
 
-      if (matcher.is_valid()) {
+      if (matcher) {
         string line;
         while (getline(cin, line)) {
           bool ret;

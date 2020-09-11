@@ -277,11 +277,13 @@ int main(int argc, const char **argv) {
         fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(), true,
                                        false);
 
-        for (int i = 0; i < count; i++) {
-          for (auto key : keys) {
-            auto ret =
-                matcher.match(key, strlen(key), [&](const auto &output) {});
-            if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
+        if (matcher) {
+          for (int i = 0; i < count; i++) {
+            for (auto key : keys) {
+              auto ret =
+                  matcher.match(key, strlen(key), [&](const auto &output) {});
+              if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
+            }
           }
         }
       }
@@ -289,15 +291,17 @@ int main(int argc, const char **argv) {
       if (common_prefix) {
         StopWatch sw("exact");
 
-        fst::Matcher<uint32_t> Matcher(byte_code.data(), byte_code.size(), true,
+        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(), true,
                                        false);
 
-        for (int i = 0; i < count; i++) {
-          for (auto key : keys) {
-            auto ret = Matcher.match(
-                key, strlen(key), [&](const auto &) {},
-                [&](size_t, const auto &) {});
-            if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
+        if (matcher) {
+          for (int i = 0; i < count; i++) {
+            for (auto key : keys) {
+              auto ret = matcher.match(
+                  key, strlen(key), [&](const auto &) {},
+                  [&](size_t, const auto &) {});
+              if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
+            }
           }
         }
       }

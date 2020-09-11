@@ -884,6 +884,8 @@ public:
   }
 
   ~ByteCodeWriter() {
+    if (record_index_ == 0) { return; }
+
     auto container_type =
         need_output_ ? ContainerType::Map : ContainerType::Set;
 
@@ -1158,7 +1160,7 @@ public:
     is_valid_ = true;
   }
 
-  bool is_valid() const { return is_valid_; }
+  operator bool() { return is_valid_; }
 
   void set_trace(bool on) { trace_ = on; }
 
