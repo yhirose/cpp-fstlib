@@ -92,8 +92,8 @@ int main(int argc, const char **argv) {
   int count = 5;
 
   bool build = true;
-  bool common_prefix = true;
   bool exact = true;
+  bool common_prefix = true;
 
   int dummy = 0;
 
@@ -258,8 +258,7 @@ int main(int argc, const char **argv) {
     if (build) {
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] =
-          fst::compile<uint32_t>(input, fout, true, false, false);
+      auto [result, line] = fst::compile<uint32_t>(input, fout, true, true);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
@@ -274,33 +273,33 @@ int main(int argc, const char **argv) {
       if (exact) {
         StopWatch sw("exact");
 
-        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(), true,
-                                       false);
+        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(),
+                                       true);
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
-            for (auto key : keys) {
+            for (int j = 0; j < keys.size(); j++) {
+              uint32_t output = 0;
               auto ret =
-                  matcher.match(key, strlen(key), [&](const auto &output) {});
-              if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
+                  matcher.exact_match_search(keys[j], lengths[j], output);
+              if (!ret) { cerr << "error: (" << keys[j] << ")" << endl; }
             }
           }
         }
       }
 
       if (common_prefix) {
-        StopWatch sw("exact");
+        StopWatch sw("prefix");
 
-        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(), true,
-                                       false);
+        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(),
+                                       true);
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
-            for (auto key : keys) {
-              auto ret = matcher.match(
-                  key, strlen(key), [&](const auto &) {},
-                  [&](size_t, const auto &) {});
-              if (!ret) { cerr << "error: (" << strlen(key) << ")" << endl; }
+            for (int j = 0; j < keys.size(); j++) {
+              auto ret = matcher.common_prefix_search(
+                  keys[j], lengths[j], [&](size_t, const auto &) {});
+              if (!ret) { cerr << "error: (" << keys[j] << ")" << endl; }
             }
           }
         }

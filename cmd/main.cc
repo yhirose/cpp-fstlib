@@ -75,30 +75,24 @@ void show_error_message(fst::Result result, size_t line) {
 }
 
 void regression_test(const vector<pair<string, output_t>> &input,
-                     const char *out_path, bool need_output, bool allow_multi) {
+                     const char *out_path, bool need_output) {
   ifstream f(out_path, ios_base::binary);
   auto byte_code = load_byte_code(f);
 
   fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size(),
-                                 need_output, allow_multi);
+                                 need_output);
 
   if (matcher) {
-    for (const auto &[word, output] : input) {
-      std::vector<output_t> outputs;
-      auto ret =
-          matcher.match(word.data(), word.size(),
-                        [&](const auto &output) { outputs.push_back(output); });
+    for (const auto &[word, expected] : input) {
+      auto actual = fst::OutputTraits<output_t>::initial_value();
+      auto ret = matcher.exact_match_search(word.data(), word.size(), actual);
       if (!ret) {
         std::cerr << "couldn't find '" << word << "'" << std::endl;
       } else if (need_output) {
-        if (std::find(outputs.begin(), outputs.end(), output) ==
-            outputs.end()) {
-          for (auto &x : outputs) {
-            std::cerr << x << std::endl;
-          }
+        if (expected != actual) {
           std::cerr << "word: " << word << std::endl;
-          std::cerr << "expected value: " << output << std::endl;
-          std::cerr << "actual value: " << outputs[0] << std::endl;
+          std::cerr << "expected value: " << expected << std::endl;
+          std::cerr << "actual value: " << actual << std::endl;
         }
       }
     }
@@ -157,20 +151,17 @@ int main(int argc, const char **argv) {
       auto need_output = true;
       if (argi < argc) { need_output = std::string(argv[argi++]) == "true"; }
 
-      auto allow_multi = true;
-      if (argi < argc) { allow_multi = std::string(argv[argi++]) == "true"; }
-
       auto input = load_input(fin, delimiter);
 
       auto [result, line] =
-          fst::compile<output_t>(input, fout, need_output, allow_multi, true);
+          fst::compile<output_t>(input, fout, need_output, true);
 
       fout.close();
 
       if (result != fst::Result::Success) {
         show_error_message(result, line);
       } else {
-        regression_test(input, out_path, need_output, allow_multi);
+        regression_test(input, out_path, need_output);
       }
     } else if (cmd == "dump") {
       if (argi >= argc) {
@@ -221,16 +212,13 @@ int main(int argc, const char **argv) {
       auto need_output = true;
       if (argi < argc) { need_output = std::string(argv[argi++]) == "true"; }
 
-      auto allow_multi = true;
-      if (argi < argc) { allow_multi = std::string(argv[argi++]) == "true"; }
-
       auto trace = false;
       if (argi < argc) { trace = std::string(argv[argi++]) == "true"; }
 
       auto byte_code = load_byte_code(fin);
 
       fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size(),
-                                     need_output, allow_multi);
+                                     need_output);
       matcher.set_trace(trace);
 
       if (matcher) {
@@ -238,15 +226,14 @@ int main(int argc, const char **argv) {
         while (getline(cin, line)) {
           bool ret;
           if (cmd == "search") {
-            ret = matcher.match(
-                line.data(), line.size(),
-                [&](const auto &output) { std::cout << output << endl; });
+            output_t output;
+            ret = matcher.exact_match_search(line.data(), line.size(), output);
+            if (ret) { std::cout << output << std::endl; }
           } else { // "prefix"
-            ret = matcher.match(line.data(), line.size(), nullptr,
-                                [&](size_t len, const auto &output) {
-                                  std::cout << line.substr(0, len) << ": "
-                                            << output << endl;
-                                });
+            ret = matcher.common_prefix_search(
+                line.data(), line.size(), [&](size_t len, const auto &output) {
+                  std::cout << line.substr(0, len) << ": " << output << endl;
+                });
           }
           if (!ret) { std::cout << "not found..." << endl; }
         }
