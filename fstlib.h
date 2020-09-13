@@ -84,6 +84,321 @@ inline size_t vb_decode_value_reverse(const char *data, Val &n) {
 }
 
 //-----------------------------------------------------------------------------
+// fully indexable dictionary
+//-----------------------------------------------------------------------------
+
+class FullyIndexableDictionary {
+public:
+  FullyIndexableDictionary(const void *data) {
+    auto p = (const char *)data;
+
+    p += vb_decode_value(p, bitSize_);
+
+    size_t compressBitsSize = 0;
+    p += vb_decode_value(p, compressBitsSize);
+
+    largeBlocks_ = (const uint32_t *)p;
+
+    auto largeBlocksBytes =
+        (LARGE_BLOCK_COUNT(bitSize_) - 1) * sizeof(uint32_t);
+    p += largeBlocksBytes;
+
+    smallBlocks_ = (const uint8_t *)p;
+
+    auto smallBlocksBytes = SMALL_BLOCK_COUNT(bitSize_);
+    smallBlocksBytes -= LARGE_BLOCK_COUNT(bitSize_);
+    p += smallBlocksBytes;
+
+    if (compressBitsSize > 0) {
+      bits_ = nullptr;
+      compressBitsFID_ = std::make_shared<FullyIndexableDictionary>(p);
+      compressBitsSupplement_ = (const uint8_t *)(p + compressBitsSize);
+    } else {
+      bits_ = p;
+    }
+  }
+
+  size_t size() const { return bitSize_; }
+
+  bool on(size_t id) const {
+    if (bits_) {
+      return (bits_[id / 8] & BYTE_FLAG_MASK[id % 8]) > 0;
+    } else {
+      auto bl = id / 8;
+      if (compressBitsFID_->on(bl)) {
+        auto bits = compressBitsSupplement_[compressBitsFID_->rank(bl)];
+        return (bits & BYTE_FLAG_MASK[id % 8]) > 0;
+      } else {
+        return false;
+      }
+    }
+  }
+
+  size_t rank(size_t id) const {
+    auto ilb = id / LARGE_BLOCK_BITS;
+    auto isb = id / SMALL_BLOCK_BITS;
+    auto offsb = isb % SMALL_BLOCK_COUNT_IN_LARGE_BLOCK;
+
+    size_t count = (ilb == 0 ? 0 : largeBlocks_[ilb - 1]) +
+                   (offsb == 0 ? 0 : smallBlocks_[isb - ilb - 1]);
+
+    auto bl = isb * SMALL_BLOCK_BITS / 8;
+    auto blEnd = id / 8;
+
+    for (; bl < blEnd; bl++) {
+      auto byte = get_byte(bl);
+      count += POPCOUNT_TABLE[byte];
+    }
+
+    auto byte = get_byte(bl) & BYTE_COUNT_MASK[id % 8];
+    count += POPCOUNT_TABLE[byte];
+
+    return count;
+  }
+
+  size_t select(size_t count) const {
+    return lower_bound_index(0, bitSize_, count,
+                             [this](size_t id) { return this->rank(id); });
+  }
+
+  using BitVec = std::vector<bool>;
+  static std::vector<char> build(const BitVec &bv) {
+    return build(bv, should_compress_bits(bv));
+  }
+
+private:
+  uint8_t get_byte(size_t bl) const {
+    if (bits_) {
+      return bits_[bl];
+    } else {
+      if (compressBitsFID_->on(bl)) {
+        return compressBitsSupplement_[compressBitsFID_->rank(bl)];
+      } else {
+        return 0;
+      }
+    }
+  }
+
+  template <typename Val> size_t vb_decode_value(const char *data, Val &n) {
+    auto p = (const uint8_t *)data;
+    size_t len = 0;
+    n = 0;
+    size_t cnt = 0;
+    while (p[len] < 128)
+      n += (p[len++] << (7 * cnt++));
+    n += (p[len++] - 128) << (7 * cnt);
+    return len;
+  }
+
+  template <class T, class Dereference>
+  size_t lower_bound_index(size_t first, size_t last, const T &value,
+                           Dereference deref) const {
+    auto count = last - first;
+
+    while (count > 0) {
+      auto mid = first;
+      auto step = count / 2;
+      mid += step;
+      if (deref(mid) < value) {
+        first = mid + 1;
+        count -= step + 1;
+      } else {
+        count = step;
+      }
+    }
+
+    return first;
+  }
+
+  size_t bitSize_;
+  const uint32_t *largeBlocks_;
+  const uint8_t *smallBlocks_;
+  const char *bits_;
+  std::shared_ptr<FullyIndexableDictionary> compressBitsFID_;
+  const uint8_t *compressBitsSupplement_;
+
+  // build
+  static std::vector<char> build(const BitVec &bv, bool useCompressBits) {
+    std::vector<char> bits(BLOCK_COUNT(bv.size(), 8));
+    {
+      for (size_t ibv = 0; ibv < bv.size(); ibv++) {
+        if (bv[ibv]) { bits[ibv / 8] |= BYTE_FLAG_MASK[ibv % 8]; }
+      }
+    }
+
+    std::vector<uint32_t> largeBlocks;
+    std::vector<uint8_t> smallBlocks;
+    {
+      // Since the first block of each region is always 0, don't store the
+      // values...
+
+      auto largeBlockCount = LARGE_BLOCK_COUNT(bv.size());
+      for (size_t bl = 1; bl < largeBlockCount; bl++) {
+        largeBlocks.push_back(bl == 1 ? 0 : largeBlocks.back());
+
+        auto base = (bl - 1) * LARGE_BLOCK_BITS;
+        for (auto ibit = 0; ibit < LARGE_BLOCK_BITS; ibit++) {
+          if (bv[base + ibit]) { largeBlocks.back()++; }
+        }
+      }
+
+      auto smallBlockCount = SMALL_BLOCK_COUNT(bv.size());
+      for (size_t bl = 0; bl < smallBlockCount; bl++) {
+        auto off = bl % SMALL_BLOCK_COUNT_IN_LARGE_BLOCK;
+
+        if (off != 0) {
+          smallBlocks.push_back(off == 1 ? 0 : smallBlocks.back());
+
+          auto base = (bl - 1) * SMALL_BLOCK_BITS;
+          for (auto ibit = 0; ibit < SMALL_BLOCK_BITS; ibit++) {
+            if (bv[base + ibit]) { smallBlocks.back()++; }
+          }
+        }
+      }
+    }
+
+    std::vector<char> compBits;
+    std::vector<uint8_t> compBitsSup;
+    {
+      if (useCompressBits) {
+        BitVec compressIndexBV;
+        for (size_t i = 0; i < bits.size(); i++) {
+          auto x = bits[i];
+          if (x) { compBitsSup.push_back(x); }
+          compressIndexBV.push_back(x != 0);
+        }
+        compBits = build(compressIndexBV, false);
+      }
+    }
+
+    std::vector<char> header;
+    {
+      vb_encode_value(bv.size(), header);
+      vb_encode_value(compBits.size(), header);
+    }
+
+    auto largBlocksBytes = largeBlocks.size() * sizeof(uint32_t);
+    auto smallBlocksBytes = smallBlocks.size();
+
+    size_t outSize;
+    {
+      outSize = header.size() + largBlocksBytes + smallBlocksBytes;
+
+      if (useCompressBits) {
+        outSize += compBits.size();
+        outSize += compBitsSup.size();
+      } else {
+        outSize += bits.size();
+      }
+    }
+
+    std::vector<char> out(outSize);
+    {
+      auto p = &out[0];
+
+      memcpy(p, header.data(), header.size());
+      p += header.size();
+
+      memcpy(p, largeBlocks.data(), largBlocksBytes);
+      p += largBlocksBytes;
+
+      memcpy(p, smallBlocks.data(), smallBlocksBytes);
+      p += smallBlocksBytes;
+
+      if (useCompressBits) {
+        memcpy(p, compBits.data(), compBits.size());
+        p += compBits.size();
+
+        memcpy(p, compBitsSup.data(), compBitsSup.size());
+      } else {
+        memcpy(p, bits.data(), bits.size());
+      }
+    }
+
+    return out;
+  }
+
+  static bool should_compress_bits(const BitVec &bv) {
+    return estimate_size(bv, true) < estimate_size(bv, false);
+  }
+
+  static size_t estimate_size(const BitVec &bv, bool useCompressBits) {
+    std::vector<char> bits(BLOCK_COUNT(bv.size(), 8));
+
+    for (size_t ibv = 0; ibv < bv.size(); ibv++) {
+      if (bv[ibv]) { bits[ibv / 8] |= BYTE_FLAG_MASK[ibv % 8]; }
+    }
+
+    auto largeBlockCount = LARGE_BLOCK_COUNT(bv.size());
+    auto largeBlocksBytes =
+        largeBlockCount ? (sizeof(uint32_t) * (largeBlockCount - 1)) : 0;
+    auto smallBlocksBytes =
+        sizeof(uint8_t) * (SMALL_BLOCK_COUNT(bv.size()) - largeBlockCount);
+
+    auto outSize =
+        vb_encode_value_length(bv.size()) + largeBlocksBytes + smallBlocksBytes;
+
+    if (useCompressBits) {
+      size_t compBitsSupSize = 0;
+      BitVec compressIndexBV;
+      for (size_t i = 0; i < bits.size(); i++) {
+        auto x = bits[i];
+        if (x) { compBitsSupSize++; }
+        compressIndexBV.push_back(x != 0);
+      }
+      auto compBitsSize = estimate_size(compressIndexBV, false);
+
+      outSize += vb_encode_value_length(compBitsSize);
+      outSize += compBitsSize;
+      outSize += compBitsSupSize;
+    } else {
+      outSize += bits.size();
+    }
+
+    return outSize;
+  }
+
+  static constexpr const size_t LARGE_BLOCK_BITS = 256;
+
+  static constexpr const size_t SMALL_BLOCK_BITS = 32;
+
+  static constexpr const size_t SMALL_BLOCK_COUNT_IN_LARGE_BLOCK =
+      LARGE_BLOCK_BITS / SMALL_BLOCK_BITS;
+
+  static constexpr const uint8_t BYTE_FLAG_MASK[8] = {0x01, 0x02, 0x04, 0x08,
+                                                      0x10, 0x20, 0x40, 0x80};
+
+  static constexpr const uint8_t BYTE_COUNT_MASK[8] = {0x00, 0x01, 0x03, 0x07,
+                                                       0x0f, 0x1f, 0x3f, 0x7f};
+
+  static constexpr const size_t POPCOUNT_TABLE[256] = {
+      0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 1, 2, 2, 3, 2, 3, 3, 4,
+      2, 3, 3, 4, 3, 4, 4, 5, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
+      2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 1, 2, 2, 3, 2, 3, 3, 4,
+      2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
+      2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6,
+      4, 5, 5, 6, 5, 6, 6, 7, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
+      2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 2, 3, 3, 4, 3, 4, 4, 5,
+      3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
+      2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6,
+      4, 5, 5, 6, 5, 6, 6, 7, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
+      4, 5, 5, 6, 5, 6, 6, 7, 5, 6, 6, 7, 6, 7, 7, 8,
+  };
+
+  static size_t BLOCK_COUNT(size_t size, size_t blockSize) {
+    return size ? ((size - 1) / blockSize + 1) : 0;
+  }
+
+  static size_t LARGE_BLOCK_COUNT(size_t bitSize) {
+    return BLOCK_COUNT(bitSize, LARGE_BLOCK_BITS);
+  }
+
+  static size_t SMALL_BLOCK_COUNT(size_t bitSize) {
+    return BLOCK_COUNT(bitSize, SMALL_BLOCK_BITS);
+  }
+};
+
+//-----------------------------------------------------------------------------
 // MurmurHash64B - 64-bit MurmurHash2 for 32-bit platforms
 //
 // URL:: https://github.com/aappleby/smhasher/blob/master/src/MurmurHash2.cpp
