@@ -275,10 +275,8 @@ template <> struct OutputTraits<std::string> {
 
 template <typename output_t> class State {
 public:
-  using pointer = State *;
-
   struct Transition {
-    pointer state;
+    State<output_t> *state;
     output_t output;
 
     bool operator==(const Transition &rhs) const {
@@ -341,7 +339,7 @@ public:
       states_and_outputs.clear();
     }
 
-    void set_transition(char arc, pointer state) {
+    void set_transition(char arc, State<output_t> *state) {
       auto idx = get_index(arc);
       if (idx == -1) {
         idx = static_cast<int>(arcs.size());
@@ -387,7 +385,7 @@ public:
 
   void set_final(bool final) { this->final = final; }
 
-  void set_transition(char arc, pointer state) {
+  void set_transition(char arc, State<output_t> *state) {
     transitions.set_transition(arc, state);
   }
 
@@ -454,19 +452,19 @@ public:
     }
   }
 
-  typename State<output_t>::pointer New(size_t state_id = -1) {
+  State<output_t> *New(size_t state_id = -1) {
     auto p = new State<output_t>(state_id);
     object_pool_.insert(p);
     return p;
   }
 
-  void Delete(typename State<output_t>::pointer p) {
+  void Delete(State<output_t> *p) {
     object_pool_.erase(p);
     delete p;
   }
 
 private:
-  std::unordered_set<typename State<output_t>::pointer> object_pool_;
+  std::unordered_set<State<output_t> *> object_pool_;
 };
 
 //-----------------------------------------------------------------------------
@@ -674,7 +672,7 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
       if (found) {
         next_state_id--;
       } else {
-        writer.write(state);
+        writer.write(*state);
 
         // Ownership of the object in temp_states[i] has been moved to the
         // dictionary...
@@ -751,7 +749,7 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
     if (found) {
       next_state_id--;
     } else {
-      writer.write(state);
+      writer.write(*state);
     }
 
     if (i > 0) {
@@ -897,10 +895,10 @@ public:
     }
   }
 
-  void write(const State<output_t> *state) {
-    auto transition_count = state->transitions.size();
+  void write(const State<output_t> &state) {
+    auto transition_count = state.transitions.size();
 
-    state->transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
+    state.transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
       auto recored_index_iter = record_index_map_.find(t.state->id);
       auto has_address = recored_index_iter != record_index_map_.end();
       auto last_transition = transition_count - 1 == i;
@@ -1003,8 +1001,8 @@ public:
       address_ += byte_size;
     });
 
-    if (!state->transitions.empty()) {
-      record_index_map_[state->id] = record_index_ - 1;
+    if (!state.transitions.empty()) {
+      record_index_map_[state.id] = record_index_ - 1;
     }
   }
 
@@ -1089,23 +1087,23 @@ public:
 
   ~DotWriter() { os_ << "}" << std::endl; }
 
-  void write(const State<output_t> *state) {
-    if (state->final) {
+  void write(const State<output_t> &state) {
+    if (state.final) {
       output_t state_output;
-      if (!OutputTraits<output_t>::empty(state->state_output)) {
-        state_output = state->state_output;
+      if (!OutputTraits<output_t>::empty(state.state_output)) {
+        state_output = state.state_output;
       }
-      os_ << "  s" << state->id << " [ shape = doublecircle, xlabel = \""
+      os_ << "  s" << state.id << " [ shape = doublecircle, xlabel = \""
           << state_output << "\" ];" << std::endl;
     } else {
-      os_ << "  s" << state->id << " [ shape = circle ];" << std::endl;
+      os_ << "  s" << state.id << " [ shape = circle ];" << std::endl;
     }
 
-    state->transitions.for_each(
+    state.transitions.for_each(
         [&](char arc, const typename State<output_t>::Transition &t, size_t i) {
           std::string label;
           label += arc;
-          os_ << "  s" << state->id << "->s" << t.state->id << " [ label = \""
+          os_ << "  s" << state.id << "->s" << t.state->id << " [ label = \""
               << label;
           if (!OutputTraits<output_t>::empty(t.output)) {
             os_ << "/" << t.output;
