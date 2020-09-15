@@ -87,7 +87,8 @@ inline size_t vb_decode_value_reverse(const char *data, Val &n) {
 // lower_bound_index
 //-----------------------------------------------------------------------------
 
-template <class T> size_t lower_bound_index(size_t first, size_t last, T less) {
+template <class T>
+inline size_t lower_bound_index(size_t first, size_t last, T less) {
   size_t len = last - first;
   size_t half;
   size_t middle;
@@ -1133,6 +1134,7 @@ public:
 
       if (flags.data.type == 1) {
         p -= flags.jump.transition_count * sizeof(uint16_t);
+
         auto jump_table = reinterpret_cast<const uint16_t *>(p + 1);
 
         auto found =
@@ -1147,21 +1149,15 @@ public:
 
         if (found < flags.jump.transition_count) {
           address -= jump_table[found];
-          continue;
+        } else {
+          auto byte_size = std::distance(p, end);
+          address -= byte_size;
         }
-
-        auto byte_size = std::distance(p, end);
-        address -= byte_size;
         continue;
       }
 
       auto index = flags.data.label_index;
-      char arc = 0;
-      if (index == 0) {
-        arc = *p--;
-      } else {
-        arc = header_.char_index[index];
-      }
+      char arc = (index == 0) ? *p-- : header_.char_index[index];
 
       size_t delta = 0;
       if (!flags.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
