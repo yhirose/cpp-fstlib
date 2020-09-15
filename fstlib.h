@@ -84,6 +84,31 @@ inline size_t vb_decode_value_reverse(const char *data, Val &n) {
 }
 
 //-----------------------------------------------------------------------------
+// lower_bound_index
+//-----------------------------------------------------------------------------
+
+template <class T> size_t lower_bound_index(size_t first, size_t last, T less) {
+  size_t len = last - first;
+  size_t half;
+  size_t middle;
+
+  while (len > 0) {
+    half = len >> 1;
+    middle = first + half;
+
+    if (less(middle)) {
+      first = middle;
+      first++;
+      len = len - half - 1;
+    } else {
+      len = half;
+    }
+  }
+
+  return first;
+}
+
+//-----------------------------------------------------------------------------
 // MurmurHash64B - 64-bit MurmurHash2 for 32-bit platforms
 //
 // URL:: https://github.com/aappleby/smhasher/blob/master/src/MurmurHash2.cpp
@@ -175,13 +200,15 @@ inline bool get_prefix_length(const std::string &s1, const std::string &s2,
 }
 
 //-----------------------------------------------------------------------------
-// state output traits
+// OutputTraits
 //-----------------------------------------------------------------------------
 
 template <typename output_t> struct OutputTraits {};
 
 template <> struct OutputTraits<uint32_t> {
   using value_type = uint32_t;
+
+  static uint8_t get_value_type_index() { return 0; }
 
   static value_type initial_value() { return 0; }
 
@@ -221,6 +248,8 @@ template <> struct OutputTraits<uint32_t> {
 
 template <> struct OutputTraits<std::string> {
   using value_type = std::string;
+
+  static uint8_t get_value_type_index() { return 1; }
 
   static value_type initial_value() { return value_type(); }
 
@@ -276,16 +305,15 @@ template <> struct OutputTraits<std::string> {
 template <typename output_t> class State {
 public:
   struct Transition {
-    State<output_t> *state;
-    output_t output;
     size_t id;
     bool final;
     output_t state_output;
+    output_t output;
 
     bool operator==(const Transition &rhs) const {
       if (this != &rhs) {
-        return output == rhs.output && id == rhs.id && final == rhs.final &&
-               state_output == rhs.state_output;
+        return id == rhs.id && final == rhs.final &&
+               state_output == rhs.state_output && output == rhs.output;
       }
       return true;
     }
@@ -352,7 +380,6 @@ public:
         arcs.push_back(arc);
         states_and_outputs.emplace_back(Transition());
       }
-      states_and_outputs[idx].state = state;
       states_and_outputs[idx].id = state->id;
       states_and_outputs[idx].final = state->final;
       states_and_outputs[idx].state_output = state->state_output;
@@ -371,11 +398,6 @@ public:
 
     friend class State;
   };
-
-  size_t id;
-  bool final = false;
-  Transitions transitions;
-  output_t state_output = OutputTraits<output_t>::initial_value();
 
   State(size_t id) : id(id) {}
 
@@ -418,13 +440,18 @@ public:
     OutputTraits<output_t>::clear(state_output);
   }
 
+  size_t id = -1;
+  bool final = false;
+  Transitions transitions;
+  output_t state_output = OutputTraits<output_t>::initial_value();
+
 private:
   State(const State &) = delete;
   State(State &&) = delete;
 };
 
 template <typename output_t> inline uint64_t State<output_t>::hash() const {
-  char buff[1024]; // TOOD: large enough?
+  char buff[1024];
   size_t buff_len = 0;
 
   transitions.for_each([&](char arc, const State::Transition &t, size_t i) {
@@ -437,11 +464,9 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
     if (!OutputTraits<output_t>::empty(t.output)) {
       buff_len += OutputTraits<output_t>::write_value(buff, buff_len, t.output);
     }
-    buff[buff_len++] = '\t';
   });
 
   if (final && !OutputTraits<output_t>::empty(state_output)) {
-    buff[buff_len++] = '\0';
     buff_len +=
         OutputTraits<output_t>::write_value(buff, buff_len, state_output);
   }
@@ -690,35 +715,20 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
 // compile
 //-----------------------------------------------------------------------------
 
-enum class ContainerType { Set, Map };
-enum class ValueType { Uint32, String };
-
-template <typename output_t> struct FstTraits {};
-
-template <> struct FstTraits<uint32_t> {
-  static ValueType get_value_type() { return ValueType::Uint32; }
-};
-
-template <> struct FstTraits<std::string> {
-  static ValueType get_value_type() { return ValueType::String; }
-};
-
 struct FstHeader {
-  static const size_t CHAR_INDEX_SIZE = 8;
+  static const size_t CHAR_INDEX_SIZE = 4;
 
-  uint8_t container_type = 0;
+  uint8_t version = 0;
   uint8_t value_type = 0;
-  uint8_t reserved = 0;
+  uint8_t reserved[2] = {0};
   uint32_t start_address = 0;
   char char_index[CHAR_INDEX_SIZE] = {0};
 
   FstHeader() {}
 
-  FstHeader(ContainerType container_type, ValueType value_type,
-            size_t start_address, const std::vector<size_t> &char_index_table)
-      : container_type(static_cast<uint8_t>(container_type)),
-        value_type(static_cast<uint8_t>(value_type)),
-        start_address(start_address) {
+  FstHeader(uint8_t value_type, size_t start_address,
+            const std::vector<size_t> &char_index_table)
+      : value_type(value_type), start_address(start_address) {
     for (size_t ch = 0; ch < 256; ch++) {
       auto index = char_index_table[ch];
       if (0 < index && index < CHAR_INDEX_SIZE) {
@@ -734,13 +744,20 @@ struct FstHeader {
 
 union FstFlags {
   struct {
+    unsigned type : 1;
     unsigned no_address : 1;
     unsigned last_transition : 1;
     unsigned final : 1;
     unsigned has_output : 1;
     unsigned has_state_output : 1;
-    unsigned label_index : 3;
+    unsigned label_index : 2;
   } data;
+
+  struct {
+    unsigned type : 1;
+    unsigned transition_count : 7;
+  } jump;
+
   uint8_t byte;
 };
 
@@ -782,55 +799,52 @@ template <typename output_t> struct FstRecord {
 
 template <typename output_t, typename Input> class ByteCodeWriter {
 public:
-  ByteCodeWriter(const Input &input, std::ostream &os, bool need_output,
-                 bool dump, bool verbose)
-      : os_(os), need_output_(need_output), dump_(dump), verbose_(verbose) {
+  ByteCodeWriter(const Input &input, std::ostream &os, bool dump, bool verbose)
+      : os_(os), dump_(dump), verbose_(verbose) {
 
     intialize_char_index_table_(input);
 
     if (dump_) {
-      std::cout << "Address\tArc\tN F L\tNxtAddr";
-      if (need_output_) { std::cout << "\tOutput\tStOuts\tSize"; }
-      std::cout << std::endl;
-      std::cout << "-------\t---\t-----\t-------";
-      if (need_output_) { std::cout << "\t------\t------\t----"; }
-      std::cout << std::endl;
+      std::cout << "Address\tArc\tN F L\tNxtAddr\tOutput\tStOuts\tSize"
+                << std::endl;
+      std::cout << "-------\t---\t-----\t-------\t------\t------\t----"
+                << std::endl;
     }
   }
 
   ~ByteCodeWriter() {
-    if (record_index_ == 0) { return; }
+    if (address_table_.empty()) { return; }
 
-    auto container_type =
-        need_output_ ? ContainerType::Map : ContainerType::Set;
+    auto start_byte_adress = address_table_.back();
 
-    auto start_byte_adress = address_table_[record_index_ - 1];
-
-    FstHeader header(container_type, FstTraits<output_t>::get_value_type(),
+    FstHeader header(OutputTraits<output_t>::get_value_type_index(),
                      start_byte_adress, char_index_table_);
 
     if (!dump_) { header.write(os_); }
 
     if (verbose_) {
       std::cerr << "# unique char count: " << char_count_.size() << std::endl;
-      std::cerr << "# state output count: " << state_output_count_ << std::endl;
-      std::cerr << "# record count: " << record_index_ << std::endl;
-      std::cerr << "# total size: " << total_size_ + sizeof(header)
-                << std::endl;
+      std::cerr << "# state count: " << record_index_map_.size() << std::endl;
+      std::cerr << "# record count: " << address_table_.size() << std::endl;
+      std::cerr << "# total size: " << address_ + sizeof(header) << std::endl;
     }
   }
 
   void write(const State<output_t> &state) {
     auto transition_count = state.transitions.size();
 
+    std::vector<uint16_t> jump_table;
+
     state.transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
       auto recored_index_iter = record_index_map_.find(t.id);
       auto has_address = recored_index_iter != record_index_map_.end();
       auto last_transition = transition_count - 1 == i;
       auto no_address = last_transition && has_address &&
-                        record_index_map_[t.id] == record_index_ - 1;
+                        record_index_map_[t.id] == address_table_.size() - 1;
+      auto jump = i == 0 && 6 < transition_count && transition_count < 128;
 
       FstRecord<output_t> rec;
+      rec.flags.data.type = 0;
       rec.flags.data.no_address = no_address;
       rec.flags.data.last_transition = last_transition;
       rec.flags.data.final = t.final;
@@ -844,38 +858,62 @@ public:
       }
 
       rec.delta = 0;
+      size_t next_address = 0;
       if (!no_address) {
         if (has_address) {
           rec.delta = address_ - address_table_[recored_index_iter->second];
+          next_address = address_ - rec.delta;
         }
       }
 
       rec.flags.data.has_output = false;
-      if (need_output_) {
-        if (!OutputTraits<output_t>::empty(t.output)) {
-          rec.flags.data.has_output = true;
-          rec.output = &t.output;
-        }
+      if (!OutputTraits<output_t>::empty(t.output)) {
+        rec.flags.data.has_output = true;
+        rec.output = &t.output;
       }
 
       rec.flags.data.has_state_output = false;
-      if (need_output_) {
-        if (!OutputTraits<output_t>::empty(t.state_output)) {
-          rec.flags.data.has_state_output = true;
-          rec.state_output = &t.state_output;
-        }
+      if (!OutputTraits<output_t>::empty(t.state_output)) {
+        rec.flags.data.has_state_output = true;
+        rec.state_output = &t.state_output;
       }
 
       auto byte_size = rec.byte_size();
       auto accessible_address = address_ + byte_size - 1;
-
+      jump_table.push_back(accessible_address);
       address_table_.push_back(accessible_address);
+      address_ += byte_size;
+
+      if (jump) {
+        auto jump_tabale_data_size = 1 + transition_count * sizeof(uint16_t);
+
+        byte_size += jump_tabale_data_size;
+        auto &last_accessible_address =
+            address_table_[address_table_.size() - 1];
+        last_accessible_address += jump_tabale_data_size;
+        address_ += jump_tabale_data_size;
+
+        for (auto &delta : jump_table) {
+          delta = last_accessible_address - delta;
+        }
+        std::reverse(jump_table.begin(), jump_table.end());
+      }
 
       if (!dump_) {
         rec.write(os_);
+
+        if (jump) {
+          os_.write((char *)jump_table.data(),
+                    jump_table.size() * sizeof(uint16_t));
+
+          FstRecord<output_t> rec;
+          rec.flags.jump.type = 1;
+          rec.flags.jump.transition_count = transition_count;
+          os_.write((char *)&rec.flags.byte, 1);
+        }
       } else {
         // Byte address
-        std::cout << address_table_[record_index_] << "\t";
+        std::cout << address_table_.back() << "\t";
 
         // Arc
         if (arc < 0x20) {
@@ -891,8 +929,8 @@ public:
 
         // Next Address
         if (!no_address) {
-          if (rec.delta > 0) {
-            std::cout << address_ - rec.delta;
+          if (next_address > 0) {
+            std::cout << next_address;
           } else {
             std::cout << "x";
           }
@@ -900,33 +938,21 @@ public:
         std::cout << "\t";
 
         // Output
-        if (need_output_) {
-          if (!OutputTraits<output_t>::empty(t.output)) {
-            std::cout << t.output;
-          }
-        }
+        if (!OutputTraits<output_t>::empty(t.output)) { std::cout << t.output; }
         std::cout << "\t";
 
         // State Output
-        if (need_output_) {
-          if (!OutputTraits<output_t>::empty(t.state_output)) {
-            std::cout << t.state_output;
-            state_output_count_++;
-          }
+        if (!OutputTraits<output_t>::empty(t.state_output)) {
+          std::cout << t.state_output;
         }
 
         std::cout << "\t" << byte_size;
         std::cout << std::endl;
       }
-
-      total_size_ += byte_size;
-
-      record_index_ += 1;
-      address_ += byte_size;
     });
 
     if (!state.transitions.empty()) {
-      record_index_map_[state.id] = record_index_ - 1;
+      record_index_map_[state.id] = address_table_.size() - 1;
     }
   }
 
@@ -964,29 +990,23 @@ private:
   }
 
   std::ostream &os_;
-  bool need_output_ = true;
   size_t dump_ = true;
   size_t verbose_ = true;
 
   std::map<char, size_t> char_count_;
   std::vector<size_t> char_index_table_;
 
-  size_t record_index_ = 0;
   std::unordered_map<size_t, size_t> record_index_map_;
 
   size_t address_ = 0;
   std::vector<size_t> address_table_;
-
-  size_t total_size_ = 0;
-  size_t state_output_count_ = 0;
 };
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-                                         bool need_output, bool verbose) {
+                                         bool verbose) {
 
-  ByteCodeWriter<output_t, Input> writer(input, os, need_output, false,
-                                         verbose);
+  ByteCodeWriter<output_t, Input> writer(input, os, false, verbose);
   return build_fst<output_t>(input, writer);
 }
 
@@ -994,7 +1014,7 @@ template <typename output_t, typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
                                       bool verbose) {
 
-  ByteCodeWriter<output_t, Input> writer(input, os, true, true, verbose);
+  ByteCodeWriter<output_t, Input> writer(input, os, true, verbose);
   return build_fst<output_t>(input, writer);
 }
 
@@ -1052,22 +1072,17 @@ inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
 
 template <typename output_t> class Matcher {
 public:
-  Matcher(const char *byte_code, size_t byte_code_size, bool need_output)
-      : byte_code_(byte_code), byte_code_size_(byte_code_size),
-        need_output_(need_output) {
+  Matcher(const char *byte_code, size_t byte_code_size)
+      : byte_code_(byte_code), byte_code_size_(byte_code_size) {
 
     if (byte_code_size < sizeof(header_)) { return; }
 
     auto p = byte_code_ + (byte_code_size - sizeof(header_));
     memcpy(reinterpret_cast<char *>(&header_), p, sizeof(header_));
 
-    if (static_cast<ContainerType>(header_.container_type) !=
-        (need_output ? ContainerType::Map : ContainerType::Set)) {
-      return;
-    }
+    if (header_.version != 0) { return; }
 
-    if (static_cast<ValueType>(header_.value_type) !=
-        FstTraits<output_t>::get_value_type()) {
+    if (header_.value_type != OutputTraits<output_t>::get_value_type_index()) {
       return;
     }
 
@@ -1110,18 +1125,35 @@ public:
       auto ch = str[i];
       OutputTraits<output_t>::clear(state_output);
 
-      // TODO:
-      // if (i == 0) {
-      //   if (auto it = jump_table_.find(ch); it != jump_table_.end()) {
-      //     address = header_.start_address - it->second;
-      //   }
-      // }
-
       auto end = byte_code_ + address;
       auto p = end;
 
       FstFlags flags;
       flags.byte = *p--;
+
+      if (flags.data.type == 1) {
+        p -= flags.jump.transition_count * sizeof(uint16_t);
+        auto jump_table = reinterpret_cast<const uint16_t *>(p + 1);
+
+        auto found =
+            lower_bound_index(0, flags.jump.transition_count, [&](size_t i) {
+              auto p = byte_code_ + address - jump_table[i];
+              FstFlags flags;
+              flags.byte = *p--;
+              auto index = flags.data.label_index;
+              auto arc = (index == 0) ? *p : header_.char_index[index];
+              return arc < ch;
+            });
+
+        if (found < flags.jump.transition_count) {
+          address -= jump_table[found];
+          continue;
+        }
+
+        auto byte_size = std::distance(p, end);
+        address -= byte_size;
+        continue;
+      }
 
       auto index = flags.data.label_index;
       char arc = 0;
@@ -1130,9 +1162,6 @@ public:
       } else {
         arc = header_.char_index[index];
       }
-
-      // TODO:
-      // if (i == 0) { jump_table_[arc] = header_.start_address - address; }
 
       size_t delta = 0;
       if (!flags.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
@@ -1208,7 +1237,7 @@ public:
         address = next_address;
       } else {
         if (flags.data.last_transition) { break; }
-        address = address - byte_size;
+        address -= byte_size;
       }
     }
 
@@ -1218,13 +1247,10 @@ public:
 private:
   const char *byte_code_;
   size_t byte_code_size_;
-  bool need_output_ = false;
 
   FstHeader header_;
   bool is_valid_ = false;
   bool trace_ = false;
-
-  mutable std::unordered_map<char, uint16_t> jump_table_;
 };
 
 } // namespace fst

@@ -258,7 +258,7 @@ int main(int argc, const char **argv) {
     if (build) {
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] = fst::compile<uint32_t>(input, fout, true, true);
+      auto [result, line] = fst::compile<uint32_t>(input, fout, true);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
@@ -273,8 +273,7 @@ int main(int argc, const char **argv) {
       if (exact) {
         StopWatch sw("exact");
 
-        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(),
-                                       true);
+        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
@@ -291,8 +290,7 @@ int main(int argc, const char **argv) {
       if (common_prefix) {
         StopWatch sw("prefix");
 
-        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size(),
-                                       true);
+        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
 
         if (matcher) {
           for (int i = 0; i < count; i++) {

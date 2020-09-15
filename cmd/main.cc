@@ -75,12 +75,11 @@ void show_error_message(fst::Result result, size_t line) {
 }
 
 void regression_test(const vector<pair<string, output_t>> &input,
-                     const char *out_path, bool need_output) {
+                     const char *out_path) {
   ifstream f(out_path, ios_base::binary);
   auto byte_code = load_byte_code(f);
 
-  fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size(),
-                                 need_output);
+  fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
 
   if (matcher) {
     for (const auto &[word, expected] : input) {
@@ -88,7 +87,7 @@ void regression_test(const vector<pair<string, output_t>> &input,
       auto ret = matcher.exact_match_search(word.data(), word.size(), actual);
       if (!ret) {
         std::cerr << "couldn't find '" << word << "'" << std::endl;
-      } else if (need_output) {
+      } else {
         if (expected != actual) {
           std::cerr << "word: " << word << std::endl;
           std::cerr << "expected value: " << expected << std::endl;
@@ -148,20 +147,16 @@ int main(int argc, const char **argv) {
         return 1;
       }
 
-      auto need_output = true;
-      if (argi < argc) { need_output = std::string(argv[argi++]) == "true"; }
-
       auto input = load_input(fin, delimiter);
 
-      auto [result, line] =
-          fst::compile<output_t>(input, fout, need_output, true);
+      auto [result, line] = fst::compile<output_t>(input, fout, true);
 
       fout.close();
 
       if (result != fst::Result::Success) {
         show_error_message(result, line);
       } else {
-        regression_test(input, out_path, need_output);
+        regression_test(input, out_path);
       }
     } else if (cmd == "dump") {
       if (argi >= argc) {
@@ -209,16 +204,12 @@ int main(int argc, const char **argv) {
         return 1;
       }
 
-      auto need_output = true;
-      if (argi < argc) { need_output = std::string(argv[argi++]) == "true"; }
-
       auto trace = false;
       if (argi < argc) { trace = std::string(argv[argi++]) == "true"; }
 
       auto byte_code = load_byte_code(fin);
 
-      fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size(),
-                                     need_output);
+      fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
       matcher.set_trace(trace);
 
       if (matcher) {
