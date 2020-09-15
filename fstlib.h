@@ -279,9 +279,14 @@ public:
     State<output_t> *state;
     output_t output;
     size_t id;
+    bool final;
+    output_t state_output;
 
     bool operator==(const Transition &rhs) const {
-      if (this != &rhs) { return id == rhs.id && output == rhs.output; }
+      if (this != &rhs) {
+        return output == rhs.output && id == rhs.id && final == rhs.final &&
+               state_output == rhs.state_output;
+      }
       return true;
     }
   };
@@ -349,6 +354,8 @@ public:
       }
       states_and_outputs[idx].state = state;
       states_and_outputs[idx].id = state->id;
+      states_and_outputs[idx].final = state->final;
+      states_and_outputs[idx].state_output = state->state_output;
     }
 
     void set_output(char arc, const output_t &val) {
@@ -369,7 +376,6 @@ public:
   bool final = false;
   Transitions transitions;
   output_t state_output = OutputTraits<output_t>::initial_value();
-  size_t ref_count = 0;
 
   State(size_t id) : id(id) {}
 
@@ -410,7 +416,6 @@ public:
     set_final(false);
     transitions.clear();
     OutputTraits<output_t>::clear(state_output);
-    ref_count = 0;
   }
 
 private:
@@ -425,7 +430,7 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
   transitions.for_each([&](char arc, const State::Transition &t, size_t i) {
     buff[buff_len++] = arc;
 
-    auto val = static_cast<uint32_t>(t.state->id);
+    auto val = static_cast<uint32_t>(t.id);
     memcpy(&buff[buff_len], &val, sizeof(val));
     buff_len += sizeof(val);
 
@@ -477,112 +482,36 @@ private:
 
 template <typename output_t> class Dictionary {
 public:
-  Dictionary(StatePool<output_t> &state_pool) : state_pool_(state_pool) {
-    initialize_items();
-  }
+  Dictionary(StatePool<output_t> &state_pool) : state_pool_(state_pool) {}
 
   State<output_t> *get(uint64_t key, State<output_t> *state) {
     auto id = bucket_id(key);
-    auto head = &buckets_[id];
-    auto prev = head;
-    auto p = prev->next;
-    while (p) {
-      if (*p->state == *state) {
-        // Move the state to first in this bucket
-        prev->next = p->next;
-        p->next = head->next;
-        head->next = p;
-        return p->state;
-      }
-      prev = p;
-      p = p->next;
+    auto [first, second, third] = buckets_[id];
+    if (first && *first == *state) { return first; }
+    if (second && *second == *state) {
+      buckets_[id] = std::make_tuple(second, first, third);
+      return second;
+    }
+    if (third && *third == *state) {
+      buckets_[id] = std::make_tuple(third, first, second);
+      return third;
     }
     return nullptr;
   }
 
   void put(uint64_t key, State<output_t> *state) {
     auto id = bucket_id(key);
-
-    // Prune unnecessary states
-    {
-      auto head = &buckets_[id];
-      auto prev = head;
-      auto p = prev->next;
-      size_t i = 0;
-      while (p && i < 3) {
-        i++;
-        prev = p;
-        p = p->next;
-      }
-
-      while (p) {
-        if (p->state->ref_count == 0) {
-          auto target = p;
-          prev->next = p->next;
-          p = p->next;
-
-          state_pool_.Delete(target->state);
-          target->state = nullptr;
-          target->next = free_head;
-
-          free_head = target;
-          free_count++;
-          item_count_in_bucket_[id]--;
-        } else {
-          prev = p;
-          p = p->next;
-        }
-      }
-    }
-
-    // Add the new state
-    auto pnew = free_head;
-    if (!pnew) {
-      // TODO:
-      std::cerr << "Out of Memory..." << std::endl;
-      return;
-    }
-    free_head = pnew->next;
-    free_count--;
-
-    pnew->state = state;
-
-    auto pold = buckets_[id].next;
-    pnew->next = pold;
-    buckets_[id].next = pnew;
-    item_count_in_bucket_[id]++;
+    auto [first, second, third] = buckets_[id];
+    if (third) { state_pool_.Delete(third); }
+    buckets_[id] = std::make_tuple(state, first, second);
   }
 
 private:
   StatePool<output_t> &state_pool_;
-
-  // Linked list item pool
-  static const size_t kItemCount = 300000;
-
-  void initialize_items() {
-    pool_.resize(kItemCount);
-    for (size_t i = 0; i < kItemCount; i++) {
-      if (i + 1 < kItemCount) { pool_[i].next = &pool_[i + 1]; }
-    }
-    free_head = &pool_[0];
-  }
-
-  struct Item {
-    Item *next = nullptr;
-    State<output_t> *state = nullptr;
-  };
-
-  std::vector<Item> pool_;
-  Item *free_head = nullptr;
-  size_t free_count = kItemCount;
-
-  // Hash buckets
   static const size_t kBucketCount = 10000;
-
   size_t bucket_id(uint64_t key) const { return key % kBucketCount; }
-
-  Item buckets_[kBucketCount];
-  size_t item_count_in_bucket_[kBucketCount] = {0};
+  std::tuple<State<output_t> *, State<output_t> *, State<output_t> *>
+      buckets_[kBucketCount] = {{nullptr, nullptr, nullptr}};
 };
 
 //-----------------------------------------------------------------------------
@@ -595,18 +524,10 @@ find_minimized(State<output_t> *state, Dictionary<output_t> &dictionary) {
   auto h = state->hash();
 
   auto st = dictionary.get(h, state);
-  if (st) {
-    st->ref_count++;
-    st->transitions.for_each(
-        [&](char arc, auto &t, size_t i) { t.state->ref_count--; });
-    return std::make_pair(true, st);
-  }
+  if (st) { return std::make_pair(true, st); }
 
   // NOTE: COPY_STATE is very expensive...
   dictionary.put(h, state);
-  state->ref_count++;
-  state->transitions.for_each(
-      [&](char arc, auto &t, size_t i) { t.state->ref_count--; });
   return std::make_pair(false, state);
 };
 
@@ -903,16 +824,16 @@ public:
     auto transition_count = state.transitions.size();
 
     state.transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
-      auto recored_index_iter = record_index_map_.find(t.state->id);
+      auto recored_index_iter = record_index_map_.find(t.id);
       auto has_address = recored_index_iter != record_index_map_.end();
       auto last_transition = transition_count - 1 == i;
       auto no_address = last_transition && has_address &&
-                        record_index_map_[t.state->id] == record_index_ - 1;
+                        record_index_map_[t.id] == record_index_ - 1;
 
       FstRecord<output_t> rec;
       rec.flags.data.no_address = no_address;
       rec.flags.data.last_transition = last_transition;
-      rec.flags.data.final = t.state->final;
+      rec.flags.data.final = t.final;
 
       auto index = char_index_table_[static_cast<uint8_t>(arc)];
       if (index < FstHeader::CHAR_INDEX_SIZE) {
@@ -939,9 +860,9 @@ public:
 
       rec.flags.data.has_state_output = false;
       if (need_output_) {
-        if (!OutputTraits<output_t>::empty(t.state->state_output)) {
+        if (!OutputTraits<output_t>::empty(t.state_output)) {
           rec.flags.data.has_state_output = true;
-          rec.state_output = &t.state->state_output;
+          rec.state_output = &t.state_output;
         }
       }
 
@@ -965,9 +886,8 @@ public:
         std::cout << "\t";
 
         // Flags
-        std::cout << (no_address ? "↑" : " ") << ' '
-                  << (t.state->final ? '*' : ' ') << ' '
-                  << (last_transition ? "‾" : " ") << "\t";
+        std::cout << (no_address ? "↑" : " ") << ' ' << (t.final ? '*' : ' ')
+                  << ' ' << (last_transition ? "‾" : " ") << "\t";
 
         // Next Address
         if (!no_address) {
@@ -989,8 +909,8 @@ public:
 
         // State Output
         if (need_output_) {
-          if (!OutputTraits<output_t>::empty(t.state->state_output)) {
-            std::cout << t.state->state_output;
+          if (!OutputTraits<output_t>::empty(t.state_output)) {
+            std::cout << t.state_output;
             state_output_count_++;
           }
         }
@@ -1107,8 +1027,7 @@ public:
         [&](char arc, const typename State<output_t>::Transition &t, size_t i) {
           std::string label;
           label += arc;
-          os_ << "  s" << state.id << "->s" << t.state->id << " [ label = \""
-              << label;
+          os_ << "  s" << state.id << "->s" << t.id << " [ label = \"" << label;
           if (!OutputTraits<output_t>::empty(t.output)) {
             os_ << "/" << t.output;
           }
