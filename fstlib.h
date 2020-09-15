@@ -278,9 +278,10 @@ public:
   struct Transition {
     State<output_t> *state;
     output_t output;
+    size_t id;
 
     bool operator==(const Transition &rhs) const {
-      if (this != &rhs) { return state == rhs.state && output == rhs.output; }
+      if (this != &rhs) { return id == rhs.id && output == rhs.output; }
       return true;
     }
   };
@@ -347,6 +348,7 @@ public:
         states_and_outputs.emplace_back(Transition());
       }
       states_and_outputs[idx].state = state;
+      states_and_outputs[idx].id = state->id;
     }
 
     void set_output(char arc, const output_t &val) {
@@ -420,22 +422,24 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
   char buff[1024]; // TOOD: large enough?
   size_t buff_len = 0;
 
-  if (final) {
-    buff_len +=
-        OutputTraits<output_t>::write_value(buff, buff_len, state_output);
-    buff[buff_len++] = '\t';
-  }
-
-  buff[buff_len++] = '\0';
-
   transitions.for_each([&](char arc, const State::Transition &t, size_t i) {
     buff[buff_len++] = arc;
+
     auto val = static_cast<uint32_t>(t.state->id);
     memcpy(&buff[buff_len], &val, sizeof(val));
     buff_len += sizeof(val);
-    buff_len += OutputTraits<output_t>::write_value(buff, buff_len, t.output);
+
+    if (!OutputTraits<output_t>::empty(t.output)) {
+      buff_len += OutputTraits<output_t>::write_value(buff, buff_len, t.output);
+    }
     buff[buff_len++] = '\t';
   });
+
+  if (final && !OutputTraits<output_t>::empty(state_output)) {
+    buff[buff_len++] = '\0';
+    buff_len +=
+        OutputTraits<output_t>::write_value(buff, buff_len, state_output);
+  }
 
   return MurmurHash64B(buff, buff_len, 0);
 }
