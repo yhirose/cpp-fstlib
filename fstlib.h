@@ -292,7 +292,8 @@ template <> struct OutputTraits<std::string> {
 
   static void write_byte_value(std::ostream &os, const value_type &val) {
     os.write(val.data(), val.size());
-    OutputTraits<uint32_t>::write_byte_value(os, static_cast<uint32_t>(val.size()));
+    OutputTraits<uint32_t>::write_byte_value(os,
+                                             static_cast<uint32_t>(val.size()));
   }
 
   static size_t read_byte_value(const char *p, value_type &val) {
@@ -766,7 +767,8 @@ struct FstHeader {
 
   FstHeader(OutputType value_type, bool need_state_output, size_t start_address,
             const std::vector<size_t> &char_index_table)
-      : value_type(static_cast<uint8_t>(value_type)), need_state_output(need_state_output),
+      : value_type(static_cast<uint8_t>(value_type)),
+        need_state_output(need_state_output),
         start_address(static_cast<uint32_t>(start_address)) {
     size_t char_index_size = need_state_output ? 4 : 8;
     for (size_t ch = 0; ch < 256; ch++) {
@@ -848,7 +850,8 @@ template <typename output_t, bool need_state_output> struct FstRecord {
       OutputTraits<output_t>::write_byte_value(os, *output);
     }
     if (!flags.data.no_address) {
-      OutputTraits<uint32_t>::write_byte_value(os, static_cast<uint32_t>(delta));
+      OutputTraits<uint32_t>::write_byte_value(os,
+                                               static_cast<uint32_t>(delta));
     }
     if (need_state_output) {
       if (flags.data.label_index == 0) { os << label; }
@@ -866,7 +869,7 @@ public:
   ByteCodeWriter(std::ostream &os, bool dump, bool verbose, const Input &input)
       : os_(os), dump_(dump), verbose_(verbose) {
 
-    intialize_char_index_table_(input);
+    intialize_char_index_table(input);
 
     if (dump_) {
       std::cout << "Address\tArc\tN F L\tNxtAddr\tOutput\tStOuts\tSize"
@@ -881,8 +884,8 @@ public:
 
     auto start_byte_adress = address_table_.back();
 
-    FstHeader header(OutputTraits<output_t>::type(),
-                     need_state_output, start_byte_adress, char_index_table_);
+    FstHeader header(OutputTraits<output_t>::type(), need_state_output,
+                     start_byte_adress, char_index_table_);
 
     if (!dump_) { header.write(os_); }
 
@@ -1045,7 +1048,7 @@ public:
 
 private:
   template <typename Input>
-  void intialize_char_index_table_(const Input &input) {
+  void intialize_char_index_table(const Input &input) {
     char_index_table_.assign(256, 0);
 
     input([&](const auto &word) {
@@ -1223,7 +1226,8 @@ public:
 
     if (header_.version != 0) { return; }
 
-    if (static_cast<OutputType>(header_.value_type) != OutputTraits<output_t>::type()) {
+    if (static_cast<OutputType>(header_.value_type) !=
+        OutputTraits<output_t>::type()) {
       return;
     }
 
@@ -1244,6 +1248,16 @@ public:
     return match(str, len, nullptr, prefixes);
   }
 
+  bool longest_common_prefix_search(const char *str, size_t len,
+                                    size_t &prefix_len,
+                                    output_t &output) const {
+    return common_prefix_search(str, len, [&](size_t len, const auto &_output) {
+      prefix_len = len;
+      output = _output;
+    });
+  }
+
+private:
   bool match(
       const char *str, size_t len,
       std::function<void(const output_t &)> outputs = nullptr,
@@ -1285,10 +1299,11 @@ public:
         p -= transition_count * jump_table_element_size;
         auto jump_table = p;
 
-		 auto base_address = byte_code_ + address - jump_table_size;
+        auto base_address = byte_code_ + address - jump_table_size;
 
         auto found = lower_bound_index(0, transition_count, [&](size_t i) {
-          auto p = base_address - lookup_jump_table(jump_table, i, jump_table_element_size);
+          auto p = base_address -
+                   lookup_jump_table(jump_table, i, jump_table_element_size);
           FstFlags flags;
           flags.byte = *p--;
           return get_arc(flags, p) < ch;
@@ -1361,6 +1376,14 @@ public:
         output += output_suffix;
         i++;
         if (flags.data.final) {
+          if (prefixes) {
+            if (OutputTraits<output_t>::empty(state_output)) {
+              prefixes(i, output);
+            } else {
+              prefixes(i, output + state_output);
+            }
+            ret = true;
+          }
           if (i == len) {
             if (outputs) {
               if (OutputTraits<output_t>::empty(state_output)) {
@@ -1371,13 +1394,6 @@ public:
             }
             ret = true;
             break;
-          }
-          if (prefixes) {
-            if (OutputTraits<output_t>::empty(state_output)) {
-              prefixes(i, output);
-            } else {
-              prefixes(i, output + state_output);
-            }
           }
         }
         if (!next_address) { break; }
@@ -1391,7 +1407,6 @@ public:
     return ret;
   }
 
-private:
   size_t lookup_jump_table(const char *p, size_t index,
                            size_t element_size) const {
     if (element_size == 2) {

@@ -162,16 +162,23 @@ int build(istream &is, T format, U fn1, V fn2) {
 template <typename output_t, typename T, typename U>
 void search_word(const T &byte_code, string_view cmd, bool verbose,
                  const U &matcher, string_view word) {
-  bool ret;
+  bool ret = false;
   if (cmd == "search") {
     output_t output;
     ret = matcher.exact_match_search(word.data(), word.size(), output);
     if (ret) { cout << output << endl; }
-  } else { // "prefix"
+  } else if (cmd == "prefix") {
     ret = matcher.common_prefix_search(
         word.data(), word.size(), [&](size_t len, const auto &output) {
           cout << word.substr(0, len) << ": " << output << endl;
         });
+  } else { // "longest"
+    size_t len = 0;
+    output_t output;
+    ret = matcher.longest_common_prefix_search(word.data(), word.size(), len, output);
+    if (ret) {
+      cout << word.substr(0, len) << ": " << output << endl;
+    }
   }
   if (!ret) { cout << "not found..." << endl; }
 }
@@ -213,6 +220,7 @@ void usage() {
 
     search      FST [word]  - exact match search
     prefix      FST [word]  - common prefix search
+    longest     FST [word]  - longest common prefix search
 
     dot         source      - convert to dot format
 
@@ -310,7 +318,7 @@ int main(int argc, char **argv) {
             [&](const auto &input) { return fst::dot(input, cout); });
       }
 
-    } else if (cmd == "search" || cmd == "prefix") {
+    } else if (cmd == "search" || cmd == "prefix" || cmd == "longest") {
       ifstream fin(in_path, ios_base::binary);
       if (!fin) { return error(1); }
 
