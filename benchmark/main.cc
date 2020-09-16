@@ -24,7 +24,7 @@ vector<pair<string, uint32_t>> load_input(istream &in) {
   string word;
 
   while (getline(in, word)) {
-    input.emplace_back(word, input.size());
+    input.emplace_back(word, static_cast<uint32_t>(input.size()));
   }
 
   sort(input.begin(), input.end(),
@@ -95,7 +95,7 @@ int main(int argc, const char **argv) {
   bool exact = true;
   bool common_prefix = true;
 
-  int dummy = 0;
+  size_t dummy = 0;
 
   // Darts
   if (darts) {

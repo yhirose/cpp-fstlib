@@ -15,7 +15,6 @@
 #include <functional>
 #include <iostream>
 #include <list>
-#include <map>
 #include <memory>
 #include <numeric>
 #include <queue>
@@ -293,7 +292,7 @@ template <> struct OutputTraits<std::string> {
 
   static void write_byte_value(std::ostream &os, const value_type &val) {
     os.write(val.data(), val.size());
-    OutputTraits<uint32_t>::write_byte_value(os, val.size());
+    OutputTraits<uint32_t>::write_byte_value(os, static_cast<uint32_t>(val.size()));
   }
 
   static size_t read_byte_value(const char *p, value_type &val) {
@@ -560,7 +559,6 @@ find_minimized(State<output_t> *state, Dictionary<output_t> &dictionary) {
   auto st = dictionary.get(h, state);
   if (st) { return std::make_pair(true, st); }
 
-  // NOTE: COPY_STATE is very expensive...
   dictionary.put(h, state);
   return std::make_pair(false, state);
 };
@@ -658,8 +656,6 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
     if (current_word != previous_word) {
       auto state = temp_states[current_word.size()];
       state->set_final(true);
-      // NOTE: The following code causes bad performance...
-      // state->push_to_state_outputs("");
     }
 
     for (auto j = 1u; j <= prefix_length; j++) {
@@ -771,7 +767,7 @@ struct FstHeader {
   FstHeader(OutputType value_type, bool need_state_output, size_t start_address,
             const std::vector<size_t> &char_index_table)
       : value_type(static_cast<uint8_t>(value_type)), need_state_output(need_state_output),
-        start_address(start_address) {
+        start_address(static_cast<uint32_t>(start_address)) {
     size_t char_index_size = need_state_output ? 4 : 8;
     for (size_t ch = 0; ch < 256; ch++) {
       auto index = char_index_table[ch];
@@ -852,7 +848,7 @@ template <typename output_t, bool need_state_output> struct FstRecord {
       OutputTraits<output_t>::write_byte_value(os, *output);
     }
     if (!flags.data.no_address) {
-      OutputTraits<uint32_t>::write_byte_value(os, delta);
+      OutputTraits<uint32_t>::write_byte_value(os, static_cast<uint32_t>(delta));
     }
     if (need_state_output) {
       if (flags.data.label_index == 0) { os << label; }
@@ -902,7 +898,7 @@ public:
     const size_t char_index_size = need_state_output ? 4 : 8;
     const auto transition_count = state.transitions.size();
 
-    std::vector<uint16_t> jump_table;
+    std::vector<size_t> jump_table;
 
     state.transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
       auto recored_index_iter = record_index_map_.find(t.id);
@@ -983,11 +979,15 @@ public:
         if (need_jump_table) {
           auto need_two_bytes = jump_table_element_size == 2;
           if (need_two_bytes) {
-            os_.write((char *)jump_table.data(), jump_table.size() * 2);
+            std::vector<uint16_t> jump_table16;
+            for (auto val : jump_table) {
+              jump_table16.push_back(static_cast<uint16_t>(val));
+            }
+            os_.write((char *)jump_table16.data(), jump_table16.size() * 2);
           } else {
             std::vector<uint8_t> jump_table8;
-            for (auto &val : jump_table) {
-              jump_table8.push_back(val);
+            for (auto val : jump_table) {
+              jump_table8.push_back(static_cast<uint8_t>(val));
             }
             os_.write((char *)jump_table8.data(), jump_table8.size() * 1);
           }
@@ -1081,7 +1081,7 @@ private:
   size_t dump_ = true;
   size_t verbose_ = true;
 
-  std::map<char, size_t> char_count_;
+  std::unordered_map<char, size_t> char_count_;
   std::vector<size_t> char_index_table_;
 
   std::unordered_map<size_t, size_t> record_index_map_;
@@ -1285,11 +1285,10 @@ public:
         p -= transition_count * jump_table_element_size;
         auto jump_table = p;
 
-        auto found = lower_bound_index(0, transition_count, [&](size_t i) {
-          auto p = byte_code_ + address -
-                   (lookup_jump_table(jump_table, i, jump_table_element_size) +
-                    jump_table_size);
+		 auto base_address = byte_code_ + address - jump_table_size;
 
+        auto found = lower_bound_index(0, transition_count, [&](size_t i) {
+          auto p = base_address - lookup_jump_table(jump_table, i, jump_table_element_size);
           FstFlags flags;
           flags.byte = *p--;
           return get_arc(flags, p) < ch;

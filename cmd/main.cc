@@ -39,7 +39,7 @@ vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
     if (fields.size() > 1) {
       input.emplace_back(fields[0], traints<output_t>::convert(fields[1]));
     } else {
-      input.emplace_back(line, traints<output_t>::convert(input.size()));
+      input.emplace_back(line, traints<output_t>::convert(static_cast<uint32_t>(input.size())));
     }
   }
   sort(input.begin(), input.end(),
@@ -238,12 +238,12 @@ int main(int argc, char **argv) {
   auto output_type = args.get<string>("t");
 
   auto cmd = args.positional().at(0);
-  auto in_path = args.positional().at(1);
+  const string in_path{args.positional().at(1)};
 
   try {
     if (cmd == "compile") {
       if (args.positional().size() < 3) { return error(1); }
-      auto out_path = args.positional().at(2);
+      const string out_path{args.positional().at(2)};
 
       ifstream fin(in_path);
       if (!fin) { return error(1); }
@@ -375,7 +375,7 @@ int main(int argc, char **argv) {
     } else {
       return error(1);
     }
-  } catch (const invalid_argument &err) {
+  } catch (const invalid_argument &) {
     cerr << "invalid format..." << endl;
     return 1;
   } catch (const runtime_error &err) { cerr << err.what() << endl; }
