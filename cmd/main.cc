@@ -39,7 +39,8 @@ vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
     if (fields.size() > 1) {
       input.emplace_back(fields[0], traints<output_t>::convert(fields[1]));
     } else {
-      input.emplace_back(line, traints<output_t>::convert(static_cast<uint32_t>(input.size())));
+      input.emplace_back(line, traints<output_t>::convert(
+                                   static_cast<uint32_t>(input.size())));
     }
   }
   sort(input.begin(), input.end(),
@@ -141,7 +142,7 @@ void regression_test(const vector<string> &input, const string &byte_code) {
 }
 
 template <typename output_t, typename T, typename U, typename V>
-void build(istream &is, T format, U fn1, V fn2) {
+int build(istream &is, T format, U fn1, V fn2) {
   fst::Result result;
   size_t line;
 
@@ -153,12 +154,14 @@ void build(istream &is, T format, U fn1, V fn2) {
     tie(result, line) = fn2(input);
   }
 
-  if (result != fst::Result::Success) { show_error_message(result, line); }
+  if (result == fst::Result::Success) { return 0; }
+  show_error_message(result, line);
+  return 1;
 }
 
 template <typename output_t, typename T, typename U>
-void search_word(const T &byte_code, string_view cmd, bool verbose, const U& matcher,
-                 string_view word) {
+void search_word(const T &byte_code, string_view cmd, bool verbose,
+                 const U &matcher, string_view word) {
   bool ret;
   if (cmd == "search") {
     output_t output;
@@ -252,7 +255,7 @@ int main(int argc, char **argv) {
       if (!fout) { return error(1); }
 
       if (*output_type == "string") {
-        build<string>(
+        return build<string>(
             fin, format,
             [&](const auto &input) {
               return fst::compile<string>(input, fout, verbose);
@@ -261,7 +264,7 @@ int main(int argc, char **argv) {
               return fst::compile(input, fout, verbose);
             });
       } else {
-        build<uint32_t>(
+        return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
               return fst::compile<uint32_t>(input, fout, verbose);
@@ -276,14 +279,14 @@ int main(int argc, char **argv) {
       if (!fin) { return error(1); }
 
       if (*output_type == "string") {
-        build<string>(
+        return build<string>(
             fin, format,
             [&](const auto &input) {
               return fst::dump<string>(input, cout, verbose);
             },
             [&](const auto &input) { return fst::dump(input, cout, verbose); });
       } else {
-        build<uint32_t>(
+        return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
               return fst::dump<uint32_t>(input, cout, verbose);
@@ -296,12 +299,12 @@ int main(int argc, char **argv) {
       if (!fin) { return error(1); }
 
       if (*output_type == "string") {
-        build<string>(
+        return build<string>(
             fin, format,
             [&](const auto &input) { return fst::dot<string>(input, cout); },
             [&](const auto &input) { return fst::dot(input, cout); });
       } else {
-        build<uint32_t>(
+        return build<uint32_t>(
             fin, format,
             [&](const auto &input) { return fst::dot<uint32_t>(input, cout); },
             [&](const auto &input) { return fst::dot(input, cout); });
@@ -337,7 +340,7 @@ int main(int argc, char **argv) {
       stringstream ss;
 
       if (*output_type == "string") {
-        build<string>(
+        return build<string>(
             fin, format,
             [&](const auto &input) {
               auto ret = fst::compile<string>(input, ss, verbose);
@@ -354,7 +357,7 @@ int main(int argc, char **argv) {
               return ret;
             });
       } else {
-        build<uint32_t>(
+        return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
               auto ret = fst::compile<uint32_t>(input, ss, verbose);
