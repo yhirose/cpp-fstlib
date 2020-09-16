@@ -77,19 +77,17 @@ int main(int argc, const char **argv) {
   cout << keys.size() << " keys" << endl;
   cout << endl;
 
-#if 1
-  bool darts = true;
-  bool ux = true;
-  bool marisa = true;
-  bool fstlib = true;
-  bool fstlib_only_keys = true;
-#else
   bool darts = false;
   bool ux = false;
   bool marisa = false;
   bool fstlib = true;
   bool fstlib_only_keys = true;
-#endif
+
+  if (argc > 2 && string(argv[2]) == "-a") {
+    darts = true;
+    ux = true;
+    marisa = true;
+  }
 
   int count = 5;
 
@@ -312,7 +310,7 @@ int main(int argc, const char **argv) {
   // fstlib with only keys
   if (fstlib_only_keys) {
     cout << "#### fstlib (only keys) ####" << endl;
-    const char *PATH = "fstlib.bin";
+    const char *PATH = "fstlib_only_keys.bin";
 
     if (build) {
       vector<string> keys2;

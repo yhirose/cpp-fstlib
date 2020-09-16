@@ -1,26 +1,23 @@
-
+#include "./flags.h"
 #include <fstlib.h>
 #include <fstream>
 #include <sstream>
 
 using namespace std;
 
-typedef uint32_t output_t;
-// typedef string output_t;
-
-template <typename T> struct traints {
-  static T convert(uint32_t n) {}
-  static T convert(const std::string &s) {}
+template <typename output_t> struct traints {
+  static output_t convert(uint32_t n) {}
+  static output_t convert(const string &s) {}
 };
 
 template <> struct traints<uint32_t> {
   static uint32_t convert(uint32_t n) { return n; }
-  static uint32_t convert(const std::string &s) { return stoi(s); }
+  static uint32_t convert(const string &s) { return stoi(s); }
 };
 
 template <> struct traints<string> {
-  static string convert(uint32_t n) { return std::to_string(n); }
-  static string convert(const std::string &s) { return s; }
+  static string convert(uint32_t n) { return to_string(n); }
+  static string convert(const string &s) { return s; }
 };
 
 vector<string> split(const string &input, char delimiter) {
@@ -33,9 +30,9 @@ vector<string> split(const string &input, char delimiter) {
   return result;
 }
 
+template <typename output_t>
 vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
   vector<pair<string, output_t>> input;
-
   string line;
   while (getline(fin, line)) {
     auto fields = split(line, delimiter);
@@ -45,10 +42,31 @@ vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
       input.emplace_back(line, traints<output_t>::convert(input.size()));
     }
   }
-
   sort(input.begin(), input.end(),
        [](const auto &a, const auto &b) { return a.first < b.first; });
+  return input;
+}
 
+template <typename output_t>
+vector<pair<string, output_t>> load_input(istream &fin, string_view format) {
+  vector<pair<string, output_t>> input;
+  if (format == "csv") {
+    input = load_input<output_t>(fin, ',');
+  } else if (format == "tsv") {
+    input = load_input<output_t>(fin, '\t');
+  } else {
+    throw runtime_error("invalid format...");
+  }
+  return input;
+}
+
+vector<string> load_input(istream &fin) {
+  vector<string> input;
+  string line;
+  while (getline(fin, line)) {
+    input.emplace_back(line);
+  }
+  sort(input.begin(), input.end());
   return input;
 }
 
@@ -62,7 +80,7 @@ vector<char> load_byte_code(istream &is) {
 }
 
 void show_error_message(fst::Result result, size_t line) {
-  std::string error_message;
+  string error_message;
 
   switch (result) {
   case fst::Result::EmptyKey: error_message = "empty key"; break;
@@ -71,14 +89,12 @@ void show_error_message(fst::Result result, size_t line) {
   default: error_message = "Unknown"; break;
   }
 
-  std::cerr << "line " << line << ": " << error_message << std::endl;
+  cerr << "line " << line << ": " << error_message << endl;
 }
 
+template <typename output_t>
 void regression_test(const vector<pair<string, output_t>> &input,
-                     const char *out_path) {
-  ifstream f(out_path, ios_base::binary);
-  auto byte_code = load_byte_code(f);
-
+                     const string &byte_code) {
   fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
 
   if (matcher) {
@@ -86,155 +102,282 @@ void regression_test(const vector<pair<string, output_t>> &input,
       auto actual = fst::OutputTraits<output_t>::initial_value();
       auto ret = matcher.exact_match_search(word.data(), word.size(), actual);
       if (!ret) {
-        std::cerr << "couldn't find '" << word << "'" << std::endl;
+        cerr << "couldn't find '" << word << "'" << endl;
       } else {
         if (expected != actual) {
-          std::cerr << "word: " << word << std::endl;
-          std::cerr << "expected value: " << expected << std::endl;
-          std::cerr << "actual value: " << actual << std::endl;
+          cerr << "word: " << word << endl;
+          cerr << "expected value: " << expected << endl;
+          cerr << "actual value: " << actual << endl;
         }
       }
     }
   } else {
-    std::cerr << "someting is wrong in byte_code..." << std::endl;
+    cerr << "someting is wrong in byte_code..." << endl;
+  }
+}
+
+void regression_test(const vector<string> &input, const string &byte_code) {
+  fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
+
+  if (matcher) {
+    uint32_t expected = 0;
+    for (const auto &word : input) {
+      uint32_t actual = 0;
+      auto ret = matcher.exact_match_search(word.data(), word.size(), actual);
+      if (!ret) {
+        cerr << "couldn't find '" << word << "'" << endl;
+      } else {
+        if (expected != actual) {
+          cerr << "word: " << word << endl;
+          cerr << "expected value: " << expected << endl;
+          cerr << "actual value: " << actual << endl;
+        }
+      }
+      expected++;
+    }
+  } else {
+    cerr << "someting is wrong in byte_code..." << endl;
+  }
+}
+
+template <typename output_t, typename T, typename U, typename V>
+void build(istream &is, T format, U fn1, V fn2) {
+  fst::Result result;
+  size_t line;
+
+  if (format) {
+    auto input = load_input<output_t>(is, *format);
+    tie(result, line) = fn1(input);
+  } else {
+    auto input = load_input(is);
+    tie(result, line) = fn2(input);
+  }
+
+  if (result != fst::Result::Success) { show_error_message(result, line); }
+}
+
+template <typename output_t, typename T, typename U>
+void search_word(const T &byte_code, string_view cmd, bool verbose, const U& matcher,
+                 string_view word) {
+  bool ret;
+  if (cmd == "search") {
+    output_t output;
+    ret = matcher.exact_match_search(word.data(), word.size(), output);
+    if (ret) { cout << output << endl; }
+  } else { // "prefix"
+    ret = matcher.common_prefix_search(
+        word.data(), word.size(), [&](size_t len, const auto &output) {
+          cout << word.substr(0, len) << ": " << output << endl;
+        });
+  }
+  if (!ret) { cout << "not found..." << endl; }
+}
+
+template <typename output_t, typename T>
+void search(const T &byte_code, string_view cmd, bool verbose,
+            string_view word) {
+  fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
+  matcher.set_trace(verbose);
+
+  if (matcher) {
+    search_word<output_t>(byte_code, cmd, verbose, matcher, word);
+  } else {
+    cout << "invalid file..." << endl;
+  }
+}
+
+template <typename output_t, typename T>
+void search(const T &byte_code, string_view cmd, bool verbose) {
+  fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
+  matcher.set_trace(verbose);
+
+  if (matcher) {
+    string word;
+    while (getline(cin, word)) {
+      search_word<output_t>(byte_code, cmd, verbose, matcher, word);
+    }
+  } else {
+    cout << "invalid file..." << endl;
   }
 }
 
 void usage() {
-  cout << R"(usage: fst <command> [<args>]
+  cout << R"(usage: fst [options] <command> [<args>]
 
-    compile     DictionaryFile FstFile  - make fst byte code
-    decompile   FstFile                 - decompile fst byte code
+  commends:
+    compile     source FST  - make fst byte code
+    decompile   FST         - decompile fst byte code
 
-    search      FstFile                 - exact match search
-    prefix      FstFile                 - common prefix search
+    search      FST [word]  - exact match search
+    prefix      FST [word]  - common prefix search
 
-    dot         DictionaryFile          - convert to dot format
-                On macOS: `./fst dot DictionaryFile | dot -T png | open -a Preview.app -f`
+    dot         source      - convert to dot format
+
+  options:
+    -f:  source file format ('csv' or 'tsv')
+    -t:  output type ('uint32_t' or 'string')
+    -v:  verbose output
+
+  note:
+    On macOS, you can show FST graph with `./fst dot source | dot -T png | open -a Preview.app -f`.
 )";
 }
 
-int main(int argc, const char **argv) {
-  int argi = 1;
+int error(int code) {
+  usage();
+  return code;
+}
 
-  if (argi >= argc) {
-    usage();
-    return 1;
-  }
+int main(int argc, char **argv) {
+  const flags::args args(argc, argv);
+
+  if (args.positional().size() < 2) { return error(1); }
+
+  auto format = args.get<string>("f");
+  auto verbose = args.get<bool>("v", false);
+  auto output_type = args.get<string>("t");
+
+  auto cmd = args.positional().at(0);
+  auto in_path = args.positional().at(1);
 
   try {
-    // TODO: Support full CSV and TSV format
-    char delimiter = '\t';
-
-    string cmd = argv[argi++];
-
     if (cmd == "compile") {
-      if (argi >= argc) {
-        usage();
-        return 1;
-      }
+      if (args.positional().size() < 3) { return error(1); }
+      auto out_path = args.positional().at(2);
 
-      ifstream fin(argv[argi++]);
-      if (!fin) {
-        usage();
-        return 1;
-      }
+      ifstream fin(in_path);
+      if (!fin) { return error(1); }
 
-      auto out_path = argv[argi++];
       ofstream fout(out_path, ios_base::binary);
-      if (!fout) {
-        usage();
-        return 1;
-      }
+      if (!fout) { return error(1); }
 
-      auto input = load_input(fin, delimiter);
-
-      auto [result, line] = fst::compile<output_t>(input, fout, true);
-
-      fout.close();
-
-      if (result != fst::Result::Success) {
-        show_error_message(result, line);
+      if (*output_type == "string") {
+        build<string>(
+            fin, format,
+            [&](const auto &input) {
+              return fst::compile<string>(input, fout, verbose);
+            },
+            [&](const auto &input) {
+              return fst::compile(input, fout, verbose);
+            });
       } else {
-        regression_test(input, out_path);
+        build<uint32_t>(
+            fin, format,
+            [&](const auto &input) {
+              return fst::compile<uint32_t>(input, fout, verbose);
+            },
+            [&](const auto &input) {
+              return fst::compile(input, fout, verbose);
+            });
       }
+
     } else if (cmd == "dump") {
-      if (argi >= argc) {
-        usage();
-        return 1;
+      ifstream fin(in_path);
+      if (!fin) { return error(1); }
+
+      if (*output_type == "string") {
+        build<string>(
+            fin, format,
+            [&](const auto &input) {
+              return fst::dump<string>(input, cout, verbose);
+            },
+            [&](const auto &input) { return fst::dump(input, cout, verbose); });
+      } else {
+        build<uint32_t>(
+            fin, format,
+            [&](const auto &input) {
+              return fst::dump<uint32_t>(input, cout, verbose);
+            },
+            [&](const auto &input) { return fst::dump(input, cout, verbose); });
       }
 
-      ifstream fin(argv[argi++]);
-      if (!fin) {
-        usage();
-        return 1;
-      }
-
-      auto input = load_input(fin, delimiter);
-
-      auto [result, line] = fst::dump<output_t>(input, std::cout, true);
-
-      if (result != fst::Result::Success) { show_error_message(result, line); }
     } else if (cmd == "dot") {
-      if (argi >= argc) {
-        usage();
-        return 1;
+      ifstream fin(in_path);
+      if (!fin) { return error(1); }
+
+      if (*output_type == "string") {
+        build<string>(
+            fin, format,
+            [&](const auto &input) { return fst::dot<string>(input, cout); },
+            [&](const auto &input) { return fst::dot(input, cout); });
+      } else {
+        build<uint32_t>(
+            fin, format,
+            [&](const auto &input) { return fst::dot<uint32_t>(input, cout); },
+            [&](const auto &input) { return fst::dot(input, cout); });
       }
 
-      ifstream fin(argv[argi++]);
-      if (!fin) {
-        usage();
-        return 1;
-      }
-
-      auto input = load_input(fin, delimiter);
-
-      auto [result, line] = fst::dot<output_t>(input, std::cout);
-
-      if (result != fst::Result::Success) { show_error_message(result, line); }
     } else if (cmd == "search" || cmd == "prefix") {
-      if (argi >= argc) {
-        usage();
-        return 1;
-      }
-
-      ifstream fin(argv[argi++], ios_base::binary);
-      if (!fin) {
-        usage();
-        return 1;
-      }
-
-      auto trace = false;
-      if (argi < argc) { trace = std::string(argv[argi++]) == "true"; }
+      ifstream fin(in_path, ios_base::binary);
+      if (!fin) { return error(1); }
 
       auto byte_code = load_byte_code(fin);
 
-      fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
-      matcher.set_trace(trace);
+      auto type = fst::get_output_type(byte_code.data(), byte_code.size());
 
-      if (matcher) {
-        string line;
-        while (getline(cin, line)) {
-          bool ret;
-          if (cmd == "search") {
-            output_t output;
-            ret = matcher.exact_match_search(line.data(), line.size(), output);
-            if (ret) { std::cout << output << std::endl; }
-          } else { // "prefix"
-            ret = matcher.common_prefix_search(
-                line.data(), line.size(), [&](size_t len, const auto &output) {
-                  std::cout << line.substr(0, len) << ": " << output << endl;
-                });
-          }
-          if (!ret) { std::cout << "not found..." << endl; }
+      if (args.positional().size() > 2) {
+        auto word = args.positional().at(2);
+        if (type == fst::OutputType::uint32_t) {
+          search<uint32_t>(byte_code, cmd, verbose, word);
+        } else if (type == fst::OutputType::string) {
+          search<string>(byte_code, cmd, verbose, word);
         }
       } else {
-        std::cout << "invalid file..." << std::endl;
+        if (type == fst::OutputType::uint32_t) {
+          search<uint32_t>(byte_code, cmd, verbose);
+        } else if (type == fst::OutputType::string) {
+          search<string>(byte_code, cmd, verbose);
+        }
       }
+
+    } else if (cmd == "test") {
+      ifstream fin(in_path);
+      if (!fin) { return error(1); }
+
+      stringstream ss;
+
+      if (*output_type == "string") {
+        build<string>(
+            fin, format,
+            [&](const auto &input) {
+              auto ret = fst::compile<string>(input, ss, verbose);
+              if (ret.first == fst::Result::Success) {
+                regression_test(input, ss.str());
+              }
+              return ret;
+            },
+            [&](const auto &input) {
+              auto ret = fst::compile(input, ss, verbose);
+              if (ret.first == fst::Result::Success) {
+                regression_test(input, ss.str());
+              }
+              return ret;
+            });
+      } else {
+        build<uint32_t>(
+            fin, format,
+            [&](const auto &input) {
+              auto ret = fst::compile<uint32_t>(input, ss, verbose);
+              if (ret.first == fst::Result::Success) {
+                regression_test(input, ss.str());
+              }
+              return ret;
+            },
+            [&](const auto &input) {
+              auto ret = fst::compile(input, ss, verbose);
+              if (ret.first == fst::Result::Success) {
+                regression_test(input, ss.str());
+              }
+              return ret;
+            });
+      }
+
     } else {
-      usage();
-      return 1;
+      return error(1);
     }
+  } catch (const invalid_argument &err) {
+    cerr << "invalid format..." << endl;
+    return 1;
   } catch (const runtime_error &err) { cerr << err.what() << endl; }
 
   return 0;

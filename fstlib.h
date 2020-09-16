@@ -212,12 +212,14 @@ inline bool get_prefix_length(const std::string &s1, const std::string &s2,
 // OutputTraits
 //-----------------------------------------------------------------------------
 
+enum class OutputType { invalid = -1, uint32_t, string };
+
 template <typename output_t> struct OutputTraits {};
 
 template <> struct OutputTraits<uint32_t> {
   using value_type = uint32_t;
 
-  static uint8_t get_value_type_index() { return 0; }
+  static OutputType type() { return OutputType::uint32_t; }
 
   static value_type initial_value() { return 0; }
 
@@ -256,7 +258,7 @@ template <> struct OutputTraits<uint32_t> {
 template <> struct OutputTraits<std::string> {
   using value_type = std::string;
 
-  static uint8_t get_value_type_index() { return 1; }
+  static OutputType type() { return OutputType::string; }
 
   static value_type initial_value() { return value_type(); }
 
@@ -766,9 +768,9 @@ struct FstHeader {
 
   FstHeader() {}
 
-  FstHeader(uint8_t value_type, uint8_t need_state_output, size_t start_address,
+  FstHeader(OutputType value_type, bool need_state_output, size_t start_address,
             const std::vector<size_t> &char_index_table)
-      : value_type(value_type), need_state_output(need_state_output),
+      : value_type(static_cast<uint8_t>(value_type)), need_state_output(need_state_output),
         start_address(start_address) {
     size_t char_index_size = need_state_output ? 4 : 8;
     for (size_t ch = 0; ch < 256; ch++) {
@@ -883,7 +885,7 @@ public:
 
     auto start_byte_adress = address_table_.back();
 
-    FstHeader header(OutputTraits<output_t>::get_value_type_index(),
+    FstHeader header(OutputTraits<output_t>::type(),
                      need_state_output, start_byte_adress, char_index_table_);
 
     if (!dump_) { header.write(os_); }
@@ -1182,10 +1184,27 @@ inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
 }
 
 template <typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
-                                     bool verbose) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
   DotWriter<uint32_t> writer(os);
   return build_fst(input, writer);
+}
+
+//-----------------------------------------------------------------------------
+// get_output_type
+//-----------------------------------------------------------------------------
+
+inline OutputType get_output_type(const char *byte_code,
+                                  size_t byte_code_size) {
+  FstHeader header;
+
+  if (byte_code_size < sizeof(FstHeader)) { return OutputType::invalid; }
+
+  auto p = byte_code + (byte_code_size - sizeof(FstHeader));
+  memcpy(reinterpret_cast<char *>(&header), p, sizeof(FstHeader));
+
+  if (header.version != 0) { return OutputType::invalid; }
+
+  return static_cast<OutputType>(header.value_type);
 }
 
 //-----------------------------------------------------------------------------
@@ -1197,14 +1216,14 @@ public:
   Matcher(const char *byte_code, size_t byte_code_size)
       : byte_code_(byte_code), byte_code_size_(byte_code_size) {
 
-    if (byte_code_size < sizeof(header_)) { return; }
+    if (byte_code_size < sizeof(FstHeader)) { return; }
 
-    auto p = byte_code_ + (byte_code_size - sizeof(header_));
-    memcpy(reinterpret_cast<char *>(&header_), p, sizeof(header_));
+    auto p = byte_code + (byte_code_size - sizeof(FstHeader));
+    memcpy(reinterpret_cast<char *>(&header_), p, sizeof(FstHeader));
 
     if (header_.version != 0) { return; }
 
-    if (header_.value_type != OutputTraits<output_t>::get_value_type_index()) {
+    if (static_cast<OutputType>(header_.value_type) != OutputTraits<output_t>::type()) {
       return;
     }
 
