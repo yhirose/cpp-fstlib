@@ -578,13 +578,14 @@ inline void get_common_prefix_and_word_suffix(const output_t &current_output,
 }
 
 //-----------------------------------------------------------------------------
-// build_fst
+// build_fst_core
 //-----------------------------------------------------------------------------
 
 enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
+inline std::pair<Result, size_t> build_fst_core(const Input &input,
+                                                Writer &writer) {
 
   StatePool<output_t> state_pool;
 
@@ -598,12 +599,12 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
   std::string previous_word;
   temp_states.push_back(state_pool.New(next_state_id++));
 
-  for (const auto &[current_word, _current_output] : input) {
+  input([&](const auto &current_word, const auto &_current_output) {
     auto current_output = _current_output;
 
     if (current_word.empty()) {
       result = Result::EmptyKey;
-      return std::make_pair(result, line);
+      return false;
     }
 
     // The following loop caluculates the length of the longest common
@@ -612,13 +613,13 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
     size_t prefix_length;
     if (!get_prefix_length(previous_word, current_word, prefix_length)) {
       result = Result::UnsortedKey;
-      return std::make_pair(result, line);
+      return false;
     }
 
     if (previous_word.size() == current_word.size() &&
         previous_word == current_word) {
       result = Result::DuplicateKey;
-      return std::make_pair(result, line);
+      return false;
     }
 
     // We minimize the states from the suffix of the previous word
@@ -697,7 +698,11 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
 
     previous_word = current_word;
     line++;
-  }
+
+    return true;
+  });
+
+  if (result != Result::Success) { return std::make_pair(result, line); }
 
   // Here we are minimizing the states of the last word
   for (auto i = static_cast<int>(previous_word.size()); i >= 0; i--) {
@@ -719,26 +724,56 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
 }
 
 //-----------------------------------------------------------------------------
+// build_fst
+//-----------------------------------------------------------------------------
+
+template <typename output_t, typename Input, typename Writer>
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
+  return build_fst_core<output_t>(
+      [&](const auto &feeder) {
+        for (const auto &item : input) {
+          const auto &word = item.first;
+          const auto &output = item.second;
+          if (!feeder(word, output)) { break; }
+        }
+      },
+      writer);
+}
+
+template <typename Input, typename Writer>
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
+  uint32_t id = 0;
+  return build_fst_core<uint32_t>(
+      [&](const auto &feeder) {
+        for (const auto &word : input) {
+          if (!feeder(word, id++)) { break; }
+        }
+      },
+      writer);
+}
+
+//-----------------------------------------------------------------------------
 // compile
 //-----------------------------------------------------------------------------
 
 struct FstHeader {
-  static const size_t CHAR_INDEX_SIZE = 4;
-
   uint8_t version = 0;
   uint8_t value_type = 0;
-  uint8_t reserved[2] = {0};
+  uint8_t need_state_output = 0;
+  uint8_t reserved = 0;
   uint32_t start_address = 0;
-  char char_index[CHAR_INDEX_SIZE] = {0};
+  char char_index[8] = {0};
 
   FstHeader() {}
 
-  FstHeader(uint8_t value_type, size_t start_address,
+  FstHeader(uint8_t value_type, uint8_t need_state_output, size_t start_address,
             const std::vector<size_t> &char_index_table)
-      : value_type(value_type), start_address(start_address) {
+      : value_type(value_type), need_state_output(need_state_output),
+        start_address(start_address) {
+    size_t char_index_size = need_state_output ? 4 : 8;
     for (size_t ch = 0; ch < 256; ch++) {
       auto index = char_index_table[ch];
-      if (0 < index && index < CHAR_INDEX_SIZE) {
+      if (0 < index && index < char_index_size) {
         char_index[index] = static_cast<char>(ch);
       }
     }
@@ -762,6 +797,15 @@ union FstFlags {
 
   struct {
     unsigned type : 1;
+    unsigned no_address : 1;
+    unsigned last_transition : 1;
+    unsigned final : 1;
+    unsigned has_output : 1;
+    unsigned label_index : 3;
+  } data_witout_state_output;
+
+  struct {
+    unsigned type : 1;
     unsigned need_two_bytes : 1;
     unsigned reserved : 6;
   } jump;
@@ -769,7 +813,7 @@ union FstFlags {
   uint8_t byte;
 };
 
-template <typename output_t> struct FstRecord {
+template <typename output_t, bool need_state_output> struct FstRecord {
   FstFlags flags;
 
   char label = 0;
@@ -779,20 +823,28 @@ template <typename output_t> struct FstRecord {
 
   size_t byte_size() const {
     size_t sz = 1;
-    if (flags.data.label_index == 0) { sz += 1; }
+    if (need_state_output) {
+      if (flags.data.label_index == 0) { sz += 1; }
+    } else {
+      if (flags.data_witout_state_output.label_index == 0) { sz += 1; }
+    }
     if (!flags.data.no_address) { sz += vb_encode_value_length(delta); }
     if (flags.data.has_output) {
       sz += OutputTraits<output_t>::get_byte_value_size(*output);
     }
-    if (flags.data.has_state_output) {
-      sz += OutputTraits<output_t>::get_byte_value_size(*state_output);
+    if (need_state_output) {
+      if (flags.data.has_state_output) {
+        sz += OutputTraits<output_t>::get_byte_value_size(*state_output);
+      }
     }
     return sz;
   }
 
   void write(std::ostream &os) {
-    if (flags.data.has_state_output) {
-      OutputTraits<output_t>::write_byte_value(os, *state_output);
+    if (need_state_output) {
+      if (flags.data.has_state_output) {
+        OutputTraits<output_t>::write_byte_value(os, *state_output);
+      }
     }
     if (flags.data.has_output) {
       OutputTraits<output_t>::write_byte_value(os, *output);
@@ -800,14 +852,20 @@ template <typename output_t> struct FstRecord {
     if (!flags.data.no_address) {
       OutputTraits<uint32_t>::write_byte_value(os, delta);
     }
-    if (flags.data.label_index == 0) { os << label; }
+    if (need_state_output) {
+      if (flags.data.label_index == 0) { os << label; }
+    } else {
+      if (flags.data_witout_state_output.label_index == 0) { os << label; }
+    }
     os.write(reinterpret_cast<const char *>(&flags.byte), sizeof(flags.byte));
   }
 };
 
-template <typename output_t, typename Input> class ByteCodeWriter {
+template <typename output_t, bool need_state_output = true>
+class ByteCodeWriter {
 public:
-  ByteCodeWriter(const Input &input, std::ostream &os, bool dump, bool verbose)
+  template <typename Input>
+  ByteCodeWriter(std::ostream &os, bool dump, bool verbose, const Input &input)
       : os_(os), dump_(dump), verbose_(verbose) {
 
     intialize_char_index_table_(input);
@@ -826,7 +884,7 @@ public:
     auto start_byte_adress = address_table_.back();
 
     FstHeader header(OutputTraits<output_t>::get_value_type_index(),
-                     start_byte_adress, char_index_table_);
+                     need_state_output, start_byte_adress, char_index_table_);
 
     if (!dump_) { header.write(os_); }
 
@@ -839,7 +897,8 @@ public:
   }
 
   void write(const State<output_t> &state) {
-    auto transition_count = state.transitions.size();
+    const size_t char_index_size = need_state_output ? 4 : 8;
+    const auto transition_count = state.transitions.size();
 
     std::vector<uint16_t> jump_table;
 
@@ -849,20 +908,25 @@ public:
       auto last_transition = transition_count - 1 == i;
       auto no_address = last_transition && has_address &&
                         record_index_map_[t.id] == address_table_.size() - 1;
-      auto need_jump_table = (i == 0) && (transition_count >= 6);
+      auto need_jump_table = (i == 0) && (transition_count >= 8);
 
-      FstRecord<output_t> rec;
+      FstRecord<output_t, need_state_output> rec;
       rec.flags.data.type = 0;
       rec.flags.data.no_address = no_address;
       rec.flags.data.last_transition = last_transition;
       rec.flags.data.final = t.final;
 
+      size_t label_index = 0;
       auto index = char_index_table_[static_cast<uint8_t>(arc)];
-      if (index < FstHeader::CHAR_INDEX_SIZE) {
-        rec.flags.data.label_index = index;
+      if (index < char_index_size) {
+        label_index = index;
       } else {
-        rec.flags.data.label_index = 0;
         rec.label = arc;
+      }
+      if (need_state_output) {
+        rec.flags.data.label_index = label_index;
+      } else {
+        rec.flags.data_witout_state_output.label_index = label_index;
       }
 
       rec.delta = 0;
@@ -880,10 +944,12 @@ public:
         rec.output = &t.output;
       }
 
-      rec.flags.data.has_state_output = false;
-      if (!OutputTraits<output_t>::empty(t.state_output)) {
-        rec.flags.data.has_state_output = true;
-        rec.state_output = &t.state_output;
+      if (need_state_output) {
+        rec.flags.data.has_state_output = false;
+        if (!OutputTraits<output_t>::empty(t.state_output)) {
+          rec.flags.data.has_state_output = true;
+          rec.state_output = &t.state_output;
+        }
       }
 
       auto byte_size = rec.byte_size();
@@ -924,7 +990,7 @@ public:
             os_.write((char *)jump_table8.data(), jump_table8.size() * 1);
           }
 
-          FstRecord<output_t> rec;
+          FstRecord<output_t, need_state_output> rec;
           rec.flags.jump.type = 1;
           rec.flags.jump.need_two_bytes = need_two_bytes;
           vb_encode_value_reverse(transition_count, os_);
@@ -976,14 +1042,15 @@ public:
   }
 
 private:
+  template <typename Input>
   void intialize_char_index_table_(const Input &input) {
     char_index_table_.assign(256, 0);
 
-    for (const auto &[word, _] : input) {
+    input([&](const auto &word) {
       for (auto ch : word) {
         char_count_[ch]++;
       }
-    }
+    });
 
     struct second_order {
       bool operator()(const std::pair<char, size_t> &x,
@@ -1024,17 +1091,46 @@ private:
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                          bool verbose) {
-
-  ByteCodeWriter<output_t, Input> writer(input, os, false, verbose);
+  ByteCodeWriter<output_t> writer(os, false, verbose, [&](const auto &feeder) {
+    for (const auto &[word, _] : input) {
+      feeder(word);
+    }
+  });
   return build_fst<output_t>(input, writer);
+}
+
+template <typename Input>
+inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
+                                         bool verbose) {
+  ByteCodeWriter<uint32_t, false> writer(os, false, verbose,
+                                         [&](const auto &feeder) {
+                                           for (const auto &word : input) {
+                                             feeder(word);
+                                           }
+                                         });
+  return build_fst(input, writer);
 }
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
                                       bool verbose) {
-
-  ByteCodeWriter<output_t, Input> writer(input, os, true, verbose);
+  ByteCodeWriter<output_t> writer(os, true, verbose, [&](const auto &feeder) {
+    for (const auto &[word, _] : input) {
+      feeder(word);
+    }
+  });
   return build_fst<output_t>(input, writer);
+}
+
+template <typename Input>
+inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
+                                      bool verbose) {
+  ByteCodeWriter<uint32_t> writer(os, true, verbose, [&](const auto &feeder) {
+    for (const auto &word : input) {
+      feeder(word);
+    }
+  });
+  return build_fst(input, writer);
 }
 
 //-----------------------------------------------------------------------------
@@ -1083,6 +1179,13 @@ inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
 
   DotWriter<output_t> writer(os);
   return build_fst<output_t>(input, writer);
+}
+
+template <typename Input>
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
+                                     bool verbose) {
+  DotWriter<uint32_t> writer(os);
+  return build_fst(input, writer);
 }
 
 //-----------------------------------------------------------------------------
@@ -1193,8 +1296,10 @@ public:
         p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
       }
 
-      if (flags.data.has_state_output) {
-        p -= OutputTraits<output_t>::read_byte_value(p, state_output);
+      if (header_.need_state_output) {
+        if (flags.data.has_state_output) {
+          p -= OutputTraits<output_t>::read_byte_value(p, state_output);
+        }
       }
 
       auto byte_size = std::distance(p, end);
@@ -1225,8 +1330,10 @@ public:
         if (flags.data.has_output) { std::cout << output_suffix; }
         std::cout << "\t";
 
-        if (flags.data.has_state_output) { std::cout << state_output; }
-        std::cout << "\t";
+        if (header_.need_state_output) {
+          if (flags.data.has_state_output) { std::cout << state_output; }
+          std::cout << "\t";
+        }
 
         std::cout << byte_size;
         std::cout << std::endl;
@@ -1277,7 +1384,9 @@ private:
   }
 
   char get_arc(FstFlags flags, const char *&p) const {
-    auto index = flags.data.label_index;
+    auto index = header_.need_state_output
+                     ? flags.data.label_index
+                     : flags.data_witout_state_output.label_index;
     return index == 0 ? *p-- : header_.char_index[index];
   }
 

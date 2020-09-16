@@ -77,16 +77,18 @@ int main(int argc, const char **argv) {
   cout << keys.size() << " keys" << endl;
   cout << endl;
 
-#if 0
+#if 1
   bool darts = true;
   bool ux = true;
   bool marisa = true;
   bool fstlib = true;
+  bool fstlib_only_keys = true;
 #else
   bool darts = false;
   bool ux = false;
   bool marisa = false;
   bool fstlib = true;
+  bool fstlib_only_keys = true;
 #endif
 
   int count = 5;
@@ -252,13 +254,75 @@ int main(int argc, const char **argv) {
 
   // fstlib
   if (fstlib) {
-    cout << "#### fstlib (mast) ####" << endl;
+    cout << "#### fstlib ####" << endl;
     const char *PATH = "fstlib.bin";
 
     if (build) {
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
       auto [result, line] = fst::compile<uint32_t>(input, fout, true);
+      fout.close();
+
+      fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
+              (double)(file_size(PATH) * 100 / 1024 / 1024) / 100.0,
+              (int)file_size(PATH));
+    }
+
+    {
+      vector<char> byte_code;
+      read_file(PATH, byte_code);
+
+      if (exact) {
+        StopWatch sw("exact");
+
+        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
+
+        if (matcher) {
+          for (int i = 0; i < count; i++) {
+            for (int j = 0; j < keys.size(); j++) {
+              uint32_t output = 0;
+              auto ret =
+                  matcher.exact_match_search(keys[j], lengths[j], output);
+              if (!ret) { cerr << "error: (" << keys[j] << ")" << endl; }
+            }
+          }
+        }
+      }
+
+      if (common_prefix) {
+        StopWatch sw("prefix");
+
+        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
+
+        if (matcher) {
+          for (int i = 0; i < count; i++) {
+            for (int j = 0; j < keys.size(); j++) {
+              auto ret = matcher.common_prefix_search(
+                  keys[j], lengths[j], [&](size_t, const auto &) {});
+              if (!ret) { cerr << "error: (" << keys[j] << ")" << endl; }
+            }
+          }
+        }
+      }
+    }
+
+    cout << endl;
+  }
+
+  // fstlib with only keys
+  if (fstlib_only_keys) {
+    cout << "#### fstlib (only keys) ####" << endl;
+    const char *PATH = "fstlib.bin";
+
+    if (build) {
+      vector<string> keys2;
+      for (const auto &item : input) {
+        keys2.push_back(item.first);
+      }
+
+      StopWatch sw("build");
+      ofstream fout(PATH, ios_base::binary);
+      auto [result, line] = fst::compile(keys2, fout, true);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
