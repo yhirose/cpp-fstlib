@@ -1244,7 +1244,7 @@ public:
     size_t address = header_.start_address;
     size_t i = 0;
     while (i < len) {
-      auto ch = str[i];
+      uint8_t ch = str[i];
       OutputTraits<output_t>::clear(state_output);
 
       auto end = byte_code_ + address;
@@ -1383,7 +1383,7 @@ private:
     }
   }
 
-  char get_arc(FstFlags flags, const char *&p) const {
+  uint8_t get_arc(FstFlags flags, const char *&p) const {
     auto index = header_.need_state_output
                      ? flags.data.label_index
                      : flags.data_witout_state_output.label_index;
