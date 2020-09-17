@@ -41,7 +41,7 @@ struct StopWatch {
     auto end = chrono::system_clock::now();
     auto diff = end - start_;
     auto count = chrono::duration_cast<chrono::milliseconds>(diff).count();
-    cout << label_ << "\t" << count << " millisec." << endl;
+    cerr << label_ << "\t" << count << " millisec." << endl;
   }
   const char *label_;
   chrono::system_clock::time_point start_;
@@ -74,8 +74,8 @@ int main(int argc, const char **argv) {
     lengths.push_back(item.first.length());
   }
 
-  cout << keys.size() << " keys" << endl;
-  cout << endl;
+  cerr << keys.size() << " keys" << endl;
+  cerr << endl;
 
   bool darts = false;
   bool ux = false;
@@ -99,7 +99,7 @@ int main(int argc, const char **argv) {
 
   // Darts
   if (darts) {
-    cout << "#### darts (double array) ####" << endl;
+    cerr << "#### darts (double array) ####" << endl;
     const char *PATH = "darts.bin";
 
     if (build) {
@@ -139,12 +139,12 @@ int main(int argc, const char **argv) {
       }
     }
 
-    cout << endl;
+    cerr << endl;
   }
 
   // Ux-trie
   if (ux) {
-    cout << "#### ux (louds) ####" << endl;
+    cerr << "#### ux (louds) ####" << endl;
     const char *PATH = "ux.bin";
 
     vector<string> keys;
@@ -192,7 +192,7 @@ int main(int argc, const char **argv) {
       }
     }
 
-    cout << endl;
+    cerr << endl;
   }
 
   // Marisa-trie
@@ -202,7 +202,7 @@ int main(int argc, const char **argv) {
       keyset.push_back(item.first.c_str());
     }
 
-    cout << "#### marisa (louds) ####" << endl;
+    cerr << "#### marisa (louds) ####" << endl;
     const char *PATH = "marisa.bin";
 
     if (build) {
@@ -247,18 +247,18 @@ int main(int argc, const char **argv) {
       }
     }
 
-    cout << endl;
+    cerr << endl;
   }
 
   // fstlib
   if (fstlib) {
-    cout << "#### fstlib ####" << endl;
+    cerr << "#### fstlib ####" << endl;
     const char *PATH = "fstlib.bin";
 
     if (build) {
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] = fst::compile<uint32_t>(input, fout, true);
+      auto [result, line] = fst::compile<uint32_t>(input, fout, true, true);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
@@ -304,12 +304,12 @@ int main(int argc, const char **argv) {
       }
     }
 
-    cout << endl;
+    cerr << endl;
   }
 
   // fstlib with only keys
   if (fstlib_only_keys) {
-    cout << "#### fstlib (only keys) ####" << endl;
+    cerr << "#### fstlib (only keys) ####" << endl;
     const char *PATH = "fstlib_only_keys.bin";
 
     if (build) {
@@ -320,7 +320,7 @@ int main(int argc, const char **argv) {
 
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] = fst::compile(keys2, fout, true);
+      auto [result, line] = fst::compile(keys2, fout, true, true);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
@@ -366,10 +366,10 @@ int main(int argc, const char **argv) {
       }
     }
 
-    cout << endl;
+    cerr << endl;
   }
 
-  cout << (dummy ? " \n" : "  \n") << endl;
+  cerr << (dummy ? " \n" : "  \n") << endl;
 
   return 0;
 }

@@ -63,7 +63,7 @@ template <typename Val, typename Cont> void vb_encode_value(Val n, Cont &out) {
 template <typename Val>
 inline size_t vb_encode_value_reverse(Val n, char *out) {
   auto len = vb_encode_value(n, out);
-  for (size_t i = 0; i < len / 2; i++) {
+  for (auto i = 0u; i < len / 2; i++) {
     std::swap(out[i], out[len - i - 1]);
   }
   return len;
@@ -187,7 +187,7 @@ inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
 //-----------------------------------------------------------------------------
 
 inline size_t get_prefix_length(const std::string &s1, const std::string &s2) {
-  size_t i = 0;
+  auto i = 0u;
   while (i < s1.size() && i < s2.size() && s1[i] == s2[i]) {
     i++;
   }
@@ -352,20 +352,7 @@ public:
 
     template <typename Functor> void for_each(Functor fn) const {
       for (auto i = 0u; i < arcs.size(); i++) {
-        fn(arcs[i], states_and_outputs[i], i);
-      }
-    }
-
-    template <typename Functor> void for_each_reverse(Functor fn) const {
-      for (auto i = arcs.size(); i > 0; i--) {
-        auto idx = i - 1;
-        fn(arcs[idx], states_and_outputs[idx], idx);
-      }
-    }
-
-    template <typename Functor> void for_each_arc(Functor fn) const {
-      for (auto arc : arcs) {
-        fn(arc);
+        fn(arcs[i], states_and_outputs[i]);
       }
     }
 
@@ -399,7 +386,7 @@ public:
     }
 
     int get_index(char arc) const {
-      for (size_t i = 0; i < arcs.size(); i++) {
+      for (auto i = 0u; i < arcs.size(); i++) {
         if (arcs[i] == arc) { return static_cast<int>(i); }
       }
       return -1;
@@ -463,7 +450,7 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
   char buff[1024];
   size_t buff_len = 0;
 
-  transitions.for_each([&](char arc, const State::Transition &t, size_t i) {
+  transitions.for_each([&](char arc, const State::Transition &t) {
     buff[buff_len++] = arc;
 
     auto val = static_cast<uint32_t>(t.id);
@@ -590,8 +577,8 @@ inline void get_common_prefix_and_word_suffix(const output_t &current_output,
 enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t>
-build_fst_core(const Input &input, Writer &writer, bool trie) {
+inline std::pair<Result, size_t> build_fst_core(const Input &input,
+                                                Writer &writer, bool trie) {
 
   StatePool<output_t> state_pool;
 
@@ -633,17 +620,18 @@ build_fst_core(const Input &input, Writer &writer, bool trie) {
       auto [found, state] =
           find_minimized<output_t>(temp_states[i], dictionary);
 
+      auto arc = previous_word[i - 1];
+
       if (found) {
         next_state_id--;
       } else {
-        writer.write(*state);
+        writer.write(*state, arc);
 
         // Ownership of the object in temp_states[i] has been moved to the
         // dictionary...
         temp_states[i] = state_pool.New();
       }
 
-      auto arc = previous_word[i - 1];
       temp_states[i - 1]->set_transition(arc, state);
     }
 
@@ -679,9 +667,11 @@ build_fst_core(const Input &input, Writer &writer, bool trie) {
 
       if (!OutputTraits<output_t>::empty(word_suffix)) {
         auto state = temp_states[j];
-        state->transitions.for_each_arc([&](char arc) {
+
+        for (auto arc : state->transitions.arcs) {
           state->prepend_suffix_to_output(arc, word_suffix);
-        });
+        }
+
         if (state->final) {
           state->prepend_suffix_to_state_outputs(word_suffix);
         }
@@ -712,16 +702,15 @@ build_fst_core(const Input &input, Writer &writer, bool trie) {
   for (auto i = static_cast<int>(previous_word.size()); i >= 0; i--) {
     auto [found, state] = find_minimized<output_t>(temp_states[i], dictionary);
 
+    auto arc = (i > 0) ? previous_word[i - 1] : 0;
+
     if (found) {
       next_state_id--;
     } else {
-      writer.write(*state);
+      writer.write(*state, arc);
     }
 
-    if (i > 0) {
-      auto arc = previous_word[i - 1];
-      temp_states[i - 1]->set_transition(arc, state);
-    }
+    if (i > 0) { temp_states[i - 1]->set_transition(arc, state); }
   }
 
   return std::make_pair(Result::Success, line);
@@ -780,10 +769,13 @@ union FstOpe {
     unsigned label_index : 4;
   } data_witout_state_output;
 
-  uint8_t byte;
+  uint8_t byte = 0;
+
+  FstOpe() = default;
+  explicit FstOpe(uint8_t byte) : byte(byte) {}
 
   // For char index
-  static size_t char_index_size(bool need_state_output) {
+  static constexpr size_t char_index_size(bool need_state_output) {
     return need_state_output ? 8 : 16;
   }
 
@@ -796,37 +788,6 @@ union FstOpe {
 
   static uint8_t jump_tag_byte(bool need_two_bytes) {
     return need_two_bytes ? 0xff : 0xfe;
-  }
-};
-
-struct FstHeader {
-  uint8_t version = 0;
-  uint8_t value_type = 0;
-  uint8_t need_state_output = 0;
-  uint8_t reserved = 0;
-  uint32_t start_address = 0;
-  char char_index[16] = {0};
-
-  FstHeader() {}
-
-  FstHeader(OutputType value_type, bool need_state_output, size_t start_address,
-            const std::vector<size_t> &char_index_table)
-      : value_type(static_cast<uint8_t>(value_type)),
-        need_state_output(need_state_output),
-        start_address(static_cast<uint32_t>(start_address)) {
-
-    size_t char_index_size = FstOpe::char_index_size(need_state_output);
-
-    for (size_t ch = 0; ch < 256; ch++) {
-      auto index = char_index_table[ch];
-      if (0 < index && index < char_index_size) {
-        char_index[index] = static_cast<char>(ch);
-      }
-    }
-  }
-
-  void write(std::ostream &os) {
-    os.write(reinterpret_cast<const char *>(this), sizeof(*this));
   }
 };
 
@@ -879,14 +840,45 @@ template <typename output_t, bool need_state_output> struct FstRecord {
   }
 };
 
-template <typename output_t, bool need_state_output = true>
-class ByteCodeWriter {
+struct FstHeader {
+  uint8_t version = 0;
+  uint8_t value_type = 0;
+  uint8_t need_state_output = 0;
+  uint8_t reserved = 0;
+  uint32_t start_address = 0;
+  char char_index[FstOpe::char_index_size(false)] = {0};
+
+  FstHeader() = default;
+
+  FstHeader(OutputType value_type, bool need_state_output, size_t start_address,
+            const std::vector<size_t> &char_index_table)
+      : value_type(static_cast<uint8_t>(value_type)),
+        need_state_output(need_state_output),
+        start_address(static_cast<uint32_t>(start_address)) {
+
+    size_t char_index_size = FstOpe::char_index_size(need_state_output);
+
+    for (size_t ch = 0; ch < 256; ch++) {
+      auto index = char_index_table[ch];
+      if (0 < index && index < char_index_size) {
+        char_index[index] = static_cast<char>(ch);
+      }
+    }
+  }
+
+  void write(std::ostream &os) {
+    os.write(reinterpret_cast<const char *>(this), sizeof(*this));
+  }
+};
+
+template <typename output_t, bool need_state_output = true> class FstWriter {
 public:
   template <typename Input>
-  ByteCodeWriter(std::ostream &os, bool dump, bool verbose, const Input &input)
-      : os_(os), dump_(dump), verbose_(verbose) {
+  FstWriter(std::ostream &os, bool dump, bool sort_arcs, bool verbose,
+            const Input &input)
+      : os_(os), dump_(dump), sort_arcs_(sort_arcs), verbose_(verbose) {
 
-    intialize_char_index_table(input);
+    initialize_char_index_table(input);
 
     if (dump_) {
       std::cout << "Address\tArc\tN F L\tNxtAddr\tOutput\tStOuts\tSize"
@@ -896,7 +888,7 @@ public:
     }
   }
 
-  ~ByteCodeWriter() {
+  ~FstWriter() {
     if (address_table_.empty()) { return; }
 
     auto start_byte_adress = address_table_.back();
@@ -914,13 +906,37 @@ public:
     }
   }
 
-  void write(const State<output_t> &state) {
-    size_t char_index_size = need_state_output ? 8 : 16;
+  void write(const State<output_t> &state, char prev_arc) {
     auto transition_count = state.transitions.size();
+    const auto &[arcs, states_and_outputs] = state.transitions;
+
+    size_t char_index_size = FstOpe::char_index_size(need_state_output);
 
     std::vector<size_t> jump_table;
+    auto need_jump_table = transition_count >= 8;
 
-    state.transitions.for_each_reverse([&](char arc, const auto &t, size_t i) {
+    size_t sort_indexes[256];
+
+    if (sort_arcs_ && !need_jump_table) {
+      uint16_t keys[256];
+      for (auto i = 0u; i < arcs.size(); i++) {
+        sort_indexes[i] = i;
+        keys[i] = bigram_key(prev_arc, arcs[i]);
+      }
+
+      std::sort(&sort_indexes[0], &sort_indexes[arcs.size()],
+                [&](auto i1, auto i2) {
+                  return bigram_count_[keys[i1]] > bigram_count_[keys[i2]];
+                });
+    }
+
+    for (auto ri = arcs.size(); ri > 0; ri--) {
+      auto i = ri - 1;
+
+      auto arc_i = (sort_arcs_ && !need_jump_table) ? sort_indexes[i] : i;
+      auto arc = arcs[arc_i];
+      const auto &t = states_and_outputs[arc_i];
+
       auto recored_index_iter = record_index_map_.find(t.id);
       auto has_address = recored_index_iter != record_index_map_.end();
       auto last_transition = transition_count - 1 == i;
@@ -928,7 +944,7 @@ public:
                         record_index_map_[t.id] == address_table_.size() - 1;
 
       // If the state has 6 or more transitions, then generate jump table.
-      auto need_jump_table = (i == 0) && (transition_count >= 8);
+      auto generate_jump_table = (i == 0) && need_jump_table;
 
       FstRecord<output_t, need_state_output> rec;
       rec.ope.data.no_address = no_address;
@@ -990,7 +1006,7 @@ public:
       auto jump_table_element_size = 1;
       jump_table.push_back(accessible_address);
 
-      if (need_jump_table) {
+      if (generate_jump_table) {
         for (auto &val : jump_table) {
           val = accessible_address - val;
           if (val > 0xff) { jump_table_element_size = 2; }
@@ -1008,7 +1024,7 @@ public:
       if (!dump_) {
         rec.write(os_);
 
-        if (need_jump_table) {
+        if (generate_jump_table) {
           auto need_two_bytes = jump_table_element_size == 2;
 
           if (need_two_bytes) {
@@ -1060,7 +1076,7 @@ public:
         std::cout << "\t" << byte_size;
         std::cout << std::endl;
       }
-    });
+    }
 
     if (!state.transitions.empty()) {
       record_index_map_[state.id] = address_table_.size() - 1;
@@ -1069,12 +1085,15 @@ public:
 
 private:
   template <typename Input>
-  void intialize_char_index_table(const Input &input) {
+  void initialize_char_index_table(const Input &input) {
     char_index_table_.assign(256, 0);
 
     input([&](const auto &word) {
+      char prev = 0;
       for (auto ch : word) {
         char_count_[ch]++;
+        if (sort_arcs_) { bigram_count_[bigram_key(prev, ch)]++; }
+        prev = ch;
       }
     });
 
@@ -1105,7 +1124,7 @@ private:
   void write_jump_table(std::ostream &os,
                         const std::vector<size_t> &jump_table) {
     std::vector<T> table(jump_table.size());
-    for (size_t i = 0; i < jump_table.size(); i++) {
+    for (auto i = 0u; i < jump_table.size(); i++) {
       table[i] = static_cast<T>(jump_table[i]);
     }
     os_.write((char *)table.data(), table.size() * sizeof(T));
@@ -1113,10 +1132,16 @@ private:
 
   std::ostream &os_;
   size_t dump_ = true;
+  size_t sort_arcs_ = true;
   size_t verbose_ = true;
 
   std::unordered_map<char, size_t> char_count_;
   std::vector<size_t> char_index_table_;
+
+  uint16_t bigram_key(char prev, char cur) const {
+    return static_cast<uint16_t>(prev) << 8 | static_cast<uint16_t>(cur);
+  }
+  std::unordered_map<uint16_t, size_t> bigram_count_;
 
   std::unordered_map<size_t, size_t> record_index_map_;
 
@@ -1126,46 +1151,49 @@ private:
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-                                         bool verbose) {
-  ByteCodeWriter<output_t> writer(os, false, verbose, [&](const auto &feeder) {
-    for (const auto &[word, _] : input) {
-      feeder(word);
-    }
-  });
+                                         bool sort_arcs, bool verbose) {
+  FstWriter<output_t> writer(os, false, sort_arcs, verbose,
+                             [&](const auto &feeder) {
+                               for (const auto &[word, _] : input) {
+                                 feeder(word);
+                               }
+                             });
   return build_fst<output_t>(input, writer);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-                                         bool verbose) {
-  ByteCodeWriter<uint32_t, false> writer(os, false, verbose,
-                                         [&](const auto &feeder) {
-                                           for (const auto &word : input) {
-                                             feeder(word);
-                                           }
-                                         });
+                                         bool sort_arcs, bool verbose) {
+  FstWriter<uint32_t, false> writer(os, false, sort_arcs, verbose,
+                                    [&](const auto &feeder) {
+                                      for (const auto &word : input) {
+                                        feeder(word);
+                                      }
+                                    });
   return build_fst(input, writer);
 }
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
-                                      bool verbose) {
-  ByteCodeWriter<output_t> writer(os, true, verbose, [&](const auto &feeder) {
-    for (const auto &[word, _] : input) {
-      feeder(word);
-    }
-  });
+                                      bool sort_arcs, bool verbose) {
+  FstWriter<output_t> writer(os, true, sort_arcs, verbose,
+                             [&](const auto &feeder) {
+                               for (const auto &[word, _] : input) {
+                                 feeder(word);
+                               }
+                             });
   return build_fst<output_t>(input, writer);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
-                                      bool verbose) {
-  ByteCodeWriter<uint32_t> writer(os, true, verbose, [&](const auto &feeder) {
-    for (const auto &word : input) {
-      feeder(word);
-    }
-  });
+                                      bool sort_arcs, bool verbose) {
+  FstWriter<uint32_t> writer(os, true, sort_arcs, verbose,
+                             [&](const auto &feeder) {
+                               for (const auto &word : input) {
+                                 feeder(word);
+                               }
+                             });
   return build_fst(input, writer);
 }
 
@@ -1182,7 +1210,7 @@ public:
 
   ~DotWriter() { os_ << "}" << std::endl; }
 
-  void write(const State<output_t> &state) {
+  void write(const State<output_t> &state, char prev_arc) {
     if (state.final) {
       output_t state_output;
       if (!OutputTraits<output_t>::empty(state.state_output)) {
@@ -1195,7 +1223,7 @@ public:
     }
 
     state.transitions.for_each(
-        [&](char arc, const typename State<output_t>::Transition &t, size_t i) {
+        [&](char arc, const typename State<output_t>::Transition &t) {
           std::string label;
           label += arc;
           os_ << "  s" << state.id << "->s" << t.id << " [ label = \"" << label;
@@ -1211,14 +1239,16 @@ private:
 };
 
 template <typename output_t, typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os, bool trie = false) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
+                                     bool trie = false) {
 
   DotWriter<output_t> writer(os);
   return build_fst<output_t>(input, writer, trie);
 }
 
 template <typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os, bool trie = false) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
+                                     bool trie = false) {
   DotWriter<uint32_t> writer(os);
   return build_fst(input, writer, trie);
 }
@@ -1306,7 +1336,7 @@ private:
     auto state_output = OutputTraits<output_t>::initial_value();
 
     size_t address = header_.start_address;
-    size_t i = 0;
+    auto i = 0u;
     while (i < len) {
       uint8_t ch = str[i];
       OutputTraits<output_t>::clear(state_output);
@@ -1314,8 +1344,7 @@ private:
       auto end = byte_code_ + address;
       auto p = end;
 
-      FstOpe ope;
-      ope.byte = *p--;
+      FstOpe ope(*p--);
 
       if (ope.is_jump_tag_byte()) {
         auto jump_table_element_size = ope.jump_table_element_size();
@@ -1332,11 +1361,10 @@ private:
 
         auto base_address = byte_code_ + address - jump_table_size;
 
-        auto found = lower_bound_index(0, transition_count, [&](size_t i) {
+        auto found = lower_bound_index(0, transition_count, [&](auto i) {
           auto p = base_address -
                    lookup_jump_table(jump_table, i, jump_table_element_size);
-          FstOpe ope;
-          ope.byte = *p--;
+          FstOpe ope(*p--);
           return get_arc(ope, p) < ch;
         });
 

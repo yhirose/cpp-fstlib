@@ -226,6 +226,7 @@ void usage() {
 
   options:
     -f:  source file format ('csv' or 'tsv')
+    -s:  sort arcs
     -t:  output type ('uint32_t' or 'string')
     -v:  verbose output
 
@@ -245,8 +246,9 @@ int main(int argc, char **argv) {
   if (args.positional().size() < 2) { return error(1); }
 
   auto format = args.get<string>("f");
-  auto verbose = args.get<bool>("v", false);
   auto output_type = args.get<string>("t");
+  auto sort_arcs = args.get<bool>("s", false);
+  auto verbose = args.get<bool>("v", false);
 
   auto cmd = args.positional().at(0);
   const string in_path{args.positional().at(1)};
@@ -266,19 +268,19 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<string>(input, fout, verbose);
+              return fst::compile<string>(input, fout, sort_arcs, verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, verbose);
+              return fst::compile(input, fout, sort_arcs, verbose);
             });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<uint32_t>(input, fout, verbose);
+              return fst::compile<uint32_t>(input, fout, sort_arcs, verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, verbose);
+              return fst::compile(input, fout, sort_arcs, verbose);
             });
       }
 
@@ -290,16 +292,16 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<string>(input, cout, verbose);
+              return fst::dump<string>(input, cout, sort_arcs, verbose);
             },
-            [&](const auto &input) { return fst::dump(input, cout, verbose); });
+            [&](const auto &input) { return fst::dump(input, cout, sort_arcs, verbose); });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<uint32_t>(input, cout, verbose);
+              return fst::dump<uint32_t>(input, cout, sort_arcs, verbose);
             },
-            [&](const auto &input) { return fst::dump(input, cout, verbose); });
+            [&](const auto &input) { return fst::dump(input, cout, sort_arcs, verbose); });
       }
 
     } else if (cmd == "dot") {
@@ -353,14 +355,14 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              auto ret = fst::compile<string>(input, ss, verbose);
+              auto ret = fst::compile<string>(input, ss, sort_arcs, verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, verbose);
+              auto ret = fst::compile(input, ss, sort_arcs, verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
@@ -370,14 +372,14 @@ int main(int argc, char **argv) {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              auto ret = fst::compile<uint32_t>(input, ss, verbose);
+              auto ret = fst::compile<uint32_t>(input, ss, sort_arcs, verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, verbose);
+              auto ret = fst::compile(input, ss, sort_arcs, verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
