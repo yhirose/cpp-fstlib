@@ -755,13 +755,50 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
 // compile
 //-----------------------------------------------------------------------------
 
+union FstFlags {
+  struct {
+    unsigned no_address : 1;
+    unsigned last_transition : 1;
+    unsigned final : 1;
+    unsigned has_output : 1;
+    unsigned has_state_output : 1;
+    unsigned label_index : 3;
+  } data;
+
+  struct {
+    unsigned no_address : 1;
+    unsigned last_transition : 1;
+    unsigned final : 1;
+    unsigned has_output : 1;
+    unsigned label_index : 4;
+  } data_witout_state_output;
+
+  uint8_t byte;
+
+  // For char index
+  static size_t char_index_size(bool need_state_output) {
+    return need_state_output ? 8 : 16;
+  }
+
+  // For jump table
+  bool is_jump_tag_byte() const { return byte == 0xff || byte == 0xfe; }
+
+  size_t jump_table_element_size() const {
+    return byte == 0xff ? 2 : (byte == 0xfe ? 1 : 0);
+  }
+
+  static uint8_t jump_tag_byte(bool need_two_bytes) {
+    return need_two_bytes ? 0xff : 0xfe;
+  }
+};
+
 struct FstHeader {
   uint8_t version = 0;
   uint8_t value_type = 0;
   uint8_t need_state_output = 0;
   uint8_t reserved = 0;
   uint32_t start_address = 0;
-  char char_index[8] = {0};
+  char char_index[16] = {0};
 
   FstHeader() {}
 
@@ -770,7 +807,9 @@ struct FstHeader {
       : value_type(static_cast<uint8_t>(value_type)),
         need_state_output(need_state_output),
         start_address(static_cast<uint32_t>(start_address)) {
-    size_t char_index_size = need_state_output ? 4 : 8;
+
+    size_t char_index_size = FstFlags::char_index_size(need_state_output);
+
     for (size_t ch = 0; ch < 256; ch++) {
       auto index = char_index_table[ch];
       if (0 < index && index < char_index_size) {
@@ -782,35 +821,6 @@ struct FstHeader {
   void write(std::ostream &os) {
     os.write(reinterpret_cast<const char *>(this), sizeof(*this));
   }
-};
-
-union FstFlags {
-  struct {
-    unsigned type : 1;
-    unsigned no_address : 1;
-    unsigned last_transition : 1;
-    unsigned final : 1;
-    unsigned has_output : 1;
-    unsigned has_state_output : 1;
-    unsigned label_index : 2;
-  } data;
-
-  struct {
-    unsigned type : 1;
-    unsigned no_address : 1;
-    unsigned last_transition : 1;
-    unsigned final : 1;
-    unsigned has_output : 1;
-    unsigned label_index : 3;
-  } data_witout_state_output;
-
-  struct {
-    unsigned type : 1;
-    unsigned need_two_bytes : 1;
-    unsigned reserved : 6;
-  } jump;
-
-  uint8_t byte;
 };
 
 template <typename output_t, bool need_state_output> struct FstRecord {
@@ -898,8 +908,8 @@ public:
   }
 
   void write(const State<output_t> &state) {
-    const size_t char_index_size = need_state_output ? 4 : 8;
-    const auto transition_count = state.transitions.size();
+    size_t char_index_size = need_state_output ? 8 : 16;
+    auto transition_count = state.transitions.size();
 
     std::vector<size_t> jump_table;
 
@@ -909,26 +919,14 @@ public:
       auto last_transition = transition_count - 1 == i;
       auto no_address = last_transition && has_address &&
                         record_index_map_[t.id] == address_table_.size() - 1;
+
+      // If the state has 6 or more transitions, then generate jump table.
       auto need_jump_table = (i == 0) && (transition_count >= 8);
 
       FstRecord<output_t, need_state_output> rec;
-      rec.flags.data.type = 0;
       rec.flags.data.no_address = no_address;
       rec.flags.data.last_transition = last_transition;
       rec.flags.data.final = t.final;
-
-      size_t label_index = 0;
-      auto index = char_index_table_[static_cast<uint8_t>(arc)];
-      if (index < char_index_size) {
-        label_index = index;
-      } else {
-        rec.label = arc;
-      }
-      if (need_state_output) {
-        rec.flags.data.label_index = label_index;
-      } else {
-        rec.flags.data_witout_state_output.label_index = label_index;
-      }
 
       rec.delta = 0;
       size_t next_address = 0;
@@ -950,6 +948,30 @@ public:
         if (!OutputTraits<output_t>::empty(t.state_output)) {
           rec.flags.data.has_state_output = true;
           rec.state_output = &t.state_output;
+        }
+      }
+
+      size_t label_index = 0;
+      auto index = char_index_table_[static_cast<uint8_t>(arc)];
+      if (index < char_index_size) {
+        label_index = index;
+      } else {
+        rec.label = arc;
+      }
+      if (need_state_output) {
+        rec.flags.data.label_index = label_index;
+      } else {
+        rec.flags.data_witout_state_output.label_index = label_index;
+      }
+
+      // When the flags byte happens to be the same as jump tag byte, change to
+      // use '.label' field instead. if (rec.flags.byte == 0xff ||
+      if (rec.flags.is_jump_tag_byte()) {
+        rec.label = arc;
+        if (need_state_output) {
+          rec.flags.data.label_index = 0;
+        } else {
+          rec.flags.data_witout_state_output.label_index = 0;
         }
       }
 
@@ -981,25 +1003,17 @@ public:
 
         if (need_jump_table) {
           auto need_two_bytes = jump_table_element_size == 2;
+
           if (need_two_bytes) {
-            std::vector<uint16_t> jump_table16;
-            for (auto val : jump_table) {
-              jump_table16.push_back(static_cast<uint16_t>(val));
-            }
-            os_.write((char *)jump_table16.data(), jump_table16.size() * 2);
+            write_jump_table<uint16_t>(os_, jump_table);
           } else {
-            std::vector<uint8_t> jump_table8;
-            for (auto val : jump_table) {
-              jump_table8.push_back(static_cast<uint8_t>(val));
-            }
-            os_.write((char *)jump_table8.data(), jump_table8.size() * 1);
+            write_jump_table<uint8_t>(os_, jump_table);
           }
 
-          FstRecord<output_t, need_state_output> rec;
-          rec.flags.jump.type = 1;
-          rec.flags.jump.need_two_bytes = need_two_bytes;
           vb_encode_value_reverse(transition_count, os_);
-          os_.write((char *)&rec.flags.byte, 1);
+
+          auto jump_tag_byte = FstFlags::jump_tag_byte(need_two_bytes);
+          os_.write((char *)&jump_tag_byte, 1);
         }
       } else {
         // Byte address
@@ -1078,6 +1092,15 @@ private:
       char_index_table_[static_cast<uint8_t>(ch)] = index++;
       que.pop();
     }
+  }
+
+  template <typename T>
+  void write_jump_table(std::ostream &os, const std::vector<size_t>& jump_table) {
+    std::vector<T> table(jump_table.size());
+    for (size_t i = 0; i < jump_table.size(); i++) {
+      table[i] = static_cast<T>(jump_table[i]);
+    }
+    os_.write((char *)table.data(), table.size() * sizeof(T));
   }
 
   std::ostream &os_;
@@ -1264,9 +1287,9 @@ private:
       std::function<void(size_t, const output_t &)> prefixes = nullptr) const {
 
     if (trace_) {
-      std::cout << "Char\tAddress\tArc\tN F L\tNxtAddr\tOutput\tStOuts"
+      std::cout << "Char\tAddress\tArc\tN F L\tNxtAddr\tOutput\tStOuts\tSize"
                 << std::endl;
-      std::cout << "----\t-------\t---\t-----\t-------\t------\t------"
+      std::cout << "----\t-------\t---\t-----\t-------\t------\t------\t----"
                 << std::endl;
     }
 
@@ -1286,8 +1309,8 @@ private:
       FstFlags flags;
       flags.byte = *p--;
 
-      if (flags.data.type == 1) {
-        auto jump_table_element_size = flags.jump.need_two_bytes ? 2 : 1;
+      if (flags.is_jump_tag_byte()) {
+        auto jump_table_element_size = flags.jump_table_element_size();
 
         size_t transition_count = 0;
         auto vb_len = vb_decode_value_reverse(p, transition_count);
@@ -1365,8 +1388,8 @@ private:
 
         if (header_.need_state_output) {
           if (flags.data.has_state_output) { std::cout << state_output; }
-          std::cout << "\t";
         }
+        std::cout << "\t";
 
         std::cout << byte_size;
         std::cout << std::endl;
