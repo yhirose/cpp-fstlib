@@ -762,7 +762,7 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
 // compile
 //-----------------------------------------------------------------------------
 
-union FstFlags {
+union FstOpe {
   struct {
     unsigned no_address : 1;
     unsigned last_transition : 1;
@@ -815,7 +815,7 @@ struct FstHeader {
         need_state_output(need_state_output),
         start_address(static_cast<uint32_t>(start_address)) {
 
-    size_t char_index_size = FstFlags::char_index_size(need_state_output);
+    size_t char_index_size = FstOpe::char_index_size(need_state_output);
 
     for (size_t ch = 0; ch < 256; ch++) {
       auto index = char_index_table[ch];
@@ -831,7 +831,7 @@ struct FstHeader {
 };
 
 template <typename output_t, bool need_state_output> struct FstRecord {
-  FstFlags flags;
+  FstOpe ope;
 
   char label = 0;
   size_t delta = 0;
@@ -841,16 +841,16 @@ template <typename output_t, bool need_state_output> struct FstRecord {
   size_t byte_size() const {
     size_t sz = 1;
     if (need_state_output) {
-      if (flags.data.label_index == 0) { sz += 1; }
+      if (ope.data.label_index == 0) { sz += 1; }
     } else {
-      if (flags.data_witout_state_output.label_index == 0) { sz += 1; }
+      if (ope.data_witout_state_output.label_index == 0) { sz += 1; }
     }
-    if (!flags.data.no_address) { sz += vb_encode_value_length(delta); }
-    if (flags.data.has_output) {
+    if (!ope.data.no_address) { sz += vb_encode_value_length(delta); }
+    if (ope.data.has_output) {
       sz += OutputTraits<output_t>::get_byte_value_size(*output);
     }
     if (need_state_output) {
-      if (flags.data.has_state_output) {
+      if (ope.data.has_state_output) {
         sz += OutputTraits<output_t>::get_byte_value_size(*state_output);
       }
     }
@@ -859,23 +859,23 @@ template <typename output_t, bool need_state_output> struct FstRecord {
 
   void write(std::ostream &os) {
     if (need_state_output) {
-      if (flags.data.has_state_output) {
+      if (ope.data.has_state_output) {
         OutputTraits<output_t>::write_byte_value(os, *state_output);
       }
     }
-    if (flags.data.has_output) {
+    if (ope.data.has_output) {
       OutputTraits<output_t>::write_byte_value(os, *output);
     }
-    if (!flags.data.no_address) {
+    if (!ope.data.no_address) {
       OutputTraits<uint32_t>::write_byte_value(os,
                                                static_cast<uint32_t>(delta));
     }
     if (need_state_output) {
-      if (flags.data.label_index == 0) { os << label; }
+      if (ope.data.label_index == 0) { os << label; }
     } else {
-      if (flags.data_witout_state_output.label_index == 0) { os << label; }
+      if (ope.data_witout_state_output.label_index == 0) { os << label; }
     }
-    os.write(reinterpret_cast<const char *>(&flags.byte), sizeof(flags.byte));
+    os.write(reinterpret_cast<const char *>(&ope.byte), sizeof(ope.byte));
   }
 };
 
@@ -931,9 +931,9 @@ public:
       auto need_jump_table = (i == 0) && (transition_count >= 8);
 
       FstRecord<output_t, need_state_output> rec;
-      rec.flags.data.no_address = no_address;
-      rec.flags.data.last_transition = last_transition;
-      rec.flags.data.final = t.final;
+      rec.ope.data.no_address = no_address;
+      rec.ope.data.last_transition = last_transition;
+      rec.ope.data.final = t.final;
 
       rec.delta = 0;
       size_t next_address = 0;
@@ -944,16 +944,16 @@ public:
         }
       }
 
-      rec.flags.data.has_output = false;
+      rec.ope.data.has_output = false;
       if (!OutputTraits<output_t>::empty(t.output)) {
-        rec.flags.data.has_output = true;
+        rec.ope.data.has_output = true;
         rec.output = &t.output;
       }
 
       if (need_state_output) {
-        rec.flags.data.has_state_output = false;
+        rec.ope.data.has_state_output = false;
         if (!OutputTraits<output_t>::empty(t.state_output)) {
-          rec.flags.data.has_state_output = true;
+          rec.ope.data.has_state_output = true;
           rec.state_output = &t.state_output;
         }
       }
@@ -966,19 +966,19 @@ public:
         rec.label = arc;
       }
       if (need_state_output) {
-        rec.flags.data.label_index = label_index;
+        rec.ope.data.label_index = label_index;
       } else {
-        rec.flags.data_witout_state_output.label_index = label_index;
+        rec.ope.data_witout_state_output.label_index = label_index;
       }
 
-      // When the flags byte happens to be the same as jump tag byte, change to
-      // use '.label' field instead. if (rec.flags.byte == 0xff ||
-      if (rec.flags.is_jump_tag_byte()) {
+      // When the ope byte happens to be the same as jump tag byte, change to
+      // use '.label' field instead. if (rec.ope.byte == 0xff ||
+      if (rec.ope.is_jump_tag_byte()) {
         rec.label = arc;
         if (need_state_output) {
-          rec.flags.data.label_index = 0;
+          rec.ope.data.label_index = 0;
         } else {
-          rec.flags.data_witout_state_output.label_index = 0;
+          rec.ope.data_witout_state_output.label_index = 0;
         }
       }
 
@@ -1019,7 +1019,7 @@ public:
 
           vb_encode_value_reverse(transition_count, os_);
 
-          auto jump_tag_byte = FstFlags::jump_tag_byte(need_two_bytes);
+          auto jump_tag_byte = FstOpe::jump_tag_byte(need_two_bytes);
           os_.write((char *)&jump_tag_byte, 1);
         }
       } else {
@@ -1314,11 +1314,11 @@ private:
       auto end = byte_code_ + address;
       auto p = end;
 
-      FstFlags flags;
-      flags.byte = *p--;
+      FstOpe ope;
+      ope.byte = *p--;
 
-      if (flags.is_jump_tag_byte()) {
-        auto jump_table_element_size = flags.jump_table_element_size();
+      if (ope.is_jump_tag_byte()) {
+        auto jump_table_element_size = ope.jump_table_element_size();
 
         size_t transition_count = 0;
         auto vb_len = vb_decode_value_reverse(p, transition_count);
@@ -1335,9 +1335,9 @@ private:
         auto found = lower_bound_index(0, transition_count, [&](size_t i) {
           auto p = base_address -
                    lookup_jump_table(jump_table, i, jump_table_element_size);
-          FstFlags flags;
-          flags.byte = *p--;
-          return get_arc(flags, p) < ch;
+          FstOpe ope;
+          ope.byte = *p--;
+          return get_arc(ope, p) < ch;
         });
 
         if (found < transition_count) {
@@ -1350,18 +1350,18 @@ private:
         continue;
       }
 
-      auto arc = get_arc(flags, p);
+      auto arc = get_arc(ope, p);
 
       size_t delta = 0;
-      if (!flags.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
+      if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
 
       auto output_suffix = OutputTraits<output_t>::initial_value();
-      if (flags.data.has_output) {
+      if (ope.data.has_output) {
         p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
       }
 
       if (header_.need_state_output) {
-        if (flags.data.has_state_output) {
+        if (ope.data.has_state_output) {
           p -= OutputTraits<output_t>::read_byte_value(p, state_output);
         }
       }
@@ -1369,7 +1369,7 @@ private:
       auto byte_size = std::distance(p, end);
 
       size_t next_address = 0;
-      if (!flags.data.no_address) {
+      if (!ope.data.no_address) {
         if (delta) { next_address = address - byte_size - delta + 1; }
       } else {
         next_address = address - byte_size;
@@ -1379,9 +1379,9 @@ private:
         std::cout << ch << "\t";
         std::cout << address << "\t";
         std::cout << arc << "\t";
-        std::cout << (flags.data.no_address ? "↑" : " ") << ' '
-                  << (flags.data.final ? '*' : ' ') << ' '
-                  << (flags.data.last_transition ? "‾" : " ") << "\t";
+        std::cout << (ope.data.no_address ? "↑" : " ") << ' '
+                  << (ope.data.final ? '*' : ' ') << ' '
+                  << (ope.data.last_transition ? "‾" : " ") << "\t";
 
         // Next Address
         if (next_address) {
@@ -1391,11 +1391,11 @@ private:
         }
         std::cout << "\t";
 
-        if (flags.data.has_output) { std::cout << output_suffix; }
+        if (ope.data.has_output) { std::cout << output_suffix; }
         std::cout << "\t";
 
         if (header_.need_state_output) {
-          if (flags.data.has_state_output) { std::cout << state_output; }
+          if (ope.data.has_state_output) { std::cout << state_output; }
         }
         std::cout << "\t";
 
@@ -1406,7 +1406,7 @@ private:
       if (ch == arc) {
         output += output_suffix;
         i++;
-        if (flags.data.final) {
+        if (ope.data.final) {
           if (prefixes) {
             if (OutputTraits<output_t>::empty(state_output)) {
               prefixes(i, output);
@@ -1430,7 +1430,7 @@ private:
         if (!next_address) { break; }
         address = next_address;
       } else {
-        if (flags.data.last_transition) { break; }
+        if (ope.data.last_transition) { break; }
         address -= byte_size;
       }
     }
@@ -1447,10 +1447,10 @@ private:
     }
   }
 
-  uint8_t get_arc(FstFlags flags, const char *&p) const {
+  uint8_t get_arc(FstOpe ope, const char *&p) const {
     auto index = header_.need_state_output
-                     ? flags.data.label_index
-                     : flags.data_witout_state_output.label_index;
+                     ? ope.data.label_index
+                     : ope.data_witout_state_output.label_index;
     return index == 0 ? *p-- : header_.char_index[index];
   }
 
