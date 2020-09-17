@@ -216,13 +216,13 @@ void usage() {
 
   commends:
     compile     source FST  - make fst byte code
-    decompile   FST         - decompile fst byte code
 
     search      FST [word]  - exact match search
     prefix      FST [word]  - common prefix search
     longest     FST [word]  - longest common prefix search
 
     dot         source      - convert to dot format
+    dump        source      - convert to byte code dump
 
   options:
     -f:  source file format ('csv' or 'tsv')
@@ -306,16 +306,18 @@ int main(int argc, char **argv) {
       ifstream fin(in_path);
       if (!fin) { return error(1); }
 
+      auto trie = args.get<bool>("trie", false);
+
       if (*output_type == "string") {
         return build<string>(
             fin, format,
-            [&](const auto &input) { return fst::dot<string>(input, cout); },
-            [&](const auto &input) { return fst::dot(input, cout); });
+            [&](const auto &input) { return fst::dot<string>(input, cout, trie); },
+            [&](const auto &input) { return fst::dot(input, cout, trie); });
       } else {
         return build<uint32_t>(
             fin, format,
-            [&](const auto &input) { return fst::dot<uint32_t>(input, cout); },
-            [&](const auto &input) { return fst::dot(input, cout); });
+            [&](const auto &input) { return fst::dot<uint32_t>(input, cout, trie); },
+            [&](const auto &input) { return fst::dot(input, cout, trie); });
       }
 
     } else if (cmd == "search" || cmd == "prefix" || cmd == "longest") {

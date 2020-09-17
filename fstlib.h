@@ -344,13 +344,6 @@ public:
 
     bool empty() const { return !size(); }
 
-    int get_index(char arc) const {
-      for (size_t i = 0; i < arcs.size(); i++) {
-        if (arcs[i] == arc) { return static_cast<int>(i); }
-      }
-      return -1;
-    }
-
     const output_t &output(char arc) const {
       auto idx = get_index(arc);
       assert(idx != -1);
@@ -403,6 +396,13 @@ public:
       auto idx = get_index(arc);
       auto &output = states_and_outputs[idx].output;
       OutputTraits<output_t>::prepend_value(output, val);
+    }
+
+    int get_index(char arc) const {
+      for (size_t i = 0; i < arcs.size(); i++) {
+        if (arcs[i] == arc) { return static_cast<int>(i); }
+      }
+      return -1;
     }
 
     friend class State;
@@ -516,9 +516,12 @@ private:
 
 template <typename output_t> class Dictionary {
 public:
-  Dictionary(StatePool<output_t> &state_pool) : state_pool_(state_pool) {}
+  Dictionary(StatePool<output_t> &state_pool, bool trie)
+      : state_pool_(state_pool), trie_(trie) {}
 
   State<output_t> *get(uint64_t key, State<output_t> *state) {
+    if (trie_) { return nullptr; }
+
     auto id = bucket_id(key);
     auto [first, second, third] = buckets_[id];
     if (first && *first == *state) { return first; }
@@ -542,6 +545,8 @@ public:
 
 private:
   StatePool<output_t> &state_pool_;
+  bool trie_;
+
   static const size_t kBucketCount = 10000;
   size_t bucket_id(uint64_t key) const { return key % kBucketCount; }
   std::tuple<State<output_t> *, State<output_t> *, State<output_t> *>
@@ -585,12 +590,12 @@ inline void get_common_prefix_and_word_suffix(const output_t &current_output,
 enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst_core(const Input &input,
-                                                Writer &writer) {
+inline std::pair<Result, size_t>
+build_fst_core(const Input &input, Writer &writer, bool trie) {
 
   StatePool<output_t> state_pool;
 
-  Dictionary<output_t> dictionary(state_pool);
+  Dictionary<output_t> dictionary(state_pool, trie);
   size_t next_state_id = 0;
   size_t line = 1;
   Result result = Result::Success;
@@ -727,7 +732,8 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
 //-----------------------------------------------------------------------------
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
+                                           bool trie = false) {
   return build_fst_core<output_t>(
       [&](const auto &feeder) {
         for (const auto &item : input) {
@@ -736,11 +742,12 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
           if (!feeder(word, output)) { break; }
         }
       },
-      writer);
+      writer, trie);
 }
 
 template <typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
+                                           bool trie = false) {
   uint32_t id = 0;
   return build_fst_core<uint32_t>(
       [&](const auto &feeder) {
@@ -748,7 +755,7 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
           if (!feeder(word, id++)) { break; }
         }
       },
-      writer);
+      writer, trie);
 }
 
 //-----------------------------------------------------------------------------
@@ -1095,7 +1102,8 @@ private:
   }
 
   template <typename T>
-  void write_jump_table(std::ostream &os, const std::vector<size_t>& jump_table) {
+  void write_jump_table(std::ostream &os,
+                        const std::vector<size_t> &jump_table) {
     std::vector<T> table(jump_table.size());
     for (size_t i = 0; i < jump_table.size(); i++) {
       table[i] = static_cast<T>(jump_table[i]);
@@ -1192,9 +1200,9 @@ public:
           label += arc;
           os_ << "  s" << state.id << "->s" << t.id << " [ label = \"" << label;
           if (!OutputTraits<output_t>::empty(t.output)) {
-            os_ << "/" << t.output;
+            os_ << " (" << t.output << ")";
           }
-          os_ << "\" ];" << std::endl;
+          os_ << "\" fontcolor = red ];" << std::endl;
         });
   }
 
@@ -1203,16 +1211,16 @@ private:
 };
 
 template <typename output_t, typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os, bool trie = false) {
 
   DotWriter<output_t> writer(os);
-  return build_fst<output_t>(input, writer);
+  return build_fst<output_t>(input, writer, trie);
 }
 
 template <typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os, bool trie = false) {
   DotWriter<uint32_t> writer(os);
-  return build_fst(input, writer);
+  return build_fst(input, writer, trie);
 }
 
 //-----------------------------------------------------------------------------
