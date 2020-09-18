@@ -181,7 +181,10 @@ void search_word(const T &byte_code, string_view cmd, bool verbose,
     output_t output;
     auto len =
         matcher.longest_common_prefix_search(word.data(), word.size(), output);
-    if (len > 0) { cout << word.substr(0, len) << ": " << output << endl; }
+    if (len > 0) {
+      ret = true;
+      cout << word.substr(0, len) << ": " << output << endl;
+    }
   }
   if (!ret) { cout << "not found..." << endl; }
 }
@@ -265,7 +268,6 @@ int main(int argc, char **argv) {
       format = "csv";
     }
   }
-  cerr << "format is " << format << ::endl;
 
   try {
     if (cmd == "compile") {
