@@ -33,7 +33,8 @@ namespace fst {
 
 std::pair<Result, size_t> compile<uint32_t>(
   const std::vector<std::string, uint32_t> &input,
-  std::ostream &os
+  std::ostream &os,
+  bool sorted
  );
 
 std::pair<Result, size_t> compile<std::string>(
@@ -43,7 +44,8 @@ std::pair<Result, size_t> compile<std::string>(
 
 std::pair<Result, size_t> compile(
   const std::vector<std::string> &input,
-  std::ostream &os
+  std::ostream &os,
+  bool sorted
 );
 
 template <typename output_t = uint32_t> class Matcher {
@@ -52,7 +54,7 @@ public:
 
   bool exact_match_search(
     const char *str, size_t len,
-    output_t &output
+    bool sorted
   ) const;
 
   bool common_prefix_search(
@@ -72,25 +74,27 @@ public:
 ## API usage
 
 ```cpp
-const std::vector<std::pair<std::string, std::string>> keywords = {
+const std::vector<std::pair<std::string, std::string>> items = {
   {"hello!", "こんにちは!"},
-  {"hello world!", "こんにちは世界!"},
+  {"hello world!", "こんにちは世界!"}, // incorrect sort order entry...
   {"world!", "世界!"},
 };
-std::sort(keywords.begin(), keywords.end());
 
 std::stringstream out;
-fst::compile<std::string>(keywords, out);
+auto sorted = false; // ask fst::compile to sort entries
+fst::compile<std::string>(items, out, sorted);
 
 const auto& byte_code = out.str();
-fst::Matcher<std::string>(byte_code_.data(), byte_code_.size());
+fst::Matcher<std::string> matcher(byte_code.data(), byte_code.size());
 
-const std::string s = "hello world! example.";
-std::string output;
-auto prefix_len = matcher_->longest_common_prefix_search(s.data(), s.length(), output);
+if (matcher) {
+  const std::string s = "hello world! example.";
+  std::string output;
+  auto prefix_len = matcher.longest_common_prefix_search(s.data(), s.length(), output);
 
-assert(prefix_len == 12);
-assert(output == "こんにちは世界!");
+  assert(prefix_len == 12);
+  assert(output == "こんにちは世界!");
+}
 ```
 
 ### Try out a demo on Repl.it!
