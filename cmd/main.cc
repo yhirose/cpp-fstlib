@@ -173,10 +173,9 @@ void search_word(const T &byte_code, string_view cmd, bool verbose,
           cout << word.substr(0, len) << ": " << output << endl;
         });
   } else { // "longest"
-    size_t len = 0;
     output_t output;
-    ret = matcher.longest_common_prefix_search(word.data(), word.size(), len, output);
-    if (ret) {
+    auto len = matcher.longest_common_prefix_search(word.data(), word.size(), output);
+    if (len > 0) {
       cout << word.substr(0, len) << ": " << output << endl;
     }
   }

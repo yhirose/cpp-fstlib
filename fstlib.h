@@ -13,12 +13,14 @@
 #include <cassert>
 #include <cstring>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <list>
 #include <memory>
 #include <numeric>
 #include <queue>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -180,6 +182,21 @@ inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
   h = (h << 32) | h2;
 
   return h;
+}
+
+//-----------------------------------------------------------------------------
+// char_to_string
+//-----------------------------------------------------------------------------
+
+inline std::string char_to_string(char arc) {
+  std::stringstream ss;
+  if (arc < 0x20) {
+    ss << std::hex << std::setfill('0') << std::setw(2) << (int)(uint8_t)arc
+       << std::dec;
+  } else {
+    ss << arc;
+  }
+  return ss.str();
 }
 
 //-----------------------------------------------------------------------------
@@ -832,9 +849,11 @@ template <typename output_t, bool need_state_output> struct FstRecord {
                                                static_cast<uint32_t>(delta));
     }
     if (need_state_output) {
-      if (ope.data.label_index == 0) { os << label; }
+      if (ope.data.label_index == 0) { os.write(&label, 1); }
     } else {
-      if (ope.data_witout_state_output.label_index == 0) { os << label; }
+      if (ope.data_witout_state_output.label_index == 0) {
+        os.write(&label, 1);
+      }
     }
     os.write(reinterpret_cast<const char *>(&ope.byte), sizeof(ope.byte));
   }
@@ -1043,12 +1062,7 @@ public:
         std::cout << address_table_.back() << "\t";
 
         // Arc
-        if (arc < 0x20) {
-          std::cout << std::hex << (int)(uint8_t)arc << std::dec;
-        } else {
-          std::cout << arc;
-        }
-        std::cout << "\t";
+        std::cout << char_to_string(arc) << "\t";
 
         // Flags
         std::cout << (no_address ? "↑" : " ") << ' ' << (t.final ? '*' : ' ')
@@ -1151,7 +1165,8 @@ private:
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-                                         bool sort_arcs, bool verbose) {
+                                         bool sort_arcs = true,
+                                         bool verbose = false) {
   FstWriter<output_t> writer(os, false, sort_arcs, verbose,
                              [&](const auto &feeder) {
                                for (const auto &[word, _] : input) {
@@ -1163,7 +1178,8 @@ inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
 
 template <typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-                                         bool sort_arcs, bool verbose) {
+                                         bool sort_arcs = true,
+                                         bool verbose = false) {
   FstWriter<uint32_t, false> writer(os, false, sort_arcs, verbose,
                                     [&](const auto &feeder) {
                                       for (const auto &word : input) {
@@ -1175,7 +1191,8 @@ inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
-                                      bool sort_arcs, bool verbose) {
+                                      bool sort_arcs = true,
+                                      bool verbose = false) {
   FstWriter<output_t> writer(os, true, sort_arcs, verbose,
                              [&](const auto &feeder) {
                                for (const auto &[word, _] : input) {
@@ -1187,7 +1204,8 @@ inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
 
 template <typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
-                                      bool sort_arcs, bool verbose) {
+                                      bool sort_arcs = true,
+                                      bool verbose = false) {
   FstWriter<uint32_t> writer(os, true, sort_arcs, verbose,
                              [&](const auto &feeder) {
                                for (const auto &word : input) {
@@ -1275,7 +1293,7 @@ inline OutputType get_output_type(const char *byte_code,
 // Matcher
 //-----------------------------------------------------------------------------
 
-template <typename output_t> class Matcher {
+template <typename output_t = uint32_t> class Matcher {
 public:
   Matcher(const char *byte_code, size_t byte_code_size)
       : byte_code_(byte_code), byte_code_size_(byte_code_size) {
@@ -1303,19 +1321,31 @@ public:
     return match(str, len, [&](const auto &_) { output = _; });
   }
 
+  bool exact_match_search(const char *str, size_t len) const {
+    return match(str, len);
+  }
+
   bool common_prefix_search(
       const char *str, size_t len,
       std::function<void(size_t, const output_t &)> prefixes) const {
     return match(str, len, nullptr, prefixes);
   }
 
-  bool longest_common_prefix_search(const char *str, size_t len,
-                                    size_t &prefix_len,
-                                    output_t &output) const {
-    return common_prefix_search(str, len, [&](size_t len, const auto &_output) {
-      prefix_len = len;
-      output = _output;
-    });
+  size_t longest_common_prefix_search(const char *str, size_t len,
+                                      output_t &output) const {
+    size_t prefix_len;
+    if (common_prefix_search(str, len, [&](size_t len, const auto &_output) {
+          prefix_len = len;
+          output = _output;
+        })) {
+      return prefix_len;
+    }
+    return 0;
+  }
+
+  size_t longest_common_prefix_search(const char *str, size_t len) const {
+    output_t _;
+    return longest_common_prefix_search(str, len, _);
   }
 
 private:
@@ -1404,7 +1434,7 @@ private:
       }
 
       if (trace_) {
-        std::cout << ch << "\t";
+        std::cout << char_to_string(ch) << "\t";
         std::cout << address << "\t";
         std::cout << arc << "\t";
         std::cout << (ope.data.no_address ? "↑" : " ") << ' '
@@ -1483,7 +1513,7 @@ private:
   }
 
   const char *byte_code_;
-  size_t byte_code_size_;
+  const size_t byte_code_size_;
 
   FstHeader header_;
   bool is_valid_ = false;
