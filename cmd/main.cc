@@ -251,7 +251,6 @@ int main(int argc, char **argv) {
 
   auto opt_format = args.get<string>("f");
   auto opt_output_type = args.get<string>("t");
-  auto opt_sort_arcs = !args.get<bool>("no-sort", false);
   auto opt_verbose = args.get<bool>("v", false);
   auto opt_sorted = args.get<bool>("sorted", false);
 
@@ -284,8 +283,7 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<string>(input, fout, opt_sorted,
-                                          opt_sort_arcs, opt_verbose);
+              return fst::compile<string>(input, fout, opt_sorted, opt_verbose);
             },
             [&](const auto &input) {
               return make_pair(fst::Result::Success, 0);
@@ -295,11 +293,10 @@ int main(int argc, char **argv) {
             fin, format,
             [&](const auto &input) {
               return fst::compile<uint32_t>(input, fout, opt_sorted,
-                                            opt_sort_arcs, opt_verbose);
+                                            opt_verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, opt_sorted, opt_sort_arcs,
-                                  opt_verbose);
+              return fst::compile(input, fout, opt_sorted, opt_verbose);
             });
       }
 
@@ -311,8 +308,7 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<string>(input, cout, opt_sorted, opt_sort_arcs,
-                                       opt_verbose);
+              return fst::dump<string>(input, cout, opt_sorted, opt_verbose);
             },
             [&](const auto &input) {
               return make_pair(fst::Result::Success, 0);
@@ -321,12 +317,10 @@ int main(int argc, char **argv) {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<uint32_t>(input, cout, opt_sorted, opt_sort_arcs,
-                                         opt_verbose);
+              return fst::dump<uint32_t>(input, cout, opt_sorted, opt_verbose);
             },
             [&](const auto &input) {
-              return fst::dump(input, cout, opt_sorted, opt_sort_arcs,
-                               opt_verbose);
+              return fst::dump(input, cout, opt_sorted, opt_verbose);
             });
       }
 
@@ -387,8 +381,8 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              auto ret = fst::compile<string>(input, ss, opt_sorted,
-                                              opt_sort_arcs, opt_verbose);
+              auto ret =
+                  fst::compile<string>(input, ss, opt_sorted, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
@@ -401,16 +395,15 @@ int main(int argc, char **argv) {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              auto ret = fst::compile<uint32_t>(input, ss, opt_sorted,
-                                                opt_sort_arcs, opt_verbose);
+              auto ret =
+                  fst::compile<uint32_t>(input, ss, opt_sorted, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, opt_sorted, opt_sort_arcs,
-                                      opt_verbose);
+              auto ret = fst::compile(input, ss, opt_sorted, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }

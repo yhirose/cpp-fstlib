@@ -734,7 +734,8 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
 //-----------------------------------------------------------------------------
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer, bool sorted) {
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
+                                           bool sorted) {
   return build_fst_core<output_t>(
       [&](const auto &feeder) {
         if (sorted) {
@@ -921,9 +922,8 @@ struct FstHeader {
 template <typename output_t, bool need_state_output = true> class FstWriter {
 public:
   template <typename Input>
-  FstWriter(std::ostream &os, bool dump, bool sort_arcs, bool verbose,
-            const Input &input)
-      : os_(os), dump_(dump), sort_arcs_(sort_arcs), verbose_(verbose) {
+  FstWriter(std::ostream &os, bool dump, bool verbose, const Input &input)
+      : os_(os), dump_(dump), verbose_(verbose) {
 
     initialize_char_index_table(input);
 
@@ -964,7 +964,7 @@ public:
 
     size_t sort_indexes[256];
 
-    if (sort_arcs_ && !need_jump_table) {
+    if (!need_jump_table) {
       uint16_t keys[256];
       for (auto i = 0u; i < arcs.size(); i++) {
         sort_indexes[i] = i;
@@ -980,7 +980,7 @@ public:
     for (auto ri = arcs.size(); ri > 0; ri--) {
       auto i = ri - 1;
 
-      auto arc_i = (sort_arcs_ && !need_jump_table) ? sort_indexes[i] : i;
+      auto arc_i = !need_jump_table ? sort_indexes[i] : i;
       auto arc = arcs[arc_i];
       const auto &t = states_and_outputs[arc_i];
 
@@ -1134,7 +1134,7 @@ private:
       char prev = 0;
       for (auto ch : word) {
         char_count_[ch]++;
-        if (sort_arcs_) { bigram_count_[bigram_key(prev, ch)]++; }
+        bigram_count_[bigram_key(prev, ch)]++;
         prev = ch;
       }
     });
@@ -1174,7 +1174,6 @@ private:
 
   std::ostream &os_;
   size_t dump_ = true;
-  size_t sort_arcs_ = true;
   size_t verbose_ = true;
 
   std::unordered_map<char, size_t> char_count_;
@@ -1193,23 +1192,19 @@ private:
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-    bool sorted,
-                                         bool sort_arcs = true,
-                                         bool verbose = false) {
-  FstWriter<output_t> writer(os, false, sort_arcs, verbose,
-                             [&](const auto &feeder) {
-                               for (const auto &[word, _] : input) {
-                                 feeder(word);
-                               }
-                             });
+                                         bool sorted, bool verbose = false) {
+  FstWriter<output_t> writer(os, false, verbose, [&](const auto &feeder) {
+    for (const auto &[word, _] : input) {
+      feeder(word);
+    }
+  });
   return build_fst<output_t>(input, writer, sorted);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-                                         bool sorted, bool sort_arcs = true,
-                                         bool verbose = false) {
-  FstWriter<uint32_t, false> writer(os, false, sort_arcs, verbose,
+                                         bool sorted, bool verbose = false) {
+  FstWriter<uint32_t, false> writer(os, false, verbose,
                                     [&](const auto &feeder) {
                                       for (const auto &word : input) {
                                         feeder(word);
@@ -1220,28 +1215,23 @@ inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
-    bool sorted,
-                                      bool sort_arcs = true,
-                                      bool verbose = false) {
-  FstWriter<output_t> writer(os, true, sort_arcs, verbose,
-                             [&](const auto &feeder) {
-                               for (const auto &[word, _] : input) {
-                                 feeder(word);
-                               }
-                             });
+                                      bool sorted, bool verbose = false) {
+  FstWriter<output_t> writer(os, true, verbose, [&](const auto &feeder) {
+    for (const auto &[word, _] : input) {
+      feeder(word);
+    }
+  });
   return build_fst<output_t>(input, writer, sorted);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
-                                      bool sorted, bool sort_arcs = true,
-                                      bool verbose = false) {
-  FstWriter<uint32_t> writer(os, true, sort_arcs, verbose,
-                             [&](const auto &feeder) {
-                               for (const auto &word : input) {
-                                 feeder(word);
-                               }
-                             });
+                                      bool sorted, bool verbose = false) {
+  FstWriter<uint32_t> writer(os, true, verbose, [&](const auto &feeder) {
+    for (const auto &word : input) {
+      feeder(word);
+    }
+  });
   return build_fst(input, writer, sorted);
 }
 
@@ -1287,7 +1277,8 @@ private:
 };
 
 template <typename output_t, typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os, bool sorted) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
+                                     bool sorted) {
 
   DotWriter<output_t> writer(os);
   return build_fst<output_t>(input, writer, sorted);
