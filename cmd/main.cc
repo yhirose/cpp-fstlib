@@ -30,6 +30,11 @@ vector<string> split(const string &input, char delimiter) {
   return result;
 }
 
+bool ends_with(std::string const &value, std::string const &ending) {
+  if (ending.size() > value.size()) return false;
+  return std::equal(ending.rbegin(), ending.rend(), value.rbegin());
+}
+
 template <typename output_t>
 vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
   vector<pair<string, output_t>> input;
@@ -141,17 +146,17 @@ void regression_test(const vector<string> &input, const string &byte_code) {
   }
 }
 
-template <typename output_t, typename T, typename U, typename V>
-int build(istream &is, T format, U fn1, V fn2) {
+template <typename output_t, typename T, typename U>
+int build(istream &is, const string &format, T fn1, U fn2) {
   fst::Result result;
   size_t line;
 
-  if (format) {
-    auto input = load_input<output_t>(is, *format);
-    tie(result, line) = fn1(input);
-  } else {
+  if (format.empty()) {
     auto input = load_input(is);
     tie(result, line) = fn2(input);
+  } else {
+    auto input = load_input<output_t>(is, format);
+    tie(result, line) = fn1(input);
   }
 
   if (result == fst::Result::Success) { return 0; }
@@ -174,10 +179,9 @@ void search_word(const T &byte_code, string_view cmd, bool verbose,
         });
   } else { // "longest"
     output_t output;
-    auto len = matcher.longest_common_prefix_search(word.data(), word.size(), output);
-    if (len > 0) {
-      cout << word.substr(0, len) << ": " << output << endl;
-    }
+    auto len =
+        matcher.longest_common_prefix_search(word.data(), word.size(), output);
+    if (len > 0) { cout << word.substr(0, len) << ": " << output << endl; }
   }
   if (!ret) { cout << "not found..." << endl; }
 }
@@ -243,13 +247,25 @@ int main(int argc, char **argv) {
 
   if (args.positional().size() < 2) { return error(1); }
 
-  auto format = args.get<string>("f");
-  auto output_type = args.get<string>("t");
-  bool sort_arcs = !args.get<bool>("no-sort", false);
-  auto verbose = args.get<bool>("v", false);
+  auto opt_format = args.get<string>("f");
+  auto opt_output_type = args.get<string>("t");
+  auto opt_sort_arcs = !args.get<bool>("no-sort", false);
+  auto opt_verbose = args.get<bool>("v", false);
 
   auto cmd = args.positional().at(0);
   const string in_path{args.positional().at(1)};
+
+  string format;
+  if (opt_format) {
+    format = *opt_format;
+  } else {
+    if (ends_with(in_path, ".csv")) {
+      format = "csv";
+    } else if (ends_with(in_path, ".csv")) {
+      format = "csv";
+    }
+  }
+  cerr << "format is " << format << ::endl;
 
   try {
     if (cmd == "compile") {
@@ -262,23 +278,25 @@ int main(int argc, char **argv) {
       ofstream fout(out_path, ios_base::binary);
       if (!fout) { return error(1); }
 
-      if (*output_type == "string") {
+      if (*opt_output_type == "string") {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<string>(input, fout, sort_arcs, verbose);
+              return fst::compile<string>(input, fout, opt_sort_arcs,
+                                          opt_verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, sort_arcs, verbose);
+              return fst::compile(input, fout, opt_sort_arcs, opt_verbose);
             });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<uint32_t>(input, fout, sort_arcs, verbose);
+              return fst::compile<uint32_t>(input, fout, opt_sort_arcs,
+                                            opt_verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, sort_arcs, verbose);
+              return fst::compile(input, fout, opt_sort_arcs, opt_verbose);
             });
       }
 
@@ -286,20 +304,25 @@ int main(int argc, char **argv) {
       ifstream fin(in_path);
       if (!fin) { return error(1); }
 
-      if (*output_type == "string") {
+      if (*opt_output_type == "string") {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<string>(input, cout, sort_arcs, verbose);
+              return fst::dump<string>(input, cout, opt_sort_arcs, opt_verbose);
             },
-            [&](const auto &input) { return fst::dump(input, cout, sort_arcs, verbose); });
+            [&](const auto &input) {
+              return fst::dump(input, cout, opt_sort_arcs, opt_verbose);
+            });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<uint32_t>(input, cout, sort_arcs, verbose);
+              return fst::dump<uint32_t>(input, cout, opt_sort_arcs,
+                                         opt_verbose);
             },
-            [&](const auto &input) { return fst::dump(input, cout, sort_arcs, verbose); });
+            [&](const auto &input) {
+              return fst::dump(input, cout, opt_sort_arcs, opt_verbose);
+            });
       }
 
     } else if (cmd == "dot") {
@@ -308,15 +331,19 @@ int main(int argc, char **argv) {
 
       auto trie = args.get<bool>("trie", false);
 
-      if (*output_type == "string") {
+      if (*opt_output_type == "string") {
         return build<string>(
             fin, format,
-            [&](const auto &input) { return fst::dot<string>(input, cout, trie); },
+            [&](const auto &input) {
+              return fst::dot<string>(input, cout, trie);
+            },
             [&](const auto &input) { return fst::dot(input, cout, trie); });
       } else {
         return build<uint32_t>(
             fin, format,
-            [&](const auto &input) { return fst::dot<uint32_t>(input, cout, trie); },
+            [&](const auto &input) {
+              return fst::dot<uint32_t>(input, cout, trie);
+            },
             [&](const auto &input) { return fst::dot(input, cout, trie); });
       }
 
@@ -331,15 +358,15 @@ int main(int argc, char **argv) {
       if (args.positional().size() > 2) {
         auto word = args.positional().at(2);
         if (type == fst::OutputType::uint32_t) {
-          search<uint32_t>(byte_code, cmd, verbose, word);
+          search<uint32_t>(byte_code, cmd, opt_verbose, word);
         } else if (type == fst::OutputType::string) {
-          search<string>(byte_code, cmd, verbose, word);
+          search<string>(byte_code, cmd, opt_verbose, word);
         }
       } else {
         if (type == fst::OutputType::uint32_t) {
-          search<uint32_t>(byte_code, cmd, verbose);
+          search<uint32_t>(byte_code, cmd, opt_verbose);
         } else if (type == fst::OutputType::string) {
-          search<string>(byte_code, cmd, verbose);
+          search<string>(byte_code, cmd, opt_verbose);
         }
       }
 
@@ -349,18 +376,19 @@ int main(int argc, char **argv) {
 
       stringstream ss;
 
-      if (*output_type == "string") {
+      if (*opt_output_type == "string") {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              auto ret = fst::compile<string>(input, ss, sort_arcs, verbose);
+              auto ret =
+                  fst::compile<string>(input, ss, opt_sort_arcs, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, sort_arcs, verbose);
+              auto ret = fst::compile(input, ss, opt_sort_arcs, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
@@ -370,14 +398,15 @@ int main(int argc, char **argv) {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              auto ret = fst::compile<uint32_t>(input, ss, sort_arcs, verbose);
+              auto ret =
+                  fst::compile<uint32_t>(input, ss, opt_sort_arcs, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, sort_arcs, verbose);
+              auto ret = fst::compile(input, ss, opt_sort_arcs, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
