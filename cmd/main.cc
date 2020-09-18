@@ -225,7 +225,6 @@ void usage() {
 
   options:
     -f:  source file format ('csv' or 'tsv')
-    -s:  sort arcs
     -t:  output type ('uint32_t' or 'string')
     -v:  verbose output
 
@@ -246,7 +245,7 @@ int main(int argc, char **argv) {
 
   auto format = args.get<string>("f");
   auto output_type = args.get<string>("t");
-  auto sort_arcs = args.get<bool>("s", false);
+  bool sort_arcs = !args.get<bool>("no-sort", false);
   auto verbose = args.get<bool>("v", false);
 
   auto cmd = args.positional().at(0);
