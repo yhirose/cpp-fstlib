@@ -14,16 +14,16 @@ This library uses the algorithm "[Minimal Acyclic Subsequential Transducers](htt
 > ./cmd/fst compile /usr/share/dict/words words.fst
 
 > ./cmd/fst search words.fst hello
-98742
+83713
 
 > ./cmd/fst prefix words.fst helloworld
-h: 96806
-he: 98099
-hell: 98711
-hello: 98742
+h: 81421
+he: 82951
+hell: 83657
+hello: 83713
 
 > ./cmd/fst longest words.fst helloworld
-hello: 98742
+hello: 83713
 ```
 
 ## API reference
@@ -35,7 +35,7 @@ std::pair<Result, size_t> compile<uint32_t>(
   const std::vector<std::string, uint32_t> &input,
   std::ostream &os,
   bool sorted
- );
+);
 
 std::pair<Result, size_t> compile<std::string>(
   const std::vector<std::string, std::string> &input,
@@ -43,7 +43,7 @@ std::pair<Result, size_t> compile<std::string>(
 );
 
 std::pair<Result, size_t> compile(
-  const std::vector<std::string> &input,
+  const std::vector<std::string> &key_only_input,
   std::ostream &os,
   bool sorted
 );
@@ -52,6 +52,8 @@ template <typename output_t = uint32_t> class Matcher {
 public:
   Matcher(const char *byte_code, size_t byte_code_size);
 
+  operator bool() const;
+
   bool exact_match_search(
     const char *str, size_t len,
     bool sorted
@@ -59,10 +61,10 @@ public:
 
   bool common_prefix_search(
     const char *str, size_t len,
-    std::function<void(size_t, const output_t &)> prefixes
+    std::function<void(size_t match_len, const output_t &output)> prefixes
   ) const;
 
-  size_t longest_common_prefix_search(
+  size_t /* match_len */ longest_common_prefix_search(
     const char *str, size_t len,
     output_t &output
   ) const;
