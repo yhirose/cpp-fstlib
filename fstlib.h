@@ -1333,7 +1333,7 @@ public:
     is_valid_ = true;
   }
 
-  operator bool() { return is_valid_; }
+  operator bool() const { return is_valid_; }
 
   void set_trace(bool on) { trace_ = on; }
 
