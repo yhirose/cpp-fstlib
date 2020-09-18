@@ -734,25 +734,59 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
 //-----------------------------------------------------------------------------
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer, bool sorted) {
   return build_fst_core<output_t>(
       [&](const auto &feeder) {
-        for (const auto &item : input) {
-          const auto &word = item.first;
-          const auto &output = item.second;
-          if (!feeder(word, output)) { break; }
+        if (sorted) {
+          for (const auto &item : input) {
+            const auto &word = item.first;
+            const auto &output = item.second;
+            if (!feeder(word, output)) { break; }
+          }
+        } else {
+          std::vector<std::pair<std::string, output_t>> sorted_input;
+
+          for (const auto &item : input) {
+            sorted_input.push_back(item);
+          }
+
+          std::sort(
+              sorted_input.begin(), sorted_input.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+
+          for (const auto &[word, output] : sorted_input) {
+            if (!feeder(word, output)) { break; }
+          }
         }
       },
       writer);
 }
 
 template <typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
-  uint32_t id = 0;
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
+                                           bool sorted) {
   return build_fst_core<uint32_t>(
       [&](const auto &feeder) {
-        for (const auto &word : input) {
-          if (!feeder(word, id++)) { break; }
+        if (sorted) {
+          uint32_t id = 0;
+          for (const auto &word : input) {
+            if (!feeder(word, id++)) { break; }
+          }
+        } else {
+          std::vector<std::pair<std::string, uint32_t>> sorted_input;
+
+          uint32_t id = 0;
+          for (const auto &word : input) {
+            sorted_input.push_back(std::make_pair(word, id++));
+          }
+
+          std::sort(
+              sorted_input.begin(), sorted_input.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+
+          for (const auto &[word, id] : sorted_input) {
+            if (!feeder(word, id)) { break; }
+          }
         }
       },
       writer);
@@ -1159,6 +1193,7 @@ private:
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
+    bool sorted,
                                          bool sort_arcs = true,
                                          bool verbose = false) {
   FstWriter<output_t> writer(os, false, sort_arcs, verbose,
@@ -1167,12 +1202,12 @@ inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                  feeder(word);
                                }
                              });
-  return build_fst<output_t>(input, writer);
+  return build_fst<output_t>(input, writer, sorted);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-                                         bool sort_arcs = true,
+                                         bool sorted, bool sort_arcs = true,
                                          bool verbose = false) {
   FstWriter<uint32_t, false> writer(os, false, sort_arcs, verbose,
                                     [&](const auto &feeder) {
@@ -1180,11 +1215,12 @@ inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                         feeder(word);
                                       }
                                     });
-  return build_fst(input, writer);
+  return build_fst(input, writer, sorted);
 }
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
+    bool sorted,
                                       bool sort_arcs = true,
                                       bool verbose = false) {
   FstWriter<output_t> writer(os, true, sort_arcs, verbose,
@@ -1193,12 +1229,12 @@ inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
                                  feeder(word);
                                }
                              });
-  return build_fst<output_t>(input, writer);
+  return build_fst<output_t>(input, writer, sorted);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
-                                      bool sort_arcs = true,
+                                      bool sorted, bool sort_arcs = true,
                                       bool verbose = false) {
   FstWriter<uint32_t> writer(os, true, sort_arcs, verbose,
                              [&](const auto &feeder) {
@@ -1206,7 +1242,7 @@ inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
                                  feeder(word);
                                }
                              });
-  return build_fst(input, writer);
+  return build_fst(input, writer, sorted);
 }
 
 //-----------------------------------------------------------------------------
@@ -1251,16 +1287,17 @@ private:
 };
 
 template <typename output_t, typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os, bool sorted) {
 
   DotWriter<output_t> writer(os);
-  return build_fst<output_t>(input, writer);
+  return build_fst<output_t>(input, writer, sorted);
 }
 
 template <typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
+                                     bool sorted) {
   DotWriter<uint32_t> writer(os);
-  return build_fst(input, writer);
+  return build_fst(input, writer, sorted);
 }
 
 //-----------------------------------------------------------------------------

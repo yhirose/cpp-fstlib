@@ -48,8 +48,6 @@ vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
                                    static_cast<uint32_t>(input.size())));
     }
   }
-  sort(input.begin(), input.end(),
-       [](const auto &a, const auto &b) { return a.first < b.first; });
   return input;
 }
 
@@ -72,7 +70,6 @@ vector<string> load_input(istream &fin) {
   while (getline(fin, line)) {
     input.emplace_back(line);
   }
-  sort(input.begin(), input.end());
   return input;
 }
 
@@ -152,6 +149,7 @@ int build(istream &is, const string &format, T fn1, U fn2) {
   size_t line;
 
   if (format.empty()) {
+    if (std::is_same<output_t, std::string>::value) { return 1; }
     auto input = load_input(is);
     tie(result, line) = fn2(input);
   } else {
@@ -231,9 +229,10 @@ void usage() {
     dump        source      - convert to byte code dump
 
   options:
-    -f:  source file format ('csv' or 'tsv')
-    -t:  output type ('uint32_t' or 'string')
-    -v:  verbose output
+    -f          source file format ('csv' or 'tsv')
+    -t          output type ('uint32_t' or 'string')
+    -v          verbose output
+    -sorted     skip sorting input
 
   note:
     On macOS, you can show FST graph with `./fst dot source | dot -T png | open -a Preview.app -f`.
@@ -254,7 +253,7 @@ int main(int argc, char **argv) {
   auto opt_output_type = args.get<string>("t");
   auto opt_sort_arcs = !args.get<bool>("no-sort", false);
   auto opt_verbose = args.get<bool>("v", false);
-  // auto opt_sorted = args.get<bool>("sorted", false);
+  auto opt_sorted = args.get<bool>("sorted", false);
 
   auto cmd = args.positional().at(0);
   const string in_path{args.positional().at(1)};
@@ -285,21 +284,22 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<string>(input, fout, opt_sort_arcs,
-                                          opt_verbose);
+              return fst::compile<string>(input, fout, opt_sorted,
+                                          opt_sort_arcs, opt_verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, opt_sort_arcs, opt_verbose);
+              return make_pair(fst::Result::Success, 0);
             });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<uint32_t>(input, fout, opt_sort_arcs,
-                                            opt_verbose);
+              return fst::compile<uint32_t>(input, fout, opt_sorted,
+                                            opt_sort_arcs, opt_verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, opt_sort_arcs, opt_verbose);
+              return fst::compile(input, fout, opt_sorted, opt_sort_arcs,
+                                  opt_verbose);
             });
       }
 
@@ -311,20 +311,22 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<string>(input, cout, opt_sort_arcs, opt_verbose);
+              return fst::dump<string>(input, cout, opt_sorted, opt_sort_arcs,
+                                       opt_verbose);
             },
             [&](const auto &input) {
-              return fst::dump(input, cout, opt_sort_arcs, opt_verbose);
+              return make_pair(fst::Result::Success, 0);
             });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<uint32_t>(input, cout, opt_sort_arcs,
+              return fst::dump<uint32_t>(input, cout, opt_sorted, opt_sort_arcs,
                                          opt_verbose);
             },
             [&](const auto &input) {
-              return fst::dump(input, cout, opt_sort_arcs, opt_verbose);
+              return fst::dump(input, cout, opt_sorted, opt_sort_arcs,
+                               opt_verbose);
             });
       }
 
@@ -336,16 +338,20 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::dot<string>(input, cout);
+              return fst::dot<string>(input, cout, opt_sorted);
             },
-            [&](const auto &input) { return fst::dot(input, cout); });
+            [&](const auto &input) {
+              return make_pair(fst::Result::Success, 0);
+            });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::dot<uint32_t>(input, cout);
+              return fst::dot<uint32_t>(input, cout, opt_sorted);
             },
-            [&](const auto &input) { return fst::dot(input, cout); });
+            [&](const auto &input) {
+              return fst::dot(input, cout, opt_sorted);
+            });
       }
 
     } else if (cmd == "search" || cmd == "prefix" || cmd == "longest") {
@@ -381,33 +387,30 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              auto ret =
-                  fst::compile<string>(input, ss, opt_sort_arcs, opt_verbose);
+              auto ret = fst::compile<string>(input, ss, opt_sorted,
+                                              opt_sort_arcs, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, opt_sort_arcs, opt_verbose);
-              if (ret.first == fst::Result::Success) {
-                regression_test(input, ss.str());
-              }
-              return ret;
+              return make_pair(fst::Result::Success, 0);
             });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              auto ret =
-                  fst::compile<uint32_t>(input, ss, opt_sort_arcs, opt_verbose);
+              auto ret = fst::compile<uint32_t>(input, ss, opt_sorted,
+                                                opt_sort_arcs, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, opt_sort_arcs, opt_verbose);
+              auto ret = fst::compile(input, ss, opt_sorted, opt_sort_arcs,
+                                      opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str());
               }
