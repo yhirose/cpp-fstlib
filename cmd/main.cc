@@ -254,6 +254,7 @@ int main(int argc, char **argv) {
   auto opt_output_type = args.get<string>("t");
   auto opt_sort_arcs = !args.get<bool>("no-sort", false);
   auto opt_verbose = args.get<bool>("v", false);
+  // auto opt_sorted = args.get<bool>("sorted", false);
 
   auto cmd = args.positional().at(0);
   const string in_path{args.positional().at(1)};
@@ -331,22 +332,20 @@ int main(int argc, char **argv) {
       ifstream fin(in_path);
       if (!fin) { return error(1); }
 
-      auto trie = args.get<bool>("trie", false);
-
       if (*opt_output_type == "string") {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::dot<string>(input, cout, trie);
+              return fst::dot<string>(input, cout);
             },
-            [&](const auto &input) { return fst::dot(input, cout, trie); });
+            [&](const auto &input) { return fst::dot(input, cout); });
       } else {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::dot<uint32_t>(input, cout, trie);
+              return fst::dot<uint32_t>(input, cout);
             },
-            [&](const auto &input) { return fst::dot(input, cout, trie); });
+            [&](const auto &input) { return fst::dot(input, cout); });
       }
 
     } else if (cmd == "search" || cmd == "prefix" || cmd == "longest") {

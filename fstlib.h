@@ -520,12 +520,9 @@ private:
 
 template <typename output_t> class Dictionary {
 public:
-  Dictionary(StatePool<output_t> &state_pool, bool trie)
-      : state_pool_(state_pool), trie_(trie) {}
+  Dictionary(StatePool<output_t> &state_pool) : state_pool_(state_pool) {}
 
   State<output_t> *get(uint64_t key, State<output_t> *state) {
-    if (trie_) { return nullptr; }
-
     auto id = bucket_id(key);
     auto [first, second, third] = buckets_[id];
     if (first && *first == *state) { return first; }
@@ -549,7 +546,6 @@ public:
 
 private:
   StatePool<output_t> &state_pool_;
-  bool trie_;
 
   static const size_t kBucketCount = 10000;
   size_t bucket_id(uint64_t key) const { return key % kBucketCount; }
@@ -595,11 +591,11 @@ enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
 template <typename output_t, typename Input, typename Writer>
 inline std::pair<Result, size_t> build_fst_core(const Input &input,
-                                                Writer &writer, bool trie) {
+                                                Writer &writer) {
 
   StatePool<output_t> state_pool;
 
-  Dictionary<output_t> dictionary(state_pool, trie);
+  Dictionary<output_t> dictionary(state_pool);
   size_t next_state_id = 0;
   size_t line = 1;
   Result result = Result::Success;
@@ -738,8 +734,7 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
 //-----------------------------------------------------------------------------
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
-                                           bool trie = false) {
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
   return build_fst_core<output_t>(
       [&](const auto &feeder) {
         for (const auto &item : input) {
@@ -748,12 +743,11 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
           if (!feeder(word, output)) { break; }
         }
       },
-      writer, trie);
+      writer);
 }
 
 template <typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
-                                           bool trie = false) {
+inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer) {
   uint32_t id = 0;
   return build_fst_core<uint32_t>(
       [&](const auto &feeder) {
@@ -761,7 +755,7 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
           if (!feeder(word, id++)) { break; }
         }
       },
-      writer, trie);
+      writer);
 }
 
 //-----------------------------------------------------------------------------
@@ -1257,18 +1251,16 @@ private:
 };
 
 template <typename output_t, typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
-                                     bool trie = false) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
 
   DotWriter<output_t> writer(os);
-  return build_fst<output_t>(input, writer, trie);
+  return build_fst<output_t>(input, writer);
 }
 
 template <typename Input>
-inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
-                                     bool trie = false) {
+inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os) {
   DotWriter<uint32_t> writer(os);
-  return build_fst(input, writer, trie);
+  return build_fst(input, writer);
 }
 
 //-----------------------------------------------------------------------------
