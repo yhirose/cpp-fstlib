@@ -33,7 +33,7 @@ namespace fst {
 //-----------------------------------------------------------------------------
 
 template <typename Val> inline size_t vb_encode_value_length(Val n) {
-  size_t len = 0;
+  auto len = 0u;
   while (n >= 128) {
     len++;
     n >>= 7;
@@ -43,23 +43,23 @@ template <typename Val> inline size_t vb_encode_value_length(Val n) {
 }
 
 template <typename Val> inline size_t vb_encode_value(Val n, char *out) {
-  size_t len = 0;
+  auto len = 0u;
   while (n >= 128) {
-    out[len] = (char)(n & 0x7f);
+    out[len] = static_cast<char>(n & 0x7f);
     len++;
     n >>= 7;
   }
-  out[len] = (char)(n + 128);
+  out[len] = static_cast<char>(n + 128);
   len++;
   return len;
 }
 
 template <typename Val, typename Cont> void vb_encode_value(Val n, Cont &out) {
   while (n >= 128) {
-    out.push_back((typename Cont::value_type)(n & 0x7f));
+    out.push_back(static_cast<typename Cont::value_type>(n & 0x7f));
     n >>= 7;
   }
-  out.push_back((typename Cont::value_type)(n + 128));
+  out.push_back(static_cast<typename Cont::value_type>(n + 128));
 }
 
 template <typename Val>
@@ -81,10 +81,10 @@ inline size_t vb_encode_value_reverse(Val n, std::ostream &os) {
 
 template <typename Val>
 inline size_t vb_decode_value_reverse(const char *data, Val &n) {
-  auto p = (const uint8_t *)data;
-  int i = 0;
+  auto p = reinterpret_cast<const uint8_t *>(data);
+  auto i = 0;
   n = 0;
-  size_t cnt = 0;
+  auto cnt = 0u;
   while (p[i] < 128) {
     n += (p[i--] << (7 * cnt++));
   }
@@ -98,13 +98,11 @@ inline size_t vb_decode_value_reverse(const char *data, Val &n) {
 
 template <class T>
 inline size_t lower_bound_index(size_t first, size_t last, T less) {
-  size_t len = last - first;
-  size_t half;
-  size_t middle;
+  auto len = last - first;
 
   while (len > 0) {
-    half = len >> 1;
-    middle = first + half;
+    auto half = len >> 1;
+    auto middle = first + half;
 
     if (less(middle)) {
       first = middle;
@@ -126,16 +124,16 @@ inline size_t lower_bound_index(size_t first, size_t last, T less) {
 //-----------------------------------------------------------------------------
 
 inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
-  const uint32_t m = 0x5bd1e995;
-  const size_t r = 24;
+  const auto m = uint32_t(0x5bd1e995);
+  const auto r = 24u;
 
-  uint32_t h1 = uint32_t(seed) ^ uint32_t(len);
-  uint32_t h2 = uint32_t(seed >> 32);
+  auto h1 = static_cast<uint32_t>(seed) ^ static_cast<uint32_t>(len);
+  auto h2 = static_cast<uint32_t>(seed >> 32);
 
-  const uint32_t *data = (const uint32_t *)key;
+  auto data = reinterpret_cast<const uint32_t *>(key);
 
   while (len >= 8) {
-    uint32_t k1 = *data++;
+    auto k1 = *data++;
     k1 *= m;
     k1 ^= k1 >> r;
     k1 *= m;
@@ -143,7 +141,7 @@ inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
     h1 ^= k1;
     len -= 4;
 
-    uint32_t k2 = *data++;
+    auto k2 = *data++;
     k2 *= m;
     k2 ^= k2 >> r;
     k2 *= m;
@@ -153,7 +151,7 @@ inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
   }
 
   if (len >= 4) {
-    uint32_t k1 = *data++;
+    auto k1 = *data++;
     k1 *= m;
     k1 ^= k1 >> r;
     k1 *= m;
@@ -163,9 +161,9 @@ inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
   }
 
   switch (len) {
-  case 3: h2 ^= ((unsigned char *)data)[2] << 16;
-  case 2: h2 ^= ((unsigned char *)data)[1] << 8;
-  case 1: h2 ^= ((unsigned char *)data)[0]; h2 *= m;
+  case 3: h2 ^= reinterpret_cast<const unsigned char *>(data)[2] << 16;
+  case 2: h2 ^= reinterpret_cast<const unsigned char *>(data)[1] << 8;
+  case 1: h2 ^= reinterpret_cast<const unsigned char *>(data)[0]; h2 *= m;
   };
 
   h1 ^= h2 >> 18;
@@ -177,10 +175,8 @@ inline uint64_t MurmurHash64B(const void *key, size_t len, uint64_t seed) {
   h2 ^= h1 >> 19;
   h2 *= m;
 
-  uint64_t h = h1;
-
+  auto h = static_cast<uint64_t>(h1);
   h = (h << 32) | h2;
-
   return h;
 }
 
@@ -200,16 +196,20 @@ inline std::string char_to_string(char arc) {
 }
 
 //-----------------------------------------------------------------------------
-// get_prefix_length
+// get_common_prefix_length
 //-----------------------------------------------------------------------------
 
-inline size_t get_prefix_length(const std::string &s1, const std::string &s2) {
+inline size_t get_common_prefix_length(const std::string &s1, const std::string &s2) {
   auto i = 0u;
   while (i < s1.size() && i < s2.size() && s1[i] == s2[i]) {
     i++;
   }
   return i;
 }
+
+//-----------------------------------------------------------------------------
+// get_prefix_length
+//-----------------------------------------------------------------------------
 
 inline bool get_prefix_length(const std::string &s1, const std::string &s2,
                               size_t &l) {
@@ -294,7 +294,7 @@ template <> struct OutputTraits<std::string> {
 
   static value_type get_common_prefix(const value_type &a,
                                       const value_type &b) {
-    return a.substr(0, get_prefix_length(a, b));
+    return a.substr(0, get_common_prefix_length(a, b));
   }
 
   static size_t write_value(char *buff, size_t buff_len,
@@ -465,7 +465,7 @@ private:
 
 template <typename output_t> inline uint64_t State<output_t>::hash() const {
   char buff[1024];
-  size_t buff_len = 0;
+  auto buff_len = 0u;
 
   transitions.for_each([&](char arc, const State::Transition &t) {
     buff[buff_len++] = arc;
@@ -547,8 +547,10 @@ public:
 private:
   StatePool<output_t> &state_pool_;
 
-  static const size_t kBucketCount = 10000;
+  static const auto kBucketCount = 10000u;
+
   size_t bucket_id(uint64_t key) const { return key % kBucketCount; }
+
   std::tuple<State<output_t> *, State<output_t> *, State<output_t> *>
       buckets_[kBucketCount] = {{nullptr, nullptr, nullptr}};
 };
@@ -596,9 +598,9 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
   StatePool<output_t> state_pool;
 
   Dictionary<output_t> dictionary(state_pool);
-  size_t next_state_id = 0;
-  size_t line = 1;
-  Result result = Result::Success;
+  auto next_state_id = 0u;
+  auto line = 1u;
+  auto result = Result::Success;
 
   // Main algorithm ported from the technical paper
   std::vector<State<output_t> *> temp_states;
@@ -615,7 +617,6 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
 
     // The following loop caluculates the length of the longest common
     // prefix of 'current_word' and 'previous_word'
-    // auto prefix_length = get_prefix_length(previous_word, current_word);
     size_t prefix_length;
     if (!get_prefix_length(previous_word, current_word, prefix_length)) {
       result = Result::UnsortedKey;
@@ -846,7 +847,7 @@ template <typename output_t, bool need_state_output> struct FstRecord {
   const output_t *state_output = nullptr;
 
   size_t byte_size() const {
-    size_t sz = 1;
+    auto sz = 1u;
     if (need_state_output) {
       if (ope.data.label_index == 0) { sz += 1; }
     } else {
@@ -904,9 +905,9 @@ struct FstHeader {
         need_state_output(need_state_output),
         start_address(static_cast<uint32_t>(start_address)) {
 
-    size_t char_index_size = FstOpe::char_index_size(need_state_output);
+    auto char_index_size = FstOpe::char_index_size(need_state_output);
 
-    for (size_t ch = 0; ch < 256; ch++) {
+    for (auto ch = 0u; ch < 256; ch++) {
       auto index = char_index_table[ch];
       if (0 < index && index < char_index_size) {
         char_index[index] = static_cast<char>(ch);
@@ -957,7 +958,7 @@ public:
     auto transition_count = state.transitions.size();
     const auto &[arcs, states_and_outputs] = state.transitions;
 
-    size_t char_index_size = FstOpe::char_index_size(need_state_output);
+    auto char_index_size = FstOpe::char_index_size(need_state_output);
 
     std::vector<size_t> jump_table;
     auto need_jump_table = transition_count >= 8;
@@ -999,7 +1000,7 @@ public:
       rec.ope.data.final = t.final;
 
       rec.delta = 0;
-      size_t next_address = 0;
+      auto next_address = 0u;
       if (!no_address) {
         if (has_address) {
           rec.delta = address_ - address_table_[recored_index_iter->second];
@@ -1021,7 +1022,7 @@ public:
         }
       }
 
-      size_t label_index = 0;
+      auto label_index = 0u;
       auto index = char_index_table_[static_cast<uint8_t>(arc)];
       if (index < char_index_size) {
         label_index = index;
@@ -1154,7 +1155,7 @@ private:
       que.push(x);
     }
 
-    size_t index = 1;
+    auto index = 1u;
     while (!que.empty()) {
       auto [ch, count] = que.top();
       char_index_table_[static_cast<uint8_t>(ch)] = index++;
@@ -1385,16 +1386,16 @@ private:
     auto output = OutputTraits<output_t>::initial_value();
     auto state_output = OutputTraits<output_t>::initial_value();
 
-    size_t address = header_.start_address;
+    auto address = header_.start_address;
     auto i = 0u;
     while (i < len) {
-      uint8_t ch = str[i];
+      auto ch = static_cast<uint8_t>(str[i]);
       OutputTraits<output_t>::clear(state_output);
 
       auto end = byte_code_ + address;
       auto p = end;
 
-      FstOpe ope(*p--);
+      auto ope = FstOpe(*p--);
 
       if (ope.is_jump_tag_byte()) {
         auto jump_table_element_size = ope.jump_table_element_size();
@@ -1414,7 +1415,7 @@ private:
         auto found = lower_bound_index(0, transition_count, [&](auto i) {
           auto p = base_address -
                    lookup_jump_table(jump_table, i, jump_table_element_size);
-          FstOpe ope(*p--);
+          auto ope = FstOpe(*p--);
           return get_arc(ope, p) < ch;
         });
 
@@ -1430,7 +1431,7 @@ private:
 
       auto arc = get_arc(ope, p);
 
-      size_t delta = 0;
+      auto delta = 0u;
       if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
 
       auto output_suffix = OutputTraits<output_t>::initial_value();
@@ -1446,7 +1447,7 @@ private:
 
       auto byte_size = std::distance(p, end);
 
-      size_t next_address = 0;
+      auto next_address = 0u;
       if (!ope.data.no_address) {
         if (delta) { next_address = address - byte_size - delta + 1; }
       } else {
