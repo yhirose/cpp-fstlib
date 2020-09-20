@@ -1087,37 +1087,29 @@ public:
           os_.write((char *)&jump_tag_byte, 1);
         }
       } else {
-        // Byte address
-        std::cout << address_table_.back() << "\t";
+        os_ << address_table_.back() << "\t";
+        os_ << char_to_string(arc) << "\t";
 
-        // Arc
-        std::cout << char_to_string(arc) << "\t";
+        os_ << (no_address ? "↑" : " ") << ' ' << (t.final ? '*' : ' ') << ' '
+            << (last_transition ? "‾" : " ") << "\t";
 
-        // Flags
-        std::cout << (no_address ? "↑" : " ") << ' ' << (t.final ? '*' : ' ')
-                  << ' ' << (last_transition ? "‾" : " ") << "\t";
-
-        // Next Address
         if (!no_address) {
           if (next_address > 0) {
-            std::cout << next_address;
+            os_ << next_address;
           } else {
-            std::cout << "x";
+            os_ << "x";
           }
         }
-        std::cout << "\t";
+        os_ << "\t";
 
-        // Output
-        if (!OutputTraits<output_t>::empty(t.output)) { std::cout << t.output; }
-        std::cout << "\t";
+        if (!OutputTraits<output_t>::empty(t.output)) { os_ << t.output; }
+        os_ << "\t";
 
-        // State Output
         if (!OutputTraits<output_t>::empty(t.state_output)) {
-          std::cout << t.state_output;
+          os_ << t.state_output;
         }
 
-        std::cout << "\t" << byte_size;
-        std::cout << std::endl;
+        os_ << "\t" << byte_size << std::endl;
       }
     }
 
