@@ -199,7 +199,8 @@ inline std::string char_to_string(char arc) {
 // get_common_prefix_length
 //-----------------------------------------------------------------------------
 
-inline size_t get_common_prefix_length(const std::string &s1, const std::string &s2) {
+inline size_t get_common_prefix_length(const std::string &s1,
+                                       const std::string &s2) {
   auto i = 0u;
   while (i < s1.size() && i < s2.size() && s1[i] == s2[i]) {
     i++;
@@ -309,13 +310,12 @@ template <> struct OutputTraits<std::string> {
 
   static void write_byte_value(std::ostream &os, const value_type &val) {
     os.write(val.data(), val.size());
-    OutputTraits<uint32_t>::write_byte_value(os,
-                                             static_cast<uint32_t>(val.size()));
+    vb_encode_value_reverse(static_cast<uint32_t>(val.size()), os);
   }
 
   static size_t read_byte_value(const char *p, value_type &val) {
     uint32_t str_len = 0;
-    auto vb_len = OutputTraits<uint32_t>::read_byte_value(p, str_len);
+    auto vb_len = vb_decode_value_reverse(p, str_len);
 
     val.resize(str_len);
     memcpy(val.data(), p - vb_len - str_len + 1, str_len);
@@ -827,13 +827,13 @@ union FstOpe {
   }
 
   // For jump table
-  bool is_jump_tag_byte() const { return byte == 0xff || byte == 0xfe; }
+  bool has_jump_table() const { return byte == 0xff || byte == 0xfe; }
 
   size_t jump_table_element_size() const {
-    return byte == 0xff ? 2 : (byte == 0xfe ? 1 : 0);
+    return (byte == 0xff || byte == 0xfd) ? 2 : 1;
   }
 
-  static uint8_t jump_tag_byte(bool need_two_bytes) {
+  static uint8_t jump_table_tag(bool need_two_bytes) {
     return need_two_bytes ? 0xff : 0xfe;
   }
 };
@@ -891,7 +891,7 @@ template <typename output_t, bool need_state_output> struct FstRecord {
 
 struct FstHeader {
   uint8_t version = 0;
-  uint8_t value_type = 0;
+  uint8_t output_type = 0;
   uint8_t need_state_output = 0;
   uint8_t reserved = 0;
   uint32_t start_address = 0;
@@ -899,9 +899,9 @@ struct FstHeader {
 
   FstHeader() = default;
 
-  FstHeader(OutputType value_type, bool need_state_output, size_t start_address,
+  FstHeader(OutputType output_type, bool need_state_output, size_t start_address,
             const std::vector<size_t> &char_index_table)
-      : value_type(static_cast<uint8_t>(value_type)),
+      : output_type(static_cast<uint8_t>(output_type)),
         need_state_output(need_state_output),
         start_address(static_cast<uint32_t>(start_address)) {
 
@@ -929,10 +929,8 @@ public:
     initialize_char_index_table(input);
 
     if (dump_) {
-      std::cout << "Address\tArc\tN F L\tNxtAddr\tOutput\tStOuts\tSize"
-                << std::endl;
-      std::cout << "-------\t---\t-----\t-------\t------\t------\t----"
-                << std::endl;
+      os << "Address\tArc\tN F L\tNxtAddr\tOutput\tStOuts\tSize" << std::endl;
+      os << "-------\t---\t-----\t-------\t------\t------\t----" << std::endl;
     }
   }
 
@@ -960,19 +958,20 @@ public:
 
     auto char_index_size = FstOpe::char_index_size(need_state_output);
 
-    std::vector<size_t> jump_table;
+    std::vector<size_t> jump_table(transition_count);
     auto need_jump_table = transition_count >= 8;
 
-    size_t sort_indexes[256];
+    size_t indexes_sorted_by_bigram_count[256];
 
     if (!need_jump_table) {
       uint16_t keys[256];
       for (auto i = 0u; i < arcs.size(); i++) {
-        sort_indexes[i] = i;
+        indexes_sorted_by_bigram_count[i] = i;
         keys[i] = bigram_key(prev_arc, arcs[i]);
       }
 
-      std::sort(&sort_indexes[0], &sort_indexes[arcs.size()],
+      std::sort(&indexes_sorted_by_bigram_count[0],
+                &indexes_sorted_by_bigram_count[arcs.size()],
                 [&](auto i1, auto i2) {
                   return bigram_count_[keys[i1]] > bigram_count_[keys[i2]];
                 });
@@ -981,7 +980,7 @@ public:
     for (auto ri = arcs.size(); ri > 0; ri--) {
       auto i = ri - 1;
 
-      auto arc_i = !need_jump_table ? sort_indexes[i] : i;
+      auto arc_i = !need_jump_table ? indexes_sorted_by_bigram_count[i] : i;
       auto arc = arcs[arc_i];
       const auto &t = states_and_outputs[arc_i];
 
@@ -1036,8 +1035,8 @@ public:
       }
 
       // When the ope byte happens to be the same as jump tag byte, change to
-      // use '.label' field instead. if (rec.ope.byte == 0xff ||
-      if (rec.ope.is_jump_tag_byte()) {
+      // use '.label' field instead.
+      if (rec.ope.has_jump_table()) {
         rec.label = arc;
         if (need_state_output) {
           rec.ope.data.label_index = 0;
@@ -1051,29 +1050,30 @@ public:
       address_table_.push_back(accessible_address);
       address_ += byte_size;
 
-      auto jump_table_element_size = 1;
-      jump_table.push_back(accessible_address);
-
-      if (generate_jump_table) {
-        for (auto &val : jump_table) {
-          val = accessible_address - val;
-          if (val > 0xff) { jump_table_element_size = 2; }
-        }
-        std::reverse(jump_table.begin(), jump_table.end());
-
-        auto jump_table_size = 1 + vb_encode_value_length(transition_count) +
-                               transition_count * jump_table_element_size;
-
-        byte_size += jump_table_size;
-        address_table_[address_table_.size() - 1] += jump_table_size;
-        address_ += jump_table_size;
-      }
-
       if (!dump_) {
         rec.write(os_);
 
+        if (need_jump_table) { jump_table[i] = accessible_address; }
+
         if (generate_jump_table) {
+          auto jump_table_element_size = 1;
+
+          for (auto &val : jump_table) {
+            val = accessible_address - val;
+            if (val > 0xff) { jump_table_element_size = 2; }
+          }
+
+          auto jump_table_byte_size =
+              1 + vb_encode_value_length(jump_table.size()) +
+              jump_table.size() * jump_table_element_size;
+
           auto need_two_bytes = jump_table_element_size == 2;
+
+          auto jump_table_tag = FstOpe::jump_table_tag(need_two_bytes);
+
+          byte_size += jump_table_byte_size;
+          address_table_[address_table_.size() - 1] += jump_table_byte_size;
+          address_ += jump_table_byte_size;
 
           if (need_two_bytes) {
             write_jump_table<uint16_t>(os_, jump_table);
@@ -1081,10 +1081,9 @@ public:
             write_jump_table<uint8_t>(os_, jump_table);
           }
 
-          vb_encode_value_reverse(transition_count, os_);
+          vb_encode_value_reverse(jump_table.size(), os_);
 
-          auto jump_tag_byte = FstOpe::jump_tag_byte(need_two_bytes);
-          os_.write((char *)&jump_tag_byte, 1);
+          os_.write((char *)&jump_table_tag, 1);
         }
       } else {
         os_ << address_table_.back() << "\t";
@@ -1254,7 +1253,7 @@ public:
     }
 
     state.transitions.for_each(
-        [&](char arc, const typename State<output_t>::Transition &t) {
+        [&](auto arc, const typename State<output_t>::Transition &t) {
           std::string label;
           label += arc;
           os_ << "  s" << state.id << "->s" << t.id << " [ label = \"" << label;
@@ -1299,7 +1298,7 @@ inline OutputType get_output_type(const char *byte_code,
 
   if (header.version != 0) { return OutputType::invalid; }
 
-  return static_cast<OutputType>(header.value_type);
+  return static_cast<OutputType>(header.output_type);
 }
 
 //-----------------------------------------------------------------------------
@@ -1318,7 +1317,7 @@ public:
 
     if (header_.version != 0) { return; }
 
-    if (static_cast<OutputType>(header_.value_type) !=
+    if (static_cast<OutputType>(header_.output_type) !=
         OutputTraits<output_t>::type()) {
       return;
     }
@@ -1389,32 +1388,32 @@ private:
 
       auto ope = FstOpe(*p--);
 
-      if (ope.is_jump_tag_byte()) {
+      if (ope.has_jump_table()) {
         auto jump_table_element_size = ope.jump_table_element_size();
 
-        size_t transition_count = 0;
-        auto vb_len = vb_decode_value_reverse(p, transition_count);
+        size_t jump_table_count = 0;
+        auto vb_len = vb_decode_value_reverse(p, jump_table_count);
         p -= vb_len;
 
-        auto jump_table_size =
-            1 + vb_len + transition_count * jump_table_element_size;
+        auto jump_table_byte_size =
+            1 + vb_len + jump_table_count * jump_table_element_size;
 
-        p -= transition_count * jump_table_element_size;
+        p -= jump_table_count * jump_table_element_size;
         auto jump_table = p;
 
-        auto base_address = byte_code_ + address - jump_table_size;
+        auto base_address = byte_code_ + address - jump_table_byte_size;
 
-        auto found = lower_bound_index(0, transition_count, [&](auto i) {
+        auto found = lower_bound_index(0, jump_table_count, [&](auto i) {
           auto p = base_address -
                    lookup_jump_table(jump_table, i, jump_table_element_size);
           auto ope = FstOpe(*p--);
           return get_arc(ope, p) < ch;
         });
 
-        if (found < transition_count) {
-          address -=
-              lookup_jump_table(jump_table, found, jump_table_element_size) +
-              jump_table_size;
+        if (found < jump_table_count) {
+          auto offset =
+              lookup_jump_table(jump_table, found, jump_table_element_size);
+          address -= offset + jump_table_byte_size;
         } else {
           address -= std::distance(p, end);
         }
