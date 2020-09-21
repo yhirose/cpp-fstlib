@@ -932,37 +932,73 @@ template <typename output_t, bool need_state_output> struct FstRecord {
 };
 
 struct FstHeader {
-  uint8_t version = 0;
-  uint8_t output_type = 0;
-  uint8_t need_state_output = 0;
-  uint8_t reserved = 0;
+  union {
+    struct {
+      unsigned output_type : 3;
+      unsigned need_state_output : 1;
+      unsigned reserved : 4;
+    } data;
+
+    uint8_t byte;
+  } flags;
 
   uint32_t start_address = 0;
-  char char_index[FstOpe::char_index_size(false, false)] = {0};
+  char char_index[32] = {0};
+
+  bool need_output = false;
+  bool need_state_output = false;
 
   FstHeader() = default;
 
   FstHeader(OutputType output_type, bool need_state_output,
             size_t start_address, const std::vector<size_t> &char_index_table)
-      : output_type(static_cast<uint8_t>(output_type)),
-        need_state_output(need_state_output),
-        start_address(static_cast<uint32_t>(start_address)) {
+      : start_address(static_cast<uint32_t>(start_address)) {
 
-    auto need_output =
-        static_cast<OutputType>(output_type) != OutputType::none_t;
-    auto char_index_size =
-        FstOpe::char_index_size(need_output, need_state_output);
+    flags.data.output_type = static_cast<uint8_t>(output_type);
+    flags.data.need_state_output = need_state_output;
 
+    auto size = char_index_size();
     for (auto ch = 0u; ch < 256; ch++) {
       auto index = char_index_table[ch];
-      if (0 < index && index < char_index_size) {
+      if (0 < index && index < size) {
         char_index[index] = static_cast<char>(ch);
       }
     }
   }
 
+  bool read(const char *byte_code, size_t byte_code_size) {
+    auto remaining = byte_code_size;
+    if (remaining < sizeof(uint8_t)) { return false; }
+
+    auto p = byte_code + (byte_code_size - sizeof(uint8_t));
+    flags.byte = *p--;
+
+    remaining -= sizeof(uint8_t);
+    if (remaining < sizeof(uint32_t)) { return false; }
+
+    memcpy(&start_address, p - (sizeof(uint32_t) - 1), sizeof(start_address));
+    p -= sizeof(uint32_t);
+
+    remaining -= sizeof(uint32_t);
+    auto size = char_index_size();
+    if (remaining < size) { return false; }
+
+    memcpy(char_index, p - (size - 1), size);
+
+    // For performance
+    need_output = static_cast<OutputType>(flags.data.output_type) != OutputType::none_t;
+    need_state_output = flags.data.need_state_output;
+    return true;
+  }
+
   void write(std::ostream &os) {
-    os.write(reinterpret_cast<const char *>(this), sizeof(*this));
+    os.write(char_index, char_index_size());
+    os.write(reinterpret_cast<char *>(&start_address), sizeof(start_address));
+    os.write(reinterpret_cast<char *>(&flags.byte), sizeof(flags.byte));
+  }
+
+  size_t char_index_size() const {
+    return FstOpe::char_index_size(need_output, need_state_output);
   }
 };
 
@@ -1350,15 +1386,8 @@ inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
 inline OutputType get_output_type(const char *byte_code,
                                   size_t byte_code_size) {
   FstHeader header;
-
-  if (byte_code_size < sizeof(FstHeader)) { return OutputType::invalid; }
-
-  auto p = byte_code + (byte_code_size - sizeof(FstHeader));
-  memcpy(reinterpret_cast<char *>(&header), p, sizeof(FstHeader));
-
-  if (header.version != 0) { return OutputType::invalid; }
-
-  return static_cast<OutputType>(header.output_type);
+  if (!header.read(byte_code, byte_code_size)) { return OutputType::invalid; }
+  return static_cast<OutputType>(header.flags.data.output_type);
 }
 
 //-----------------------------------------------------------------------------
@@ -1370,20 +1399,13 @@ public:
   Matcher(const char *byte_code, size_t byte_code_size)
       : byte_code_(byte_code), byte_code_size_(byte_code_size) {
 
-    if (byte_code_size < sizeof(FstHeader)) { return; }
+    if (!header_.read(byte_code, byte_code_size)) { return; }
 
-    auto p = byte_code + (byte_code_size - sizeof(FstHeader));
-    memcpy(reinterpret_cast<char *>(&header_), p, sizeof(FstHeader));
-
-    if (header_.version != 0) { return; }
-
-    if (static_cast<OutputType>(header_.output_type) !=
+    if (static_cast<OutputType>(header_.flags.data.output_type) !=
         OutputTraits<output_t>::type()) {
       return;
     }
 
-    need_output_ =
-        static_cast<OutputType>(header_.output_type) != OutputType::none_t;
     is_valid_ = true;
   }
 
@@ -1549,7 +1571,7 @@ protected:
   }
 
   uint8_t get_arc(FstOpe ope, const char *&p) const {
-    auto index = ope.label_index(need_output_, header_.need_state_output);
+    auto index = ope.label_index(header_.need_output, header_.need_state_output);
     return index == 0 ? *p-- : header_.char_index[index];
   }
 
@@ -1557,7 +1579,6 @@ protected:
   const size_t byte_code_size_;
 
   FstHeader header_;
-  bool need_output_ = false;
   bool is_valid_ = false;
   bool trace_ = false;
 };
