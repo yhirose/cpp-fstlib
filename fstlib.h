@@ -229,9 +229,25 @@ inline bool get_prefix_length(const std::string &s1, const std::string &s2,
 // OutputTraits
 //-----------------------------------------------------------------------------
 
-enum class OutputType { invalid = -1, uint32_t, string };
+using none_t = int;
+
+enum class OutputType { invalid = -1, uint32_t, uint64_t, string, none_t };
 
 template <typename output_t> struct OutputTraits {};
+
+template <> struct OutputTraits<none_t> {
+  using value_type = none_t;
+
+  static OutputType type() { return OutputType::none_t; }
+
+  static value_type initial_value() { return 0; }
+
+  static bool empty(value_type val) { return val == 0; }
+
+  static void clear(value_type &val) { val = 0; }
+
+  static size_t read_byte_value(const char *p, value_type &val) { return 0; }
+};
 
 template <> struct OutputTraits<uint32_t> {
   using value_type = uint32_t;
@@ -592,9 +608,8 @@ inline void get_common_prefix_and_word_suffix(const output_t &current_output,
 enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst_core(const Input &input,
-                                                Writer &writer) {
-
+inline std::pair<Result, size_t>
+build_fst_core(const Input &input, Writer &writer, bool need_output) {
   StatePool<output_t> state_pool;
 
   Dictionary<output_t> dictionary(state_pool);
@@ -666,42 +681,44 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
       state->set_final(true);
     }
 
-    for (auto j = 1u; j <= prefix_length; j++) {
-      auto prev_state = temp_states[j - 1];
-      auto arc = current_word[j - 1];
+    if (need_output) {
+      for (auto j = 1u; j <= prefix_length; j++) {
+        auto prev_state = temp_states[j - 1];
+        auto arc = current_word[j - 1];
 
-      const auto &output = prev_state->output(arc);
+        const auto &output = prev_state->output(arc);
 
-      auto common_prefix = OutputTraits<output_t>::initial_value();
-      auto word_suffix = OutputTraits<output_t>::initial_value();
-      get_common_prefix_and_word_suffix(current_output, output, common_prefix,
-                                        word_suffix);
+        auto common_prefix = OutputTraits<output_t>::initial_value();
+        auto word_suffix = OutputTraits<output_t>::initial_value();
+        get_common_prefix_and_word_suffix(current_output, output, common_prefix,
+                                          word_suffix);
 
-      prev_state->set_output(arc, common_prefix);
+        prev_state->set_output(arc, common_prefix);
 
-      if (!OutputTraits<output_t>::empty(word_suffix)) {
-        auto state = temp_states[j];
+        if (!OutputTraits<output_t>::empty(word_suffix)) {
+          auto state = temp_states[j];
 
-        for (auto arc : state->transitions.arcs) {
-          state->prepend_suffix_to_output(arc, word_suffix);
+          for (auto arc : state->transitions.arcs) {
+            state->prepend_suffix_to_output(arc, word_suffix);
+          }
+
+          if (state->final) {
+            state->prepend_suffix_to_state_outputs(word_suffix);
+          }
         }
 
-        if (state->final) {
-          state->prepend_suffix_to_state_outputs(word_suffix);
-        }
+        current_output =
+            OutputTraits<output_t>::get_suffix(current_output, common_prefix);
       }
 
-      current_output =
-          OutputTraits<output_t>::get_suffix(current_output, common_prefix);
-    }
-
-    if (current_word == previous_word) {
-      auto state = temp_states[current_word.size()];
-      state->push_to_state_outputs(current_output);
-    } else {
-      auto state = temp_states[prefix_length];
-      auto arc = current_word[prefix_length];
-      state->set_output(arc, current_output);
+      if (current_word == previous_word) {
+        auto state = temp_states[current_word.size()];
+        state->push_to_state_outputs(current_output);
+      } else {
+        auto state = temp_states[prefix_length];
+        auto arc = current_word[prefix_length];
+        state->set_output(arc, current_output);
+      }
     }
 
     previous_word = current_word;
@@ -736,7 +753,7 @@ inline std::pair<Result, size_t> build_fst_core(const Input &input,
 
 template <typename output_t, typename Input, typename Writer>
 inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
-                                           bool sorted) {
+                                           bool need_output, bool sorted) {
   return build_fst_core<output_t>(
       [&](const auto &feeder) {
         if (sorted) {
@@ -761,12 +778,12 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
           }
         }
       },
-      writer);
+      writer, need_output);
 }
 
 template <typename Input, typename Writer>
 inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
-                                           bool sorted) {
+                                           bool need_output, bool sorted) {
   return build_fst_core<uint32_t>(
       [&](const auto &feeder) {
         if (sorted) {
@@ -791,7 +808,7 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
           }
         }
       },
-      writer);
+      writer, need_output);
 }
 
 //-----------------------------------------------------------------------------
@@ -843,6 +860,7 @@ template <typename output_t, bool need_state_output> struct FstRecord {
 
   char label = 0;
   size_t delta = 0;
+  bool need_output = false;
   const output_t *output = nullptr;
   const output_t *state_output = nullptr;
 
@@ -854,25 +872,29 @@ template <typename output_t, bool need_state_output> struct FstRecord {
       if (ope.data_witout_state_output.label_index == 0) { sz += 1; }
     }
     if (!ope.data.no_address) { sz += vb_encode_value_length(delta); }
-    if (ope.data.has_output) {
-      sz += OutputTraits<output_t>::get_byte_value_size(*output);
-    }
-    if (need_state_output) {
-      if (ope.data.has_state_output) {
-        sz += OutputTraits<output_t>::get_byte_value_size(*state_output);
+    if (need_output) {
+      if (ope.data.has_output) {
+        sz += OutputTraits<output_t>::get_byte_value_size(*output);
+      }
+      if (need_state_output) {
+        if (ope.data.has_state_output) {
+          sz += OutputTraits<output_t>::get_byte_value_size(*state_output);
+        }
       }
     }
     return sz;
   }
 
   void write(std::ostream &os) {
-    if (need_state_output) {
-      if (ope.data.has_state_output) {
-        OutputTraits<output_t>::write_byte_value(os, *state_output);
+    if (need_output) {
+      if (need_state_output) {
+        if (ope.data.has_state_output) {
+          OutputTraits<output_t>::write_byte_value(os, *state_output);
+        }
       }
-    }
-    if (ope.data.has_output) {
-      OutputTraits<output_t>::write_byte_value(os, *output);
+      if (ope.data.has_output) {
+        OutputTraits<output_t>::write_byte_value(os, *output);
+      }
     }
     if (!ope.data.no_address) {
       OutputTraits<uint32_t>::write_byte_value(os,
@@ -899,8 +921,8 @@ struct FstHeader {
 
   FstHeader() = default;
 
-  FstHeader(OutputType output_type, bool need_state_output, size_t start_address,
-            const std::vector<size_t> &char_index_table)
+  FstHeader(OutputType output_type, bool need_state_output,
+            size_t start_address, const std::vector<size_t> &char_index_table)
       : output_type(static_cast<uint8_t>(output_type)),
         need_state_output(need_state_output),
         start_address(static_cast<uint32_t>(start_address)) {
@@ -920,17 +942,23 @@ struct FstHeader {
   }
 };
 
-template <typename output_t, bool need_state_output = true> class FstWriter {
+template <typename output_t, bool need_state_output> class FstWriter {
 public:
   template <typename Input>
-  FstWriter(std::ostream &os, bool dump, bool verbose, const Input &input)
-      : os_(os), dump_(dump), verbose_(verbose) {
+  FstWriter(std::ostream &os, bool need_output, bool dump, bool verbose,
+            const Input &input)
+      : os_(os), need_output_(need_output), dump_(dump), verbose_(verbose) {
 
     initialize_char_index_table(input);
 
     if (dump_) {
-      os << "Address\tArc\tN F L\tNxtAddr\tOutput\tStOuts\tSize" << std::endl;
-      os << "-------\t---\t-----\t-------\t------\t------\t----" << std::endl;
+      os << "Address\tArc\tN F L\tNxtAddr";
+      if (need_output_) { os << "\tOutput\tStOuts"; }
+      os << "\tSize" << std::endl;
+
+      os << "-------\t---\t-----\t-------";
+      if (need_output_) { os << "\t------\t------"; }
+      os << "\t----" << std::endl;
     }
   }
 
@@ -939,8 +967,11 @@ public:
 
     auto start_byte_adress = address_table_.back();
 
-    FstHeader header(OutputTraits<output_t>::type(), need_state_output,
-                     start_byte_adress, char_index_table_);
+    auto output_type =
+        need_output_ ? OutputTraits<output_t>::type() : OutputType::none_t;
+
+    FstHeader header(output_type, need_state_output, start_byte_adress,
+                     char_index_table_);
 
     if (!dump_) { header.write(os_); }
 
@@ -994,6 +1025,7 @@ public:
       auto generate_jump_table = (i == 0) && need_jump_table;
 
       FstRecord<output_t, need_state_output> rec;
+      rec.need_output = need_output_;
       rec.ope.data.no_address = no_address;
       rec.ope.data.last_transition = last_transition;
       rec.ope.data.final = t.final;
@@ -1007,17 +1039,19 @@ public:
         }
       }
 
-      rec.ope.data.has_output = false;
-      if (!OutputTraits<output_t>::empty(t.output)) {
-        rec.ope.data.has_output = true;
-        rec.output = &t.output;
-      }
+      if (need_output_) {
+        rec.ope.data.has_output = false;
+        if (!OutputTraits<output_t>::empty(t.output)) {
+          rec.ope.data.has_output = true;
+          rec.output = &t.output;
+        }
 
-      if (need_state_output) {
-        rec.ope.data.has_state_output = false;
-        if (!OutputTraits<output_t>::empty(t.state_output)) {
-          rec.ope.data.has_state_output = true;
-          rec.state_output = &t.state_output;
+        if (need_state_output) {
+          rec.ope.data.has_state_output = false;
+          if (!OutputTraits<output_t>::empty(t.state_output)) {
+            rec.ope.data.has_state_output = true;
+            rec.state_output = &t.state_output;
+          }
         }
       }
 
@@ -1099,13 +1133,16 @@ public:
             os_ << "x";
           }
         }
-        os_ << "\t";
 
-        if (!OutputTraits<output_t>::empty(t.output)) { os_ << t.output; }
-        os_ << "\t";
+        if (need_output_) {
+          os_ << "\t";
 
-        if (!OutputTraits<output_t>::empty(t.state_output)) {
-          os_ << t.state_output;
+          if (!OutputTraits<output_t>::empty(t.output)) { os_ << t.output; }
+          os_ << "\t";
+
+          if (!OutputTraits<output_t>::empty(t.state_output)) {
+            os_ << t.state_output;
+          }
         }
 
         os_ << "\t" << byte_size << std::endl;
@@ -1165,6 +1202,7 @@ private:
   }
 
   std::ostream &os_;
+  size_t need_output_ = true;
   size_t dump_ = true;
   size_t verbose_ = true;
 
@@ -1185,46 +1223,51 @@ private:
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                          bool sorted, bool verbose = false) {
-  FstWriter<output_t> writer(os, false, verbose, [&](const auto &feeder) {
-    for (const auto &[word, _] : input) {
-      feeder(word);
-    }
-  });
-  return build_fst<output_t>(input, writer, sorted);
+  FstWriter<output_t, true> writer(os, true, false, verbose,
+                                   [&](const auto &feeder) {
+                                     for (const auto &[word, _] : input) {
+                                       feeder(word);
+                                     }
+                                   });
+  return build_fst<output_t>(input, writer, true, sorted);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
-                                         bool sorted, bool verbose = false) {
-  FstWriter<uint32_t, false> writer(os, false, verbose,
+                                         bool need_output, bool sorted,
+                                         bool verbose = false) {
+  FstWriter<uint32_t, false> writer(os, need_output, false, verbose,
                                     [&](const auto &feeder) {
                                       for (const auto &word : input) {
                                         feeder(word);
                                       }
                                     });
-  return build_fst(input, writer, sorted);
+  return build_fst(input, writer, need_output, sorted);
 }
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
                                       bool sorted, bool verbose = false) {
-  FstWriter<output_t> writer(os, true, verbose, [&](const auto &feeder) {
-    for (const auto &[word, _] : input) {
-      feeder(word);
-    }
-  });
-  return build_fst<output_t>(input, writer, sorted);
+  FstWriter<output_t, true> writer(os, true, true, verbose,
+                                   [&](const auto &feeder) {
+                                     for (const auto &[word, _] : input) {
+                                       feeder(word);
+                                     }
+                                   });
+  return build_fst<output_t>(input, writer, true, sorted);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> dump(const Input &input, std::ostream &os,
-                                      bool sorted, bool verbose = false) {
-  FstWriter<uint32_t> writer(os, true, verbose, [&](const auto &feeder) {
-    for (const auto &word : input) {
-      feeder(word);
-    }
-  });
-  return build_fst(input, writer, sorted);
+                                      bool need_output, bool sorted,
+                                      bool verbose = false) {
+  FstWriter<uint32_t, true> writer(os, need_output, true, verbose,
+                                   [&](const auto &feeder) {
+                                     for (const auto &word : input) {
+                                       feeder(word);
+                                     }
+                                   });
+  return build_fst(input, writer, need_output, sorted);
 }
 
 //-----------------------------------------------------------------------------
@@ -1273,14 +1316,14 @@ inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
                                      bool sorted) {
 
   DotWriter<output_t> writer(os);
-  return build_fst<output_t>(input, writer, sorted);
+  return build_fst<output_t>(input, writer, true, sorted);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> dot(const Input &input, std::ostream &os,
-                                     bool sorted) {
+                                     bool need_output, bool sorted) {
   DotWriter<uint32_t> writer(os);
-  return build_fst(input, writer, sorted);
+  return build_fst(input, writer, need_output, sorted);
 }
 
 //-----------------------------------------------------------------------------
@@ -1305,7 +1348,7 @@ inline OutputType get_output_type(const char *byte_code,
 // Matcher
 //-----------------------------------------------------------------------------
 
-template <typename output_t = uint32_t> class Matcher {
+template <typename output_t> class Matcher {
 public:
   Matcher(const char *byte_code, size_t byte_code_size)
       : byte_code_(byte_code), byte_code_size_(byte_code_size) {
@@ -1329,38 +1372,7 @@ public:
 
   void set_trace(bool on) { trace_ = on; }
 
-  bool exact_match_search(const char *str, size_t len, output_t &output) const {
-    return match(str, len, [&](const auto &_) { output = _; });
-  }
-
-  bool exact_match_search(const char *str, size_t len) const {
-    return match(str, len);
-  }
-
-  bool common_prefix_search(
-      const char *str, size_t len,
-      std::function<void(size_t, const output_t &)> prefixes) const {
-    return match(str, len, nullptr, prefixes);
-  }
-
-  size_t longest_common_prefix_search(const char *str, size_t len,
-                                      output_t &output) const {
-    size_t prefix_len;
-    if (common_prefix_search(str, len, [&](size_t len, const auto &_output) {
-          prefix_len = len;
-          output = _output;
-        })) {
-      return prefix_len;
-    }
-    return 0;
-  }
-
-  size_t longest_common_prefix_search(const char *str, size_t len) const {
-    output_t _;
-    return longest_common_prefix_search(str, len, _);
-  }
-
-private:
+protected:
   bool match(
       const char *str, size_t len,
       std::function<void(const output_t &)> outputs = nullptr,
@@ -1530,6 +1542,72 @@ private:
   FstHeader header_;
   bool is_valid_ = false;
   bool trace_ = false;
+};
+
+//-----------------------------------------------------------------------------
+// Map
+//-----------------------------------------------------------------------------
+
+template <typename output_t> class Map : public Matcher<output_t> {
+public:
+  Map(const char *byte_code, size_t byte_code_size)
+      : Matcher<output_t>(byte_code, byte_code_size) {}
+
+  bool exact_match_search(const char *str, size_t len, output_t &output) const {
+    return Matcher<output_t>::match(str, len,
+                                    [&](const auto &_) { output = _; });
+  }
+
+  bool exact_match_search(const char *str, size_t len) const {
+    return Matcher<output_t>::match(str, len);
+  }
+
+  bool common_prefix_search(
+      const char *str, size_t len,
+      std::function<void(size_t, const output_t &)> prefixes) const {
+    return Matcher<output_t>::match(str, len, nullptr, prefixes);
+  }
+
+  size_t longest_common_prefix_search(const char *str, size_t len,
+                                      output_t &output) const {
+    size_t prefix_len;
+    if (common_prefix_search(str, len, [&](size_t len, const auto &_output) {
+          prefix_len = len;
+          output = _output;
+        })) {
+      return prefix_len;
+    }
+    return 0;
+  }
+
+  size_t longest_common_prefix_search(const char *str, size_t len) const {
+    output_t _;
+    return longest_common_prefix_search(str, len, _);
+  }
+};
+
+//-----------------------------------------------------------------------------
+// Set
+//-----------------------------------------------------------------------------
+
+class Set : public Matcher<none_t> {
+public:
+  Set(const char *byte_code, size_t byte_code_size)
+      : Matcher<none_t>(byte_code, byte_code_size) {}
+
+  bool exact_match_search(const char *str, size_t len) const {
+    return Matcher<none_t>::match(str, len);
+  }
+
+  bool common_prefix_search(const char *str, size_t len,
+                            std::function<void(size_t)> prefixes) const {
+    return Matcher<none_t>::match(
+        str, len, nullptr, [&](size_t len, const none_t &) { prefixes(len); });
+  }
+
+  size_t longest_common_prefix_search(const char *str, size_t len) const {
+    return longest_common_prefix_search(str, len);
+  }
 };
 
 } // namespace fst

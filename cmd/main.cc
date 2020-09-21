@@ -96,9 +96,9 @@ void show_error_message(fst::Result result, size_t line) {
 }
 
 template <typename output_t>
-void regression_test(const vector<pair<string, output_t>> &input,
-                     const string &byte_code) {
-  fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
+void map_regression_test(const vector<pair<string, output_t>> &input,
+                         const string &byte_code) {
+  fst::Map<output_t> matcher(byte_code.data(), byte_code.size());
 
   if (matcher) {
     for (const auto &[word, expected] : input) {
@@ -119,8 +119,8 @@ void regression_test(const vector<pair<string, output_t>> &input,
   }
 }
 
-void regression_test(const vector<string> &input, const string &byte_code) {
-  fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
+void map_regression_test(const vector<string> &input, const string &byte_code) {
+  fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
 
   if (matcher) {
     uint32_t expected = 0;
@@ -143,28 +143,56 @@ void regression_test(const vector<string> &input, const string &byte_code) {
   }
 }
 
-template <typename output_t, typename T, typename U>
-int build(istream &is, const string &format, T fn1, U fn2) {
-  fst::Result result;
-  size_t line;
+template <typename output_t>
+void set_regression_test(const vector<pair<string, output_t>> &input,
+                         const string &byte_code) {
+  fst::Set matcher(byte_code.data(), byte_code.size());
 
-  if (format.empty()) {
-    if (std::is_same<output_t, std::string>::value) { return 1; }
-    auto input = load_input(is);
-    tie(result, line) = fn2(input);
+  if (matcher) {
+    for (const auto &[word, _] : input) {
+      auto ret = matcher.exact_match_search(word.data(), word.size());
+      if (!ret) { cerr << "couldn't find '" << word << "'" << endl; }
+    }
   } else {
-    auto input = load_input<output_t>(is, format);
-    tie(result, line) = fn1(input);
+    cerr << "someting is wrong in byte_code..." << endl;
   }
+}
 
-  if (result == fst::Result::Success) { return 0; }
-  show_error_message(result, line);
-  return 1;
+void set_regression_test(const vector<string> &input, const string &byte_code) {
+  fst::Set matcher(byte_code.data(), byte_code.size());
+
+  if (matcher) {
+    for (const auto &word : input) {
+      auto ret = matcher.exact_match_search(word.data(), word.size());
+      if (!ret) { cerr << "couldn't find '" << word << "'" << endl; }
+    }
+  } else {
+    cerr << "someting is wrong in byte_code..." << endl;
+  }
+}
+
+template <typename output_t>
+void regression_test(const vector<pair<string, output_t>> &input,
+                     const string &byte_code, bool need_output) {
+  if (need_output) {
+    map_regression_test(input, byte_code);
+  } else {
+    set_regression_test(input, byte_code);
+  }
+}
+
+void regression_test(const vector<string> &input, const string &byte_code,
+                     bool need_output) {
+  if (need_output) {
+    map_regression_test(input, byte_code);
+  } else {
+    set_regression_test(input, byte_code);
+  }
 }
 
 template <typename output_t, typename T, typename U>
-void search_word(const T &byte_code, string_view cmd, bool verbose,
-                 const U &matcher, string_view word) {
+void map_search_word(const T &byte_code, string_view cmd, bool verbose,
+                     const U &matcher, string_view word) {
   bool ret = false;
   if (cmd == "search") {
     output_t output;
@@ -188,31 +216,98 @@ void search_word(const T &byte_code, string_view cmd, bool verbose,
 }
 
 template <typename output_t, typename T>
-void search(const T &byte_code, string_view cmd, bool verbose,
-            string_view word) {
-  fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
+void map_search(const T &byte_code, string_view cmd, bool verbose,
+                string_view word) {
+  fst::Map<output_t> matcher(byte_code.data(), byte_code.size());
   matcher.set_trace(verbose);
 
   if (matcher) {
-    search_word<output_t>(byte_code, cmd, verbose, matcher, word);
+    if (word.empty()) {
+      string word;
+      while (getline(cin, word)) {
+        map_search_word<output_t>(byte_code, cmd, verbose, matcher, word);
+      }
+    } else {
+      map_search_word<output_t>(byte_code, cmd, verbose, matcher, word);
+    }
   } else {
     cout << "invalid file..." << endl;
   }
 }
 
-template <typename output_t, typename T>
-void search(const T &byte_code, string_view cmd, bool verbose) {
-  fst::Matcher<output_t> matcher(byte_code.data(), byte_code.size());
+template <typename T, typename U>
+void set_search_word(const T &byte_code, string_view cmd, bool verbose,
+                     const U &matcher, string_view word) {
+  bool ret = false;
+  if (cmd == "search") {
+    ret = matcher.exact_match_search(word.data(), word.size());
+    if (ret) { cout << "exist!" << endl; }
+  } else if (cmd == "prefix") {
+    ret =
+        matcher.common_prefix_search(word.data(), word.size(), [&](size_t len) {
+          cout << word.substr(0, len) << endl;
+        });
+  } else { // "longest"
+    auto len = matcher.longest_common_prefix_search(word.data(), word.size());
+    if (len > 0) {
+      ret = true;
+      cout << word.substr(0, len) << endl;
+    }
+  }
+  if (!ret) { cout << "not found..." << endl; }
+}
+
+template <typename T>
+void set_search(const T &byte_code, string_view cmd, bool verbose,
+                string_view word) {
+  fst::Set matcher(byte_code.data(), byte_code.size());
   matcher.set_trace(verbose);
 
   if (matcher) {
-    string word;
-    while (getline(cin, word)) {
-      search_word<output_t>(byte_code, cmd, verbose, matcher, word);
+    if (word.empty()) {
+      string word;
+      while (getline(cin, word)) {
+        set_search_word(byte_code, cmd, verbose, matcher, word);
+      }
+    } else {
+      set_search_word(byte_code, cmd, verbose, matcher, word);
     }
   } else {
     cout << "invalid file..." << endl;
   }
+}
+
+template <typename T>
+void search(const T &byte_code, string_view cmd, bool verbose,
+            string_view word) {
+  auto type = fst::get_output_type(byte_code.data(), byte_code.size());
+
+  if (type == fst::OutputType::uint32_t) {
+    map_search<uint32_t>(byte_code, cmd, verbose, word);
+  } else if (type == fst::OutputType::string) {
+    map_search<string>(byte_code, cmd, verbose, word);
+  } else if (type == fst::OutputType::none_t) {
+    set_search(byte_code, cmd, verbose, word);
+  }
+}
+
+template <typename output_t, typename T, typename U>
+int build(istream &is, const string &format, T fn1, U fn2) {
+  fst::Result result;
+  size_t line;
+
+  if (format.empty()) {
+    if (std::is_same<output_t, std::string>::value) { return 1; }
+    auto input = load_input(is);
+    tie(result, line) = fn2(input);
+  } else {
+    auto input = load_input<output_t>(is, format);
+    tie(result, line) = fn1(input);
+  }
+
+  if (result == fst::Result::Success) { return 0; }
+  show_error_message(result, line);
+  return 1;
 }
 
 void usage() {
@@ -252,6 +347,7 @@ int main(int argc, char **argv) {
   auto opt_format = args.get<string>("f");
   auto opt_output_type = args.get<string>("t");
   auto opt_verbose = args.get<bool>("v", false);
+  auto opt_need_output = !args.get<bool>("set", false);
   auto opt_sorted = args.get<bool>("sorted", false);
 
   auto cmd = args.positional().at(0);
@@ -292,11 +388,11 @@ int main(int argc, char **argv) {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<uint32_t>(input, fout, opt_sorted,
-                                            opt_verbose);
+              return fst::compile<uint32_t>(input, fout, opt_sorted, opt_verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, opt_sorted, opt_verbose);
+              return fst::compile(input, fout, opt_need_output, opt_sorted,
+                                  opt_verbose);
             });
       }
 
@@ -308,7 +404,7 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              return fst::dump<string>(input, cout, opt_sorted, opt_verbose);
+              return fst::dump<string>(input, cout, opt_verbose);
             },
             [&](const auto &input) {
               return make_pair(fst::Result::Success, 0);
@@ -320,7 +416,8 @@ int main(int argc, char **argv) {
               return fst::dump<uint32_t>(input, cout, opt_sorted, opt_verbose);
             },
             [&](const auto &input) {
-              return fst::dump(input, cout, opt_sorted, opt_verbose);
+              return fst::dump(input, cout, opt_need_output, opt_sorted,
+                               opt_verbose);
             });
       }
 
@@ -344,7 +441,7 @@ int main(int argc, char **argv) {
               return fst::dot<uint32_t>(input, cout, opt_sorted);
             },
             [&](const auto &input) {
-              return fst::dot(input, cout, opt_sorted);
+              return fst::dot(input, cout, opt_need_output, opt_sorted);
             });
       }
 
@@ -354,22 +451,10 @@ int main(int argc, char **argv) {
 
       auto byte_code = load_byte_code(fin);
 
-      auto type = fst::get_output_type(byte_code.data(), byte_code.size());
+      std::string word;
+      if (args.positional().size() > 2) { word = args.positional().at(2); }
 
-      if (args.positional().size() > 2) {
-        auto word = args.positional().at(2);
-        if (type == fst::OutputType::uint32_t) {
-          search<uint32_t>(byte_code, cmd, opt_verbose, word);
-        } else if (type == fst::OutputType::string) {
-          search<string>(byte_code, cmd, opt_verbose, word);
-        }
-      } else {
-        if (type == fst::OutputType::uint32_t) {
-          search<uint32_t>(byte_code, cmd, opt_verbose);
-        } else if (type == fst::OutputType::string) {
-          search<string>(byte_code, cmd, opt_verbose);
-        }
-      }
+      search(byte_code, cmd, opt_verbose, word);
 
     } else if (cmd == "test") {
       ifstream fin(in_path);
@@ -381,10 +466,9 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              auto ret =
-                  fst::compile<string>(input, ss, opt_sorted, opt_verbose);
+              auto ret = fst::compile<string>(input, ss, opt_sorted, opt_verbose);
               if (ret.first == fst::Result::Success) {
-                regression_test(input, ss.str());
+                regression_test(input, ss.str(), true);
               }
               return ret;
             },
@@ -395,17 +479,17 @@ int main(int argc, char **argv) {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              auto ret =
-                  fst::compile<uint32_t>(input, ss, opt_sorted, opt_verbose);
+              auto ret = fst::compile<uint32_t>(input, ss, opt_sorted, opt_verbose);
               if (ret.first == fst::Result::Success) {
-                regression_test(input, ss.str());
+                regression_test(input, ss.str(), true);
               }
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, opt_sorted, opt_verbose);
+              auto ret = fst::compile(input, ss, opt_need_output, opt_sorted,
+                                      opt_verbose);
               if (ret.first == fst::Result::Success) {
-                regression_test(input, ss.str());
+                regression_test(input, ss.str(), opt_need_output);
               }
               return ret;
             });

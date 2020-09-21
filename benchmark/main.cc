@@ -273,7 +273,7 @@ int main(int argc, const char **argv) {
       if (exact) {
         StopWatch sw("exact");
 
-        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
+        fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
@@ -290,7 +290,7 @@ int main(int argc, const char **argv) {
       if (common_prefix) {
         StopWatch sw("prefix");
 
-        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
+        fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
@@ -335,7 +335,7 @@ int main(int argc, const char **argv) {
       if (exact) {
         StopWatch sw("exact");
 
-        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
+        fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
@@ -352,7 +352,7 @@ int main(int argc, const char **argv) {
       if (common_prefix) {
         StopWatch sw("prefix");
 
-        fst::Matcher<uint32_t> matcher(byte_code.data(), byte_code.size());
+        fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
 
         if (matcher) {
           for (int i = 0; i < count; i++) {

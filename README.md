@@ -45,18 +45,19 @@ std::pair<Result, size_t> compile<std::string>(
 std::pair<Result, size_t> compile(
   const std::vector<std::string> &key_only_input,
   std::ostream &os,
+  bool need_output, // true: map, false: set
   bool sorted
 );
 
-template <typename output_t = uint32_t> class Matcher {
+template <typename output_t> class Map {
 public:
-  Matcher(const char *byte_code, size_t byte_code_size);
+  Map(const char *byte_code, size_t byte_code_size);
 
   operator bool() const;
 
   bool exact_match_search(
     const char *str, size_t len,
-    bool sorted
+    output_t &output
   ) const;
 
   bool common_prefix_search(
@@ -70,6 +71,26 @@ public:
   ) const;
 }
 
+template <typename output_t> class Set {
+public:
+  Set(const char *byte_code, size_t byte_code_size);
+
+  operator bool() const;
+
+  bool exact_match_search(
+    const char *str, size_t len
+  ) const;
+
+  bool common_prefix_search(
+    const char *str, size_t len,
+    std::function<void(size_t match_len)> prefixes
+  ) const;
+
+  size_t /* match_len */ longest_common_prefix_search(
+    const char *str, size_t len
+  ) const;
+}
+
 } // namespace fst
 ```
 
@@ -77,9 +98,9 @@ public:
 
 ```cpp
 const std::vector<std::pair<std::string, std::string>> items = {
-  {"hello!", "こんにちは!"},
-  {"hello world!", "こんにちは世界!"}, // incorrect sort order entry...
-  {"world!", "世界!"},
+  {"hello", "こんにちは!"},
+  {"hello world", "こんにちは世界!"}, // incorrect sort order entry...
+  {"world", "世界!"},
 };
 
 std::stringstream out;
@@ -87,15 +108,18 @@ auto sorted = false; // ask fst::compile to sort entries
 fst::compile<std::string>(items, out, sorted);
 
 const auto& byte_code = out.str();
-fst::Matcher<std::string> matcher(byte_code.data(), byte_code.size());
+fst::Map<std::string> matcher(byte_code.data(), byte_code.size());
 
 if (matcher) {
   const std::string s = "hello world! example.";
   std::string output;
   auto prefix_len = matcher.longest_common_prefix_search(s.data(), s.length(), output);
 
-  assert(prefix_len == 12);
+  assert(prefix_len == 11);
   assert(output == "こんにちは世界!");
+
+  std::cout << prefix_len << std::endl;
+  std::cout << output << std::endl;
 }
 ```
 
