@@ -231,7 +231,7 @@ inline bool get_prefix_length(const std::string &s1, const std::string &s2,
 
 using none_t = int;
 
-enum class OutputType { invalid = -1, uint32_t, uint64_t, string, none_t };
+enum class OutputType { invalid = -1, none_t, uint32_t, uint64_t, string };
 
 template <typename output_t> struct OutputTraits {};
 
@@ -831,16 +831,44 @@ union FstOpe {
     unsigned final : 1;
     unsigned has_output : 1;
     unsigned label_index : 4;
-  } data_witout_state_output;
+  } data_no_state_output;
+
+  struct {
+    unsigned no_address : 1;
+    unsigned last_transition : 1;
+    unsigned final : 1;
+    unsigned label_index : 5;
+  } data_no_output;
 
   uint8_t byte = 0;
 
   FstOpe() = default;
   explicit FstOpe(uint8_t byte) : byte(byte) {}
 
+  size_t label_index(bool need_output, bool need_state_output) const {
+    if (!need_output) {
+      return data_no_output.label_index;
+    } else if (need_state_output) {
+      return data.label_index;
+    } else {
+      return data_no_state_output.label_index;
+    }
+  }
+
+  void set_label_index(bool need_output, bool need_state_output, size_t index) {
+    if (!need_output) {
+      data_no_output.label_index = index;
+    } else if (need_state_output) {
+      data.label_index = index;
+    } else {
+      data_no_state_output.label_index = index;
+    }
+  }
+
   // For char index
-  static constexpr size_t char_index_size(bool need_state_output) {
-    return need_state_output ? 8 : 16;
+  static constexpr size_t char_index_size(bool need_output,
+                                          bool need_state_output) {
+    return !need_output ? 32 : (need_state_output ? 8 : 16);
   }
 
   // For jump table
@@ -866,11 +894,7 @@ template <typename output_t, bool need_state_output> struct FstRecord {
 
   size_t byte_size() const {
     auto sz = 1u;
-    if (need_state_output) {
-      if (ope.data.label_index == 0) { sz += 1; }
-    } else {
-      if (ope.data_witout_state_output.label_index == 0) { sz += 1; }
-    }
+    if (ope.label_index(need_output, need_state_output) == 0) { sz += 1; }
     if (!ope.data.no_address) { sz += vb_encode_value_length(delta); }
     if (need_output) {
       if (ope.data.has_output) {
@@ -900,12 +924,8 @@ template <typename output_t, bool need_state_output> struct FstRecord {
       OutputTraits<uint32_t>::write_byte_value(os,
                                                static_cast<uint32_t>(delta));
     }
-    if (need_state_output) {
-      if (ope.data.label_index == 0) { os.write(&label, 1); }
-    } else {
-      if (ope.data_witout_state_output.label_index == 0) {
-        os.write(&label, 1);
-      }
+    if (ope.label_index(need_output, need_state_output) == 0) {
+      os.write(&label, 1);
     }
     os.write(reinterpret_cast<const char *>(&ope.byte), sizeof(ope.byte));
   }
@@ -916,8 +936,9 @@ struct FstHeader {
   uint8_t output_type = 0;
   uint8_t need_state_output = 0;
   uint8_t reserved = 0;
+
   uint32_t start_address = 0;
-  char char_index[FstOpe::char_index_size(false)] = {0};
+  char char_index[FstOpe::char_index_size(false, false)] = {0};
 
   FstHeader() = default;
 
@@ -927,7 +948,10 @@ struct FstHeader {
         need_state_output(need_state_output),
         start_address(static_cast<uint32_t>(start_address)) {
 
-    auto char_index_size = FstOpe::char_index_size(need_state_output);
+    auto need_output =
+        static_cast<OutputType>(output_type) != OutputType::none_t;
+    auto char_index_size =
+        FstOpe::char_index_size(need_output, need_state_output);
 
     for (auto ch = 0u; ch < 256; ch++) {
       auto index = char_index_table[ch];
@@ -987,7 +1011,8 @@ public:
     auto transition_count = state.transitions.size();
     const auto &[arcs, states_and_outputs] = state.transitions;
 
-    auto char_index_size = FstOpe::char_index_size(need_state_output);
+    auto char_index_size =
+        FstOpe::char_index_size(need_output_, need_state_output);
 
     std::vector<size_t> jump_table(transition_count);
     auto need_jump_table = transition_count >= 8;
@@ -1062,21 +1087,13 @@ public:
       } else {
         rec.label = arc;
       }
-      if (need_state_output) {
-        rec.ope.data.label_index = label_index;
-      } else {
-        rec.ope.data_witout_state_output.label_index = label_index;
-      }
+      rec.ope.set_label_index(need_output_, need_state_output, label_index);
 
       // When the ope byte happens to be the same as jump tag byte, change to
       // use '.label' field instead.
       if (rec.ope.has_jump_table()) {
         rec.label = arc;
-        if (need_state_output) {
-          rec.ope.data.label_index = 0;
-        } else {
-          rec.ope.data_witout_state_output.label_index = 0;
-        }
+        rec.ope.set_label_index(need_output_, need_state_output, 0);
       }
 
       auto byte_size = rec.byte_size();
@@ -1365,6 +1382,8 @@ public:
       return;
     }
 
+    need_output_ =
+        static_cast<OutputType>(header_.output_type) != OutputType::none_t;
     is_valid_ = true;
   }
 
@@ -1530,9 +1549,7 @@ protected:
   }
 
   uint8_t get_arc(FstOpe ope, const char *&p) const {
-    auto index = header_.need_state_output
-                     ? ope.data.label_index
-                     : ope.data_witout_state_output.label_index;
+    auto index = ope.label_index(need_output_, header_.need_state_output);
     return index == 0 ? *p-- : header_.char_index[index];
   }
 
@@ -1540,6 +1557,7 @@ protected:
   const size_t byte_code_size_;
 
   FstHeader header_;
+  bool need_output_ = false;
   bool is_valid_ = false;
   bool trace_ = false;
 };
