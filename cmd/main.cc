@@ -103,15 +103,14 @@ void map_regression_test(const vector<pair<string, output_t>> &input,
   if (matcher) {
     for (const auto &[word, expected] : input) {
       auto actual = fst::OutputTraits<output_t>::initial_value();
-      auto ret = matcher.exact_match_search(word.data(), word.size(), actual);
-      if (!ret) {
-        cerr << "couldn't find '" << word << "'" << endl;
-      } else {
+      if (!matcher.exact_match_search(word, actual)) {
         if (expected != actual) {
           cerr << "word: " << word << endl;
           cerr << "expected value: " << expected << endl;
           cerr << "actual value: " << actual << endl;
         }
+      } else {
+        cerr << "couldn't find '" << word << "'" << endl;
       }
     }
   } else {
@@ -126,15 +125,14 @@ void map_regression_test(const vector<string> &input, const string &byte_code) {
     uint32_t expected = 0;
     for (const auto &word : input) {
       uint32_t actual = 0;
-      auto ret = matcher.exact_match_search(word.data(), word.size(), actual);
-      if (!ret) {
-        cerr << "couldn't find '" << word << "'" << endl;
-      } else {
+      if (matcher.exact_match_search(word, actual)) {
         if (expected != actual) {
           cerr << "word: " << word << endl;
           cerr << "expected value: " << expected << endl;
           cerr << "actual value: " << actual << endl;
         }
+      } else {
+        cerr << "couldn't find '" << word << "'" << endl;
       }
       expected++;
     }
@@ -150,8 +148,9 @@ void set_regression_test(const vector<pair<string, output_t>> &input,
 
   if (matcher) {
     for (const auto &[word, _] : input) {
-      auto ret = matcher.exact_match_search(word.data(), word.size());
-      if (!ret) { cerr << "couldn't find '" << word << "'" << endl; }
+      if (!matcher.contains(word)) {
+        cerr << "couldn't find '" << word << "'" << endl;
+      }
     }
   } else {
     cerr << "someting is wrong in byte_code..." << endl;
@@ -163,8 +162,9 @@ void set_regression_test(const vector<string> &input, const string &byte_code) {
 
   if (matcher) {
     for (const auto &word : input) {
-      auto ret = matcher.exact_match_search(word.data(), word.size());
-      if (!ret) { cerr << "couldn't find '" << word << "'" << endl; }
+      if (!matcher.contains(word)) {
+        cerr << "couldn't find '" << word << "'" << endl;
+      }
     }
   } else {
     cerr << "someting is wrong in byte_code..." << endl;
@@ -193,20 +193,19 @@ void regression_test(const vector<string> &input, const string &byte_code,
 template <typename output_t, typename T, typename U>
 void map_search_word(const T &byte_code, string_view cmd, bool verbose,
                      const U &matcher, string_view word) {
-  bool ret = false;
+  auto ret = false;
   if (cmd == "search") {
     output_t output;
-    ret = matcher.exact_match_search(word.data(), word.size(), output);
+    ret = matcher.exact_match_search(word, output);
     if (ret) { cout << output << endl; }
   } else if (cmd == "prefix") {
-    ret = matcher.common_prefix_search(
-        word.data(), word.size(), [&](size_t len, const auto &output) {
+    ret =
+        matcher.common_prefix_search(word, [&](size_t len, const auto &output) {
           cout << word.substr(0, len) << ": " << output << endl;
         });
   } else { // "longest"
     output_t output;
-    auto len =
-        matcher.longest_common_prefix_search(word.data(), word.size(), output);
+    auto len = matcher.longest_common_prefix_search(word, output);
     if (len > 0) {
       ret = true;
       cout << word.substr(0, len) << ": " << output << endl;
@@ -240,15 +239,13 @@ void set_search_word(const T &byte_code, string_view cmd, bool verbose,
                      const U &matcher, string_view word) {
   bool ret = false;
   if (cmd == "search") {
-    ret = matcher.exact_match_search(word.data(), word.size());
+    ret = matcher.contains(word);
     if (ret) { cout << "exist!" << endl; }
   } else if (cmd == "prefix") {
-    ret =
-        matcher.common_prefix_search(word.data(), word.size(), [&](size_t len) {
-          cout << word.substr(0, len) << endl;
-        });
+    ret = matcher.common_prefix_search(
+        word, [&](size_t len) { cout << word.substr(0, len) << endl; });
   } else { // "longest"
-    auto len = matcher.longest_common_prefix_search(word.data(), word.size());
+    auto len = matcher.longest_common_prefix_search(word);
     if (len > 0) {
       ret = true;
       cout << word.substr(0, len) << endl;
@@ -388,7 +385,8 @@ int main(int argc, char **argv) {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              return fst::compile<uint32_t>(input, fout, opt_sorted, opt_verbose);
+              return fst::compile<uint32_t>(input, fout, opt_sorted,
+                                            opt_verbose);
             },
             [&](const auto &input) {
               return fst::compile(input, fout, opt_need_output, opt_sorted,
@@ -466,7 +464,8 @@ int main(int argc, char **argv) {
         return build<string>(
             fin, format,
             [&](const auto &input) {
-              auto ret = fst::compile<string>(input, ss, opt_sorted, opt_verbose);
+              auto ret =
+                  fst::compile<string>(input, ss, opt_sorted, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str(), true);
               }
@@ -479,7 +478,8 @@ int main(int argc, char **argv) {
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
-              auto ret = fst::compile<uint32_t>(input, ss, opt_sorted, opt_verbose);
+              auto ret =
+                  fst::compile<uint32_t>(input, ss, opt_sorted, opt_verbose);
               if (ret.first == fst::Result::Success) {
                 regression_test(input, ss.str(), true);
               }

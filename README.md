@@ -33,18 +33,18 @@ namespace fst {
 
 enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
-std::pair<Result, size_t /* error line */> compile<uint32_t>(
+std::pair<Result, size_t /* error input index */> compile<uint32_t>(
   const std::vector<std::string, uint32_t> &input,
   std::ostream &os,
   bool sorted
 );
 
-std::pair<Result, size_t /* error line */> compile<std::string>(
+std::pair<Result, size_t /* error input index */> compile<std::string>(
   const std::vector<std::string, std::string> &input,
   std::ostream &os
 );
 
-std::pair<Result, size_t /* error line */> compile(
+std::pair<Result, size_t /* error input index */> compile(
   const std::vector<std::string> &key_only_input,
   std::ostream &os,
   bool need_output, // true: map, false: set
@@ -57,40 +57,30 @@ public:
 
   operator bool() const;
 
-  bool exact_match_search(
-    const char *str, size_t len,
-    output_t &output
-  ) const;
+  bool contains(std::string_view sv) const;
 
-  bool common_prefix_search(
-    const char *str, size_t len,
-    std::function<void(size_t match_len, const output_t &output)> prefixes
-  ) const;
+  output_t operator[](std::string_view sv) const;
 
-  size_t /* match_len */ longest_common_prefix_search(
-    const char *str, size_t len,
-    output_t &output
-  ) const;
+  output_t at(std::string_view sv) const;
+
+  bool exact_match_search(std::string_view sv, output_t &output) const;
+
+  std::vector<std::pair<size_t length, output_t output>> common_prefix_search(std::string_view sv) const;
+
+  size_t longest_common_prefix_search(std::string_view sv, output_t &output) const;
 }
 
-template <typename output_t> class Set {
+class Set {
 public:
   Set(const char *byte_code, size_t byte_code_size);
 
   operator bool() const;
 
-  bool exact_match_search(
-    const char *str, size_t len
-  ) const;
+  bool contains(std::string_view sv) const;
 
-  bool common_prefix_search(
-    const char *str, size_t len,
-    std::function<void(size_t match_len)> prefixes
-  ) const;
+  std::vector<size_t> common_prefix_search(std::string_view sv) const;
 
-  size_t /* match_len */ longest_common_prefix_search(
-    const char *str, size_t len
-  ) const;
+  size_t longest_common_prefix_search(std::string_view sv) const;
 }
 
 } // namespace fst
@@ -114,15 +104,21 @@ if (result == fst::Result::Success) {
   fst::Map<std::string> matcher(byte_code.data(), byte_code.size());
 
   if (matcher) {
-    const std::string s = "hello world! example.";
+    assert(matcher.contains("hello world"));
+    assert(!matcher.contains("Hello World"));
+    assert(matcher["hello"] == "こんにちは!");
+
+    auto prefixes = matcher.common_prefix_search("hello world!");
+    assert(prefixes.size() == 2);
+    assert(prefixes[0].first == 5);
+    assert(prefixes[0].second == "こんにちは!");
+    assert(prefixes[1].first == 11);
+    assert(prefixes[1].second == "こんにちは世界!");
     std::string output;
-    auto prefix_len = matcher.longest_common_prefix_search(s.data(), s.length(), output);
+    auto length = matcher.longest_common_prefix_search("hello world!", output);
 
-    assert(prefix_len == 11);
+    assert(length == 11);
     assert(output == "こんにちは世界!");
-
-    std::cout << prefix_len << std::endl;
-    std::cout << output << std::endl;
   }
 }
 ```

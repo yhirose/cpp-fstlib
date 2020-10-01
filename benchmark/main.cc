@@ -277,11 +277,11 @@ int main(int argc, const char **argv) {
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
-            for (int j = 0; j < keys.size(); j++) {
+            for (const auto &item : input) {
+              const auto &key = item.first;
               uint32_t output = 0;
-              auto ret =
-                  matcher.exact_match_search(keys[j], lengths[j], output);
-              if (!ret) { cerr << "error: (" << keys[j] << ")" << endl; }
+              auto ret = matcher.exact_match_search(key, output);
+              if (!ret) { cerr << "error: (" << key << ")" << endl; }
             }
           }
         }
@@ -294,10 +294,11 @@ int main(int argc, const char **argv) {
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
-            for (int j = 0; j < keys.size(); j++) {
+            for (const auto &item : input) {
+              const auto &key = item.first;
               auto ret = matcher.common_prefix_search(
-                  keys[j], lengths[j], [&](size_t, const auto &) {});
-              if (!ret) { cerr << "error: (" << keys[j] << ")" << endl; }
+                  key, [&](size_t, const auto &) {});
+              if (!ret) { cerr << "error: (" << key << ")" << endl; }
             }
           }
         }
@@ -339,11 +340,11 @@ int main(int argc, const char **argv) {
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
-            for (int j = 0; j < keys.size(); j++) {
+            for (const auto &item : input) {
+              const auto &key = item.first;
               uint32_t output = 0;
-              auto ret =
-                  matcher.exact_match_search(keys[j], lengths[j], output);
-              if (!ret) { cerr << "error: (" << keys[j] << ")" << endl; }
+              auto ret = matcher.exact_match_search(key, output);
+              if (!ret) { cerr << "error: (" << key << ")" << endl; }
             }
           }
         }
@@ -356,10 +357,11 @@ int main(int argc, const char **argv) {
 
         if (matcher) {
           for (int i = 0; i < count; i++) {
-            for (int j = 0; j < keys.size(); j++) {
+            for (const auto &item : input) {
+              const auto &key = item.first;
               auto ret = matcher.common_prefix_search(
-                  keys[j], lengths[j], [&](size_t, const auto &) {});
-              if (!ret) { cerr << "error: (" << keys[j] << ")" << endl; }
+                  key, [&](size_t, const auto &) {});
+              if (!ret) { cerr << "error: (" << key << ")" << endl; }
             }
           }
         }

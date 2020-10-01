@@ -21,6 +21,7 @@
 #include <queue>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -614,7 +615,8 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
 
   Dictionary<output_t> dictionary(state_pool);
   auto next_state_id = 0u;
-  auto line = 1u;
+  // auto input_index = 0u;
+  auto error_input_index = 0u;
   auto result = Result::Success;
 
   // Main algorithm ported from the technical paper
@@ -622,11 +624,13 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
   std::string previous_word;
   temp_states.push_back(state_pool.New(next_state_id++));
 
-  input([&](const auto &current_word, const auto &_current_output) {
+  input([&](const auto &current_word, const auto &_current_output,
+            size_t input_index) {
     auto current_output = _current_output;
 
     if (current_word.empty()) {
       result = Result::EmptyKey;
+      error_input_index = input_index;
       return false;
     }
 
@@ -635,12 +639,14 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
     size_t prefix_length;
     if (!get_prefix_length(previous_word, current_word, prefix_length)) {
       result = Result::UnsortedKey;
+      error_input_index = input_index;
       return false;
     }
 
     if (previous_word.size() == current_word.size() &&
         previous_word == current_word) {
       result = Result::DuplicateKey;
+      error_input_index = input_index;
       return false;
     }
 
@@ -722,12 +728,14 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
     }
 
     previous_word = current_word;
-    line++;
+    // input_index++;
 
     return true;
   });
 
-  if (result != Result::Success) { return std::make_pair(result, line); }
+  if (result != Result::Success) {
+    return std::make_pair(result, error_input_index);
+  }
 
   // Here we are minimizing the states of the last word
   for (auto i = static_cast<int>(previous_word.size()); i >= 0; i--) {
@@ -744,7 +752,7 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
     if (i > 0) { temp_states[i - 1]->set_transition(arc, state); }
   }
 
-  return std::make_pair(Result::Success, line);
+  return std::make_pair(Result::Success, error_input_index);
 }
 
 //-----------------------------------------------------------------------------
@@ -757,24 +765,26 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
   return build_fst_core<output_t>(
       [&](const auto &feeder) {
         if (sorted) {
+          size_t input_index = 0;
           for (const auto &item : input) {
             const auto &word = item.first;
             const auto &output = item.second;
-            if (!feeder(word, output)) { break; }
+            if (!feeder(word, output, input_index)) { break; }
+            input_index++;
           }
         } else {
-          std::vector<std::pair<std::string, output_t>> sorted_input;
-
-          for (const auto &item : input) {
-            sorted_input.push_back(item);
+          std::vector<size_t> sorted_indexes(input.size());
+          {
+            std::iota(sorted_indexes.begin(), sorted_indexes.end(), 0);
+            std::sort(sorted_indexes.begin(), sorted_indexes.end(),
+                      [&](const auto &a, const auto &b) {
+                        return input[a].first < input[b].first;
+                      });
           }
 
-          std::sort(
-              sorted_input.begin(), sorted_input.end(),
-              [](const auto &a, const auto &b) { return a.first < b.first; });
-
-          for (const auto &[word, output] : sorted_input) {
-            if (!feeder(word, output)) { break; }
+          for (auto input_index : sorted_indexes) {
+            const auto &[word, output] = input[input_index];
+            if (!feeder(word, output, input_index)) { break; }
           }
         }
       },
@@ -787,24 +797,30 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
   return build_fst_core<uint32_t>(
       [&](const auto &feeder) {
         if (sorted) {
-          uint32_t id = 0;
+          size_t input_index = 0;
           for (const auto &word : input) {
-            if (!feeder(word, id++)) { break; }
+            if (!feeder(word, static_cast<uint32_t>(input_index),
+                        input_index)) {
+              break;
+            }
+            input_index++;
           }
         } else {
-          std::vector<std::pair<std::string, uint32_t>> sorted_input;
-
-          uint32_t id = 0;
-          for (const auto &word : input) {
-            sorted_input.push_back(std::make_pair(word, id++));
+          std::vector<size_t> sorted_indexes(input.size());
+          {
+            std::iota(sorted_indexes.begin(), sorted_indexes.end(), 0);
+            std::sort(sorted_indexes.begin(), sorted_indexes.end(),
+                      [&](const auto &a, const auto &b) {
+                        return input[a] < input[b];
+                      });
           }
 
-          std::sort(
-              sorted_input.begin(), sorted_input.end(),
-              [](const auto &a, const auto &b) { return a.first < b.first; });
-
-          for (const auto &[word, id] : sorted_input) {
-            if (!feeder(word, id)) { break; }
+          for (auto input_index : sorted_indexes) {
+            const auto word = input[input_index];
+            if (!feeder(word, static_cast<uint32_t>(input_index),
+                        input_index)) {
+              break;
+            }
           }
         }
       },
@@ -986,7 +1002,8 @@ struct FstHeader {
     memcpy(char_index, p - (size - 1), size);
 
     // For performance
-    need_output = static_cast<OutputType>(flags.data.output_type) != OutputType::none_t;
+    need_output =
+        static_cast<OutputType>(flags.data.output_type) != OutputType::none_t;
     need_state_output = flags.data.need_state_output;
     return true;
   }
@@ -1571,7 +1588,8 @@ protected:
   }
 
   uint8_t get_arc(FstOpe ope, const char *&p) const {
-    auto index = ope.label_index(header_.need_output, header_.need_state_output);
+    auto index =
+        ope.label_index(header_.need_output, header_.need_state_output);
     return index == 0 ? *p-- : header_.char_index[index];
   }
 
@@ -1592,36 +1610,50 @@ public:
   Map(const char *byte_code, size_t byte_code_size)
       : Matcher<output_t>(byte_code, byte_code_size) {}
 
-  bool exact_match_search(const char *str, size_t len, output_t &output) const {
-    return Matcher<output_t>::match(str, len,
+  bool contains(std::string_view sv) const {
+    return Matcher<output_t>::match(sv.data(), sv.size(), [&](const auto &) {});
+  }
+
+  output_t operator[](std::string_view sv) const { return at(sv); }
+
+  output_t operator[](const char *s) const { return at(s); }
+
+  output_t at(std::string_view sv) const {
+    auto output = fst::OutputTraits<output_t>::initial_value();
+    auto ret = Matcher<output_t>::match(sv.data(), sv.size(),
+                                        [&](const auto &_) { output = _; });
+    if (!ret) { throw std::out_of_range("invalid key..."); }
+    return output;
+  }
+
+  bool exact_match_search(std::string_view sv, output_t &output) const {
+    return Matcher<output_t>::match(sv.data(), sv.size(),
                                     [&](const auto &_) { output = _; });
   }
 
-  bool exact_match_search(const char *str, size_t len) const {
-    return Matcher<output_t>::match(str, len);
-  }
-
   bool common_prefix_search(
-      const char *str, size_t len,
+      std::string_view sv,
       std::function<void(size_t, const output_t &)> prefixes) const {
-    return Matcher<output_t>::match(str, len, nullptr, prefixes);
+    return Matcher<output_t>::match(sv.data(), sv.size(), nullptr, prefixes);
   }
 
-  size_t longest_common_prefix_search(const char *str, size_t len,
+  std::vector<std::pair<size_t, output_t>>
+  common_prefix_search(std::string_view sv) const {
+    std::vector<std::pair<size_t, output_t>> ret;
+    common_prefix_search(sv, [&](size_t length, const output_t &output) {
+      ret.emplace_back(std::make_pair(length, output));
+    });
+    return ret;
+  }
+
+  size_t longest_common_prefix_search(std::string_view sv,
                                       output_t &output) const {
-    size_t prefix_len;
-    if (common_prefix_search(str, len, [&](size_t len, const auto &_output) {
-          prefix_len = len;
-          output = _output;
-        })) {
-      return prefix_len;
-    }
-    return 0;
-  }
-
-  size_t longest_common_prefix_search(const char *str, size_t len) const {
-    output_t _;
-    return longest_common_prefix_search(str, len, _);
+    size_t prefix_len = 0;
+    common_prefix_search(sv, [&](size_t len, const auto &_output) {
+      prefix_len = len;
+      output = _output;
+    });
+    return prefix_len;
   }
 };
 
@@ -1634,18 +1666,29 @@ public:
   Set(const char *byte_code, size_t byte_code_size)
       : Matcher<none_t>(byte_code, byte_code_size) {}
 
-  bool exact_match_search(const char *str, size_t len) const {
-    return Matcher<none_t>::match(str, len);
+  bool contains(std::string_view sv) const {
+    return Matcher<none_t>::match(sv.data(), sv.size());
   }
 
-  bool common_prefix_search(const char *str, size_t len,
+  bool common_prefix_search(std::string_view sv,
                             std::function<void(size_t)> prefixes) const {
     return Matcher<none_t>::match(
-        str, len, nullptr, [&](size_t len, const none_t &) { prefixes(len); });
+        sv.data(), sv.size(), nullptr,
+        [&](size_t len, const none_t &) { prefixes(len); });
   }
 
-  size_t longest_common_prefix_search(const char *str, size_t len) const {
-    return longest_common_prefix_search(str, len);
+  std::vector<size_t> common_prefix_search(std::string_view sv) const {
+    std::vector<size_t> ret;
+    common_prefix_search(sv, [&](size_t length) {
+      ret.push_back(length);
+    });
+    return ret;
+  }
+
+  size_t longest_common_prefix_search(std::string_view sv) const {
+    size_t prefix_len = 0;
+    common_prefix_search(sv, [&](size_t len) { prefix_len = len; });
+    return prefix_len;
   }
 };
 

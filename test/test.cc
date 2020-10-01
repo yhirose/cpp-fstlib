@@ -11,176 +11,248 @@ using namespace std;
 typedef uint32_t output_t;
 #define V(x) (x)
 #else
-typedef std::string output_t;
+typedef string output_t;
 #define V(x) (#x)
 #endif
 
-#if 0
-inline vector<fst::CommonPrefixSearchResult<output_t>>
-prefix_match(const vector<char> &byte_code, const char *str) {
-  vector<fst::CommonPrefixSearchResult<output_t>> ret;
-  fst::common_prefix_search<output_t>(
-      byte_code.data(), byte_code.size(), str,
-      [&](const auto &result) { ret.emplace_back(result); });
-  return ret;
+template <typename Input, typename Callback>
+void make_map(const Input &input, bool sorted, Callback callback) {
+  stringstream out;
+  auto [result, _] = fst::compile<output_t>(input, out, sorted);
+  REQUIRE(result == fst::Result::Success);
+
+  const auto &byte_code = out.str();
+  fst::Map<output_t> matcher(byte_code.data(), byte_code.size());
+  callback(matcher);
 }
 
-template <typename output_t>
-inline vector<output_t> exact_match_t(const vector<char> &byte_code,
-                                      const char *str) {
-  vector<output_t> outputs;
-  fst::exact_match_search<output_t>(
-      byte_code.data(), byte_code.size(), str,
-      [&](const output_t &val) { outputs.emplace_back(val); });
-  return outputs;
+template <typename Input, typename Callback>
+void make_map_with_auto_index(const Input &input, bool sorted,
+                              Callback callback) {
+  stringstream out;
+  auto [result, _] = fst::compile(input, out, true, sorted);
+  REQUIRE(result == fst::Result::Success);
+
+  const auto &byte_code = out.str();
+  fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
+  callback(matcher);
 }
 
-inline vector<output_t> exact_match(const vector<char> &byte_code,
-                                    const char *str) {
-  return exact_match_t<output_t>(byte_code, str);
+template <typename Input, typename Callback>
+void make_set(const Input &input, bool sorted, Callback callback) {
+  stringstream out;
+  auto [result, _] = fst::compile(input, out, false, sorted);
+  REQUIRE(result == fst::Result::Success);
+
+  const auto &byte_code = out.str();
+  fst::Set matcher(byte_code.data(), byte_code.size());
+  callback(matcher);
 }
 
-void StateMachineInterpreterTest(bool optimize) {
+TEST_CASE("Success", "[compile]") {
   vector<pair<string, output_t>> input = {
-      {"apr", V(30)}, {"aug", V(31)}, {"dec", V(31)}, {"feb", V(28)},
-      {"feb", V(29)}, {"jan", V(31)}, {"jul", V(31)}, {"jun", V(30)},
+      {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
+      {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
+      {"sep", V(30)}, {"oct", V(31)}, {"nov", V(30)}, {"dec", V(31)},
   };
 
-  auto sm = fst::make_state_machine(input);
-  REQUIRE(sm->count == 13);
-
-  if (optimize) {
-    fst::optimize(*sm);
-  }
-
-  auto ret = fst::exact_match_search<output_t>(*sm, "feb");
-  REQUIRE(ret.size() == 2);
-  REQUIRE(ret[0] == V(28));
-  REQUIRE(ret[1] == V(29));
-
-  ret = fst::exact_match_search<output_t>(*sm, "jul");
-  REQUIRE(ret.size() == 1);
-  REQUIRE(ret[0] == V(31));
-
-  ret = fst::exact_match_search<output_t>(*sm, "???");
-  REQUIRE(ret.size() == 0);
+  stringstream out;
+  auto [result, _] = fst::compile<output_t>(input, out, false);
+  REQUIRE(result == fst::Result::Success);
 }
 
-TEST_CASE("State machine interpreter test", "[general]") {
-  StateMachineInterpreterTest(true);
-  StateMachineInterpreterTest(false);
-}
-
-void SimpleVirtualMachineTest(bool optimize) {
-  vector<pair<string, output_t>> input = {
-      {"apr", V(30)}, {"aug", V(31)}, {"dec", V(31)}, {"feb", V(28)},
-      {"feb", V(29)}, {"jan", V(31)}, {"jul", V(31)}, {"jun", V(30)},
+TEST_CASE("Success with no output", "[compile]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
   };
 
-  auto sm = fst::make_state_machine(input);
-  REQUIRE(sm->count == 13);
-
-  if (optimize) {
-    fst::optimize(*sm);
-    REQUIRE(sm->count == 6);
+  stringstream out;
+  {
+    auto [result, _] = fst::compile(input, out, true, false);
+    REQUIRE(result == fst::Result::Success);
   }
-
-  auto byte_code = fst::compile(*sm);
-
-  REQUIRE(exact_match(byte_code, "apr")[0] == V(30));
-  REQUIRE(exact_match(byte_code, "aug")[0] == V(31));
-  REQUIRE(exact_match(byte_code, "dec")[0] == V(31));
-  REQUIRE(exact_match(byte_code, "feb")[0] == V(28));
-  REQUIRE(exact_match(byte_code, "feb")[1] == V(29));
-  REQUIRE(exact_match(byte_code, "jul")[0] == V(31));
-  REQUIRE(exact_match(byte_code, "jun")[0] == V(30));
-
-  REQUIRE(exact_match(byte_code, "").empty());
-  REQUIRE(exact_match(byte_code, "_").empty());
-  REQUIRE(exact_match(byte_code, "a").empty());
-  REQUIRE(exact_match(byte_code, "ap").empty());
-  REQUIRE(exact_match(byte_code, "ap_").empty());
-  REQUIRE(exact_match(byte_code, "apr_").empty());
-
-  vector<pair<string, output_t>> entries;
-  fst::decompile<output_t>(byte_code.data(), byte_code.size(),
-                           [&](const std::string &key, output_t &output) {
-                             entries.emplace_back(key, output);
-                           });
-
-  REQUIRE(entries.size() == 8);
-  REQUIRE(entries[0].first == "apr");
-  REQUIRE(entries[0].second == V(30));
-  REQUIRE(entries[1].first == "aug");
-  REQUIRE(entries[1].second == V(31));
-  REQUIRE(entries[2].first == "dec");
-  REQUIRE(entries[2].second == V(31));
-  REQUIRE(entries[3].first == "feb");
-  REQUIRE(entries[3].second == V(28));
-  REQUIRE(entries[4].first == "feb");
-  REQUIRE(entries[4].second == V(29));
-  REQUIRE(entries[5].first == "jan");
-  REQUIRE(entries[5].second == V(31));
-  REQUIRE(entries[6].first == "jul");
-  REQUIRE(entries[6].second == V(31));
-  REQUIRE(entries[7].first == "jun");
-  REQUIRE(entries[7].second == V(30));
+  {
+    auto [result, _] = fst::compile(input, out, false, false);
+    REQUIRE(result == fst::Result::Success);
+  }
 }
 
-TEST_CASE("Simple virtual machine test", "[general]") {
-  SimpleVirtualMachineTest(true);
-  SimpleVirtualMachineTest(false);
+TEST_CASE("Empty key", "[compile]") {
+  vector<pair<string, output_t>> input = {
+      {"jan", V(31)}, {"feb", V(28)}, {"", V(31)},    {"apr", V(30)},
+      {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
+      {"sep", V(30)}, {"oct", V(31)}, {"nov", V(30)}, {"dec", V(31)},
+  };
+
+  stringstream out;
+  auto [result, index] = fst::compile<output_t>(input, out, false);
+  REQUIRE(result == fst::Result::EmptyKey);
+  REQUIRE(index == 2);
 }
 
-TEST_CASE("Edge case test1", "[general]") {
+TEST_CASE("Empty key with no output", "[compile]") {
+  vector<string> input = {
+      "jan", "feb", "",    "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream out;
+  {
+    auto [result, index] = fst::compile(input, out, true, false);
+    REQUIRE(result == fst::Result::EmptyKey);
+    REQUIRE(index == 2);
+  }
+  {
+    auto [result, index] = fst::compile(input, out, false, false);
+    REQUIRE(result == fst::Result::EmptyKey);
+    REQUIRE(index == 2);
+  }
+}
+
+TEST_CASE("Unsorted key", "[compile]") {
+  vector<pair<string, output_t>> input = {
+      {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
+      {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
+      {"sep", V(30)}, {"oct", V(31)}, {"nov", V(30)}, {"dec", V(31)},
+  };
+
+  stringstream out;
+  auto [result, index] = fst::compile<output_t>(input, out, true);
+  REQUIRE(result == fst::Result::UnsortedKey);
+  REQUIRE(index == 1);
+}
+
+TEST_CASE("Unsorted key with no output", "[compile]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream out;
+  {
+    auto [result, index] = fst::compile(input, out, true, true);
+    REQUIRE(result == fst::Result::UnsortedKey);
+    REQUIRE(index == 1);
+  }
+  {
+    auto [result, index] = fst::compile(input, out, false, true);
+    REQUIRE(result == fst::Result::UnsortedKey);
+    REQUIRE(index == 1);
+  }
+}
+
+TEST_CASE("Duplicate key", "[compile]") {
+  vector<pair<string, output_t>> input = {
+      {"jan", V(31)}, {"feb", V(28)}, {"feb", V(29)}, {"mar", V(31)},
+      {"apr", V(30)}, {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)},
+      {"aug", V(31)}, {"sep", V(30)}, {"oct", V(31)}, {"nov", V(30)},
+      {"dec", V(31)},
+  };
+
+  stringstream out;
+  auto [result, index] = fst::compile<output_t>(input, out, false);
+  REQUIRE(result == fst::Result::DuplicateKey);
+  REQUIRE(index == 2);
+}
+
+TEST_CASE("Duplicate key with no value", "[compile]") {
+  vector<string> input = {
+      "jan", "feb", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream out;
+  {
+    auto [result, index] = fst::compile(input, out, true, false);
+    REQUIRE(result == fst::Result::DuplicateKey);
+    REQUIRE(index == 2);
+  }
+  {
+    auto [result, index] = fst::compile(input, out, false, false);
+    REQUIRE(result == fst::Result::DuplicateKey);
+    REQUIRE(index == 2);
+  }
+}
+
+TEST_CASE("Normal Map test", "[map]") {
+  vector<pair<string, output_t>> input = {
+      {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
+      {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
+      {"sep", V(30)}, {"oct", V(31)}, {"nov", V(30)}, {"dec", V(31)},
+  };
+
+  make_map(input, false, [](auto &map) {
+    {
+      output_t actual;
+      REQUIRE(map.exact_match_search("apr", actual));
+      REQUIRE(actual == V(30));
+    }
+
+    REQUIRE(map.contains("jan"));
+    REQUIRE(map.at("jan") == V(31));
+    REQUIRE(map["apr"] == V(30));
+    REQUIRE(map[string("apr")] == V(30));
+    REQUIRE(map[string_view("apr")] == V(30));
+
+    REQUIRE(map["feb"] == V(28));
+    REQUIRE(map["mar"] == V(31));
+    REQUIRE(map["apr"] == V(30));
+    REQUIRE(map["may"] == V(31));
+    REQUIRE(map["jun"] == V(30));
+    REQUIRE(map["jul"] == V(31));
+    REQUIRE(map["aug"] == V(31));
+    REQUIRE(map["sep"] == V(30));
+    REQUIRE(map["oct"] == V(31));
+    REQUIRE(map["nov"] == V(30));
+    REQUIRE(map["dec"] == V(31));
+
+    REQUIRE(map.contains("") == false);
+    REQUIRE(map.contains("_") == false);
+    REQUIRE(map.contains("a") == false);
+    REQUIRE(map.contains("ap") == false);
+    REQUIRE(map.contains("ap_") == false);
+    REQUIRE(map.contains("apr_") == false);
+  });
+}
+
+TEST_CASE("Edge case test1", "[map]") {
   vector<pair<string, output_t>> input = {
       {"a", V(0)},
       {"ab", V(1)},
   };
 
-  auto sm = fst::make_state_machine(input);
-
-  REQUIRE(sm->count == 3);
-
-  auto byte_code = fst::compile(*sm);
-
-  REQUIRE(exact_match(byte_code, "a")[0] == V(0));
-  REQUIRE(exact_match(byte_code, "ab")[0] == V(1));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map["a"] == V(0));
+    REQUIRE(map["ab"] == V(1));
+  });
 }
 
-TEST_CASE("Edge case test2", "[general]") {
+TEST_CASE("Edge case test2", "[map]") {
   vector<pair<string, output_t>> input = {
       {"aa", V(0)},
       {"abb", V(1)},
   };
 
-  auto sm = fst::make_state_machine(input);
-
-  REQUIRE(sm->count == 4);
-
-  auto byte_code = fst::compile(*sm);
-
-  REQUIRE(exact_match(byte_code, "aa")[0] == V(0));
-  REQUIRE(exact_match(byte_code, "abb")[0] == V(1));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map["aa"] == V(0));
+    REQUIRE(map["abb"] == V(1));
+  });
 }
 
-TEST_CASE("Edge case test3", "[general]") {
+TEST_CASE("Edge case test3", "[map]") {
   vector<pair<string, output_t>> input = {
       {"abc", V(0)},
       {"bc", V(1)},
   };
 
-  auto sm = fst::make_state_machine(input);
-
-  REQUIRE(sm->count == 4);
-
-  auto byte_code = fst::compile(*sm);
-
-  REQUIRE(exact_match(byte_code, "abc")[0] == V(0));
-  REQUIRE(exact_match(byte_code, "bc")[0] == V(1));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map["abc"] == V(0));
+    REQUIRE(map["bc"] == V(1));
+  });
 }
 
-TEST_CASE("Edge case test4", "[general]") {
+TEST_CASE("Edge case test4", "[map]") {
   vector<pair<string, output_t>> input = {
       {"z", V(0)},
       {"zc", V(10)},
@@ -188,19 +260,15 @@ TEST_CASE("Edge case test4", "[general]") {
       {"zd", V(1)},
   };
 
-  auto sm = fst::make_state_machine(input);
-
-  REQUIRE(sm->count == 4);
-
-  auto byte_code = fst::compile(*sm);
-
-  REQUIRE(exact_match(byte_code, "z")[0] == V(0));
-  REQUIRE(exact_match(byte_code, "zc")[0] == V(10));
-  REQUIRE(exact_match(byte_code, "zcd")[0] == V(11));
-  REQUIRE(exact_match(byte_code, "zd")[0] == V(1));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map["z"] == V(0));
+    REQUIRE(map["zc"] == V(10));
+    REQUIRE(map["zcd"] == V(11));
+    REQUIRE(map["zd"] == V(1));
+  });
 }
 
-TEST_CASE("Edge case test5", "[general]") {
+TEST_CASE("Edge case test5", "[map]") {
   vector<pair<string, output_t>> input = {
       {"aba", V(1)},
       {"abz", V(2)},
@@ -208,19 +276,15 @@ TEST_CASE("Edge case test5", "[general]") {
       {"bz", V(32)},
   };
 
-  auto sm = fst::make_state_machine(input);
-
-  REQUIRE(sm->count == 6);
-
-  auto byte_code = fst::compile(*sm);
-
-  REQUIRE(exact_match(byte_code, "aba")[0] == V(1));
-  REQUIRE(exact_match(byte_code, "abz")[0] == V(2));
-  REQUIRE(exact_match(byte_code, "baz")[0] == V(31));
-  REQUIRE(exact_match(byte_code, "bz")[0] == V(32));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map["aba"] == V(1));
+    REQUIRE(map["abz"] == V(2));
+    REQUIRE(map["baz"] == V(31));
+    REQUIRE(map["bz"] == V(32));
+  });
 }
 
-TEST_CASE("Duplicate final states test", "[general]") {
+TEST_CASE("Duplicate final states test", "[map]") {
   vector<pair<string, output_t>> input = {
       {"az", V(0)},
       {"bz", V(1)},
@@ -228,15 +292,15 @@ TEST_CASE("Duplicate final states test", "[general]") {
       {"dz", V(3)},
   };
 
-  auto byte_code = fst::build(input);
-
-  REQUIRE(exact_match(byte_code, "az")[0] == V(0));
-  REQUIRE(exact_match(byte_code, "bz")[0] == V(1));
-  REQUIRE(exact_match(byte_code, "cy")[0] == V(2));
-  REQUIRE(exact_match(byte_code, "dz")[0] == V(3));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map["az"] == V(0));
+    REQUIRE(map["bz"] == V(1));
+    REQUIRE(map["cy"] == V(2));
+    REQUIRE(map["dz"] == V(3));
+  });
 }
 
-TEST_CASE("Duplicate final states test2", "[general]") {
+TEST_CASE("Duplicate final states test2", "[map]") {
   vector<pair<string, output_t>> input = {
       {"a_a", V(0)},
       {"ab", V(1)},
@@ -244,78 +308,47 @@ TEST_CASE("Duplicate final states test2", "[general]") {
       {"b_a", V(3)},
   };
 
-  auto byte_code = fst::build(input);
-
-  REQUIRE(exact_match(byte_code, "a_a")[0] == V(0));
-  REQUIRE(exact_match(byte_code, "ab")[0] == V(1));
-  REQUIRE(exact_match(byte_code, "ab_a")[0] == V(2));
-  REQUIRE(exact_match(byte_code, "b_a")[0] == V(3));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map["a_a"] == V(0));
+    REQUIRE(map["ab"] == V(1));
+    REQUIRE(map["ab_a"] == V(2));
+    REQUIRE(map["b_a"] == V(3));
+  });
 }
 
-TEST_CASE("UTF-8 test", "[general]") {
+TEST_CASE("UTF-8 test", "[map]") {
   vector<pair<string, output_t>> input = {
       {u8"あ", V(0)},
       {u8"あい", V(1)},
   };
 
-  auto sm = fst::make_state_machine(input);
-
-  REQUIRE(sm->count == 7);
-
-  auto byte_code = fst::compile(*sm);
-
-  REQUIRE(exact_match(byte_code, u8"あ")[0] == V(0));
-  REQUIRE(exact_match(byte_code, u8"あい")[0] == V(1));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map[u8"あ"] == V(0));
+    REQUIRE(map[u8"あい"] == V(1));
+  });
 }
 
-TEST_CASE("Common prefix search test", "[general]") {
+TEST_CASE("Common prefix search test", "[map]") {
   vector<pair<string, output_t>> input = {
       {"a", V(0)},
       {"and", V(1)},
       {"android", V(2)},
   };
 
-  auto byte_code = fst::build(input);
-  auto ret = prefix_match(byte_code, "android phone");
+  make_map(input, true, [](auto &map) {
+    auto ret = map.common_prefix_search("android phone");
 
-  REQUIRE(ret.size() == 3);
+    REQUIRE(ret.size() == 3);
 
-  REQUIRE(ret[0].length == 1);
-  REQUIRE(ret[0].outputs.size() == 1);
-  REQUIRE(ret[0].outputs[0] == V(0));
+    REQUIRE(ret[0].first == 1);
+    REQUIRE(ret[0].second == V(0));
 
-  REQUIRE(ret[1].length == 3);
-  REQUIRE(ret[1].outputs.size() == 1);
-  REQUIRE(ret[1].outputs[0] == V(1));
+    REQUIRE(ret[1].first == 3);
+    REQUIRE(ret[1].second == V(1));
 
-  REQUIRE(ret[2].length == 7);
-  REQUIRE(ret[2].outputs.size() == 1);
-  REQUIRE(ret[2].outputs[0] == V(2));
-}
-
-TEST_CASE("Common prefix search test2", "[general]") {
-  vector<pair<string, output_t>> input = {
-      {"a", V(0)},
-      {"and", V(1)},
-      {"android", V(2)},
-  };
-
-  auto byte_code = fst::build(input);
-  auto ret = prefix_match(byte_code, "android phone");
-
-  REQUIRE(ret.size() == 3);
-
-  REQUIRE(ret[0].length == 1);
-  REQUIRE(ret[0].outputs.size() == 1);
-  REQUIRE(ret[0].outputs[0] == V(0));
-
-  REQUIRE(ret[1].length == 3);
-  REQUIRE(ret[1].outputs.size() == 1);
-  REQUIRE(ret[1].outputs[0] == V(1));
-
-  REQUIRE(ret[2].length == 7);
-  REQUIRE(ret[2].outputs.size() == 1);
-  REQUIRE(ret[2].outputs[0] == V(2));
+    REQUIRE(ret[2].first == 7);
+    REQUIRE(ret[2].second == V(2));
+  });
 }
 
 TEST_CASE("Invalid arc jump test", "[string]") {
@@ -327,129 +360,66 @@ TEST_CASE("Invalid arc jump test", "[string]") {
       {"akzs;ldkfjas;", V(8)},   {"alzs;lfkjasdf;l", V(9)},
   };
 
-  auto byte_code = fst::build(input);
-
-  REQUIRE(exact_match(byte_code, "az").empty());
+  make_map(input, true,
+           [](auto &map) { REQUIRE(map.contains("az") == false); });
 }
 
-TEST_CASE("Single output value test", "[general]") {
+TEST_CASE("Single output value test", "[map]") {
   vector<pair<string, output_t>> input = {
       {"a", V(0)},
       {"ab", V(1)},
   };
 
-  auto sm = fst::make_state_machine(input);
-
-  REQUIRE(sm->count == 3);
-
-  auto byte_code = fst::compile(*sm);
-
-  output_t output;
-  auto ret =
-      fst::exact_match_search(byte_code.data(), byte_code.size(), "a", output);
-  REQUIRE(ret);
-  REQUIRE(output == V(0));
-
-  ret =
-      fst::exact_match_search(byte_code.data(), byte_code.size(), "ab", output);
-  REQUIRE(ret);
-  REQUIRE(output == V(1));
-}
-
-TEST_CASE("Build interface test", "[general]") {
-  auto byte_code = fst::build<output_t>([](auto add_entry) {
-    add_entry("a", V(0));
-    add_entry("b", V(1));
+  make_map(input, true, [](auto &map) {
+    REQUIRE(map["a"] == V(0));
+    REQUIRE(map["ab"] == V(1));
   });
-
-  REQUIRE(exact_match(byte_code, "a")[0] == V(0));
-  REQUIRE(exact_match(byte_code, "b")[0] == V(1));
 }
 
-TEST_CASE("Auto Index Build interface test", "[general]") {
-  auto byte_code = fst::build([](auto add_entry) {
-    add_entry("a");
-    add_entry("b");
+TEST_CASE("Auto Index Dictionary", "[map]") {
+  vector<string> input = {"a", "and", "android"};
+
+  make_map_with_auto_index(input, true, [](auto &map) {
+    auto ret = map.common_prefix_search("android phone");
+
+    REQUIRE(ret.size() == 3);
+
+    REQUIRE(ret[0].first == 1);
+    REQUIRE(ret[0].second == 0);
+
+    REQUIRE(ret[1].first == 3);
+    REQUIRE(ret[1].second == 1);
+
+    REQUIRE(ret[2].first == 7);
+    REQUIRE(ret[2].second == 2);
   });
-
-  REQUIRE(exact_match_t<uint32_t>(byte_code, "a")[0] == 0);
-  REQUIRE(exact_match_t<uint32_t>(byte_code, "b")[0] == 1);
 }
 
-TEST_CASE("Nested Build interface test", "[general]") {
-  auto byte_code = fst::build<output_t>([](auto add_entry) {
-    add_entry("a", V(0));
-    add_entry("b", V(1));
-
-    auto byte_code = fst::build<output_t>([](auto add_entry) {
-      add_entry("a1", V(0));
-      add_entry("b1", V(1));
-    });
-
-    REQUIRE(exact_match(byte_code, "a1")[0] == V(0));
-    REQUIRE(exact_match(byte_code, "b1")[0] == V(1));
-  });
-
-  REQUIRE(exact_match(byte_code, "a")[0] == V(0));
-  REQUIRE(exact_match(byte_code, "b")[0] == V(1));
-}
-
-TEST_CASE("Exact match search", "[readme]") {
-  std::vector<std::pair<std::string, uint32_t>> input = {
-      {"apr", 30}, {"aug", 31}, {"dec", 31}, {"feb", 28},
-      {"feb", 29}, {"jan", 31}, {"jul", 31}, {"jun", 30},
+TEST_CASE("Normal Set test", "[set]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
   };
 
-  std::vector<char> t = fst::build(input);
+  make_set(input, false, [](auto &set) {
+    REQUIRE(set.contains("jan"));
+    REQUIRE(set.contains("feb"));
+    REQUIRE(set.contains("mar"));
+    REQUIRE(set.contains("apr"));
+    REQUIRE(set.contains("may"));
+    REQUIRE(set.contains("jun"));
+    REQUIRE(set.contains("jul"));
+    REQUIRE(set.contains("aug"));
+    REQUIRE(set.contains("sep"));
+    REQUIRE(set.contains("oct"));
+    REQUIRE(set.contains("nov"));
+    REQUIRE(set.contains("dec"));
 
-  REQUIRE(fst::exact_match_search<uint32_t>(t.data(), t.size(), "apr")[0] ==
-          30);
-  REQUIRE(fst::exact_match_search<uint32_t>(t.data(), t.size(), "ap").empty());
-  REQUIRE(
-      fst::exact_match_search<uint32_t>(t.data(), t.size(), "apr_").empty());
-  REQUIRE(fst::exact_match_search<uint32_t>(t.data(), t.size(), "feb")[0] ==
-          28);
-  REQUIRE(fst::exact_match_search<uint32_t>(t.data(), t.size(), "feb")[1] ==
-          29);
-}
-
-TEST_CASE("Common prefix search", "[readme]") {
-  auto t = fst::build<std::string>([](auto add_entry) {
-    add_entry("a", "one");
-    add_entry("and", "two");
-    add_entry("android", "three");
+    REQUIRE(set.contains("") == false);
+    REQUIRE(set.contains("_") == false);
+    REQUIRE(set.contains("a") == false);
+    REQUIRE(set.contains("ap") == false);
+    REQUIRE(set.contains("ap_") == false);
+    REQUIRE(set.contains("apr_") == false);
   });
-
-  auto ret = fst::common_prefix_search<std::string>(t.data(), t.size(),
-                                                    "android phone");
-
-  REQUIRE(ret[0].length == 1);
-  REQUIRE(ret[0].outputs[0] == "one");
-
-  REQUIRE(ret[1].length == 3);
-  REQUIRE(ret[1].outputs[0] == "two");
-
-  REQUIRE(ret[2].length == 7);
-  REQUIRE(ret[2].outputs[0] == "three");
 }
-
-TEST_CASE("Auto Index Dictionary", "[readme]") {
-  auto t = fst::build({
-      "a",
-      "and",
-      "android",
-  });
-
-  auto ret =
-      fst::common_prefix_search<uint32_t>(t.data(), t.size(), "android phone");
-
-  REQUIRE(ret[0].length == 1);
-  REQUIRE(ret[0].outputs[0] == 0);
-
-  REQUIRE(ret[1].length == 3);
-  REQUIRE(ret[1].outputs[0] == 1);
-
-  REQUIRE(ret[2].length == 7);
-  REQUIRE(ret[2].outputs[0] == 2);
-}
-#endif
