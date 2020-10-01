@@ -31,18 +31,20 @@ hello: 83713
 ```cpp
 namespace fst {
 
-std::pair<Result, size_t> compile<uint32_t>(
+enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
+
+std::pair<Result, size_t /* error line */> compile<uint32_t>(
   const std::vector<std::string, uint32_t> &input,
   std::ostream &os,
   bool sorted
 );
 
-std::pair<Result, size_t> compile<std::string>(
+std::pair<Result, size_t /* error line */> compile<std::string>(
   const std::vector<std::string, std::string> &input,
   std::ostream &os
 );
 
-std::pair<Result, size_t> compile(
+std::pair<Result, size_t /* error line */> compile(
   const std::vector<std::string> &key_only_input,
   std::ostream &os,
   bool need_output, // true: map, false: set
@@ -105,21 +107,23 @@ const std::vector<std::pair<std::string, std::string>> items = {
 
 std::stringstream out;
 auto sorted = false; // ask fst::compile to sort entries
-fst::compile<std::string>(items, out, sorted);
+auto [result, error_line] = fst::compile<std::string>(items, out, sorted);
 
-const auto& byte_code = out.str();
-fst::Map<std::string> matcher(byte_code.data(), byte_code.size());
+if (result == fst::Result::Success) {
+  const auto& byte_code = out.str();
+  fst::Map<std::string> matcher(byte_code.data(), byte_code.size());
 
-if (matcher) {
-  const std::string s = "hello world! example.";
-  std::string output;
-  auto prefix_len = matcher.longest_common_prefix_search(s.data(), s.length(), output);
+  if (matcher) {
+    const std::string s = "hello world! example.";
+    std::string output;
+    auto prefix_len = matcher.longest_common_prefix_search(s.data(), s.length(), output);
 
-  assert(prefix_len == 11);
-  assert(output == "こんにちは世界!");
+    assert(prefix_len == 11);
+    assert(output == "こんにちは世界!");
 
-  std::cout << prefix_len << std::endl;
-  std::cout << output << std::endl;
+    std::cout << prefix_len << std::endl;
+    std::cout << output << std::endl;
+  }
 }
 ```
 
