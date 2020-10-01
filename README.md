@@ -114,9 +114,9 @@ if (result == fst::Result::Success) {
     assert(prefixes[0].second == "こんにちは!");
     assert(prefixes[1].first == 11);
     assert(prefixes[1].second == "こんにちは世界!");
+
     std::string output;
     auto length = matcher.longest_common_prefix_search("hello world!", output);
-
     assert(length == 11);
     assert(output == "こんにちは世界!");
   }
