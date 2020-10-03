@@ -7,3 +7,5 @@ add_subdirectory(test)
 enable_testing()
 
 add_subdirectory(benchmark)
+
+install(FILES fstlib.h DESTINATION include)

@@ -5,8 +5,7 @@
 //  MIT License
 //
 
-#ifndef CPPFSTLIB_FSTLIB_H_
-#define CPPFSTLIB_FSTLIB_H_
+#pragma once
 
 #include <algorithm>
 #include <any>
@@ -26,6 +25,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#if !defined(__cplusplus) || __cplusplus < 201703L
+#error "Requires complete C++17 support"
+#endif
 
 namespace fst {
 
@@ -544,11 +547,11 @@ public:
     auto [first, second, third] = buckets_[id];
     if (first && *first == *state) { return first; }
     if (second && *second == *state) {
-      buckets_[id] = std::make_tuple(second, first, third);
+      buckets_[id] = std::tuple(second, first, third);
       return second;
     }
     if (third && *third == *state) {
-      buckets_[id] = std::make_tuple(third, first, second);
+      buckets_[id] = std::tuple(third, first, second);
       return third;
     }
     return nullptr;
@@ -558,7 +561,7 @@ public:
     auto id = bucket_id(key);
     auto [first, second, third] = buckets_[id];
     if (third) { state_pool_.Delete(third); }
-    buckets_[id] = std::make_tuple(state, first, second);
+    buckets_[id] = std::tuple(state, first, second);
   }
 
 private:
@@ -582,10 +585,10 @@ find_minimized(State<output_t> *state, Dictionary<output_t> &dictionary) {
   auto h = state->hash();
 
   auto st = dictionary.get(h, state);
-  if (st) { return std::make_pair(true, st); }
+  if (st) { return std::pair(true, st); }
 
   dictionary.put(h, state);
-  return std::make_pair(false, state);
+  return std::pair(false, state);
 };
 
 //-----------------------------------------------------------------------------
@@ -734,7 +737,7 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
   });
 
   if (result != Result::Success) {
-    return std::make_pair(result, error_input_index);
+    return std::pair(result, error_input_index);
   }
 
   // Here we are minimizing the states of the last word
@@ -752,7 +755,7 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
     if (i > 0) { temp_states[i - 1]->set_transition(arc, state); }
   }
 
-  return std::make_pair(Result::Success, error_input_index);
+  return std::pair(Result::Success, error_input_index);
 }
 
 //-----------------------------------------------------------------------------
@@ -1641,7 +1644,7 @@ public:
   common_prefix_search(std::string_view sv) const {
     std::vector<std::pair<size_t, output_t>> ret;
     common_prefix_search(sv, [&](size_t length, const output_t &output) {
-      ret.emplace_back(std::make_pair(length, output));
+      ret.emplace_back(std::pair(length, output));
     });
     return ret;
   }
@@ -1693,5 +1696,3 @@ public:
 };
 
 } // namespace fst
-
-#endif // CPPFSTLIB_FSTLIB_H_

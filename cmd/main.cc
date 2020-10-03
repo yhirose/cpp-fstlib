@@ -379,7 +379,7 @@ int main(int argc, char **argv) {
               return fst::compile<string>(input, fout, opt_sorted, opt_verbose);
             },
             [&](const auto &input) {
-              return make_pair(fst::Result::Success, 0);
+              return pair(fst::Result::Success, 0);
             });
       } else {
         return build<uint32_t>(
@@ -405,7 +405,7 @@ int main(int argc, char **argv) {
               return fst::dump<string>(input, cout, opt_verbose);
             },
             [&](const auto &input) {
-              return make_pair(fst::Result::Success, 0);
+              return pair(fst::Result::Success, 0);
             });
       } else {
         return build<uint32_t>(
@@ -430,7 +430,7 @@ int main(int argc, char **argv) {
               return fst::dot<string>(input, cout, opt_sorted);
             },
             [&](const auto &input) {
-              return make_pair(fst::Result::Success, 0);
+              return pair(fst::Result::Success, 0);
             });
       } else {
         return build<uint32_t>(
@@ -472,7 +472,7 @@ int main(int argc, char **argv) {
               return ret;
             },
             [&](const auto &input) {
-              return make_pair(fst::Result::Success, 0);
+              return pair(fst::Result::Success, 0);
             });
       } else {
         return build<uint32_t>(
