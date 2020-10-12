@@ -1473,24 +1473,28 @@ protected:
 
         auto base_address = byte_code_ + address - jump_table_byte_size;
 
-        auto found = lower_bound_index(0, jump_table_count, [&](auto i) {
+        auto get_arc = [&](auto i) {
           auto p = base_address -
                    lookup_jump_table(jump_table, i, jump_table_element_size);
           auto ope = FstOpe(*p--);
-          return get_arc(ope, p) < ch;
+          return read_arc(ope, p);
+        };
+
+        auto found = lower_bound_index(0, jump_table_count, [&](auto i) {
+          return get_arc(i) < ch;
         });
 
-        if (found < jump_table_count) {
+        if (found < jump_table_count && get_arc(found) == ch) {
           auto offset =
               lookup_jump_table(jump_table, found, jump_table_element_size);
           address -= offset + jump_table_byte_size;
         } else {
-          address -= std::distance(p, end);
+          break;
         }
         continue;
       }
 
-      auto arc = get_arc(ope, p);
+      auto arc = read_arc(ope, p);
 
       auto delta = 0u;
       if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
@@ -1587,7 +1591,7 @@ protected:
     }
   }
 
-  uint8_t get_arc(FstOpe ope, const char *&p) const {
+  uint8_t read_arc(FstOpe ope, const char *&p) const {
     auto index =
         ope.label_index(header_.need_output, header_.need_state_output);
     return index == 0 ? *p-- : header_.char_index[index];
@@ -1679,9 +1683,7 @@ public:
 
   std::vector<size_t> common_prefix_search(std::string_view sv) const {
     std::vector<size_t> ret;
-    common_prefix_search(sv, [&](size_t length) {
-      ret.push_back(length);
-    });
+    common_prefix_search(sv, [&](size_t length) { ret.push_back(length); });
     return ret;
   }
 
