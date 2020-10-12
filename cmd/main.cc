@@ -312,6 +312,7 @@ void usage() {
 
   commends:
     compile     source FST  - make fst byte code
+    decompile   FST         - decompile fst byte code
 
     search      FST [word]  - exact match search
     prefix      FST [word]  - common prefix search
@@ -324,6 +325,7 @@ void usage() {
     -f          source file format ('csv' or 'tsv')
     -t          output type ('uint32_t' or 'string')
     -v          verbose output
+    -set        compile without output
     -sorted     skip sorting input
 
   note:
@@ -378,9 +380,7 @@ int main(int argc, char **argv) {
             [&](const auto &input) {
               return fst::compile<string>(input, fout, opt_sorted, opt_verbose);
             },
-            [&](const auto &input) {
-              return pair(fst::Result::Success, 0);
-            });
+            [&](const auto &input) { return pair(fst::Result::Success, 0); });
       } else {
         return build<uint32_t>(
             fin, format,
@@ -394,6 +394,13 @@ int main(int argc, char **argv) {
             });
       }
 
+    } else if (cmd == "decompile") {
+      ifstream fin(in_path, ios_base::binary);
+      if (!fin) { return error(1); }
+
+      auto byte_code = load_byte_code(fin);
+      fst::decompile(byte_code.data(), byte_code.size(), std::cout);
+
     } else if (cmd == "dump") {
       ifstream fin(in_path);
       if (!fin) { return error(1); }
@@ -404,9 +411,7 @@ int main(int argc, char **argv) {
             [&](const auto &input) {
               return fst::dump<string>(input, cout, opt_verbose);
             },
-            [&](const auto &input) {
-              return pair(fst::Result::Success, 0);
-            });
+            [&](const auto &input) { return pair(fst::Result::Success, 0); });
       } else {
         return build<uint32_t>(
             fin, format,
@@ -429,9 +434,7 @@ int main(int argc, char **argv) {
             [&](const auto &input) {
               return fst::dot<string>(input, cout, opt_sorted);
             },
-            [&](const auto &input) {
-              return pair(fst::Result::Success, 0);
-            });
+            [&](const auto &input) { return pair(fst::Result::Success, 0); });
       } else {
         return build<uint32_t>(
             fin, format,
@@ -471,9 +474,7 @@ int main(int argc, char **argv) {
               }
               return ret;
             },
-            [&](const auto &input) {
-              return pair(fst::Result::Success, 0);
-            });
+            [&](const auto &input) { return pair(fst::Result::Success, 0); });
       } else {
         return build<uint32_t>(
             fin, format,
