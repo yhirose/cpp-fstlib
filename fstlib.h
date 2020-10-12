@@ -618,7 +618,6 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
 
   Dictionary<output_t> dictionary(state_pool);
   auto next_state_id = 0u;
-  // auto input_index = 0u;
   auto error_input_index = 0u;
   auto result = Result::Success;
 
@@ -731,8 +730,6 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
     }
 
     previous_word = current_word;
-    // input_index++;
-
     return true;
   });
 
