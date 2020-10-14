@@ -1695,14 +1695,13 @@ public:
 };
 
 //-----------------------------------------------------------------------------
-// decompile
+// depth_first_visit
 //-----------------------------------------------------------------------------
 
-template <typename output_t>
-void decompile_core(const char *byte_code_, const FstHeader &header_,
-                    uint32_t address, const std::string &partial_word,
-                    const output_t &partial_output, std::ostream &out,
-                    bool need_output) {
+template <typename output_t, typename T>
+void depth_first_visit(const char *byte_code_, const FstHeader &header_,
+                       uint32_t address, const std::string &partial_word,
+                       const output_t &partial_output, T callback) {
 
   while (true) {
     auto state_output = OutputTraits<output_t>::initial_value();
@@ -1752,27 +1751,27 @@ void decompile_core(const char *byte_code_, const FstHeader &header_,
     auto output = partial_output + output_suffix;
 
     if (ope.data.final) {
-      out << word;
-      if (!need_output ||
-          OutputTraits<output_t>::type() == OutputType::none_t) {
-        out << std::endl;
-      } else {
+      if (OutputTraits<output_t>::type() != OutputType::none_t) {
         if (OutputTraits<output_t>::empty(state_output)) {
           output += state_output;
         }
-        out << '\t' << output << std::endl;
       }
+      callback(word, output);
     }
 
     if (next_address) {
-      decompile_core(byte_code_, header_, next_address, word, output, out,
-                     need_output);
+      depth_first_visit(byte_code_, header_, next_address, word, output,
+                        callback);
     }
 
     if (ope.data.last_transition) { break; }
     address -= byte_size;
   }
 }
+
+//-----------------------------------------------------------------------------
+// decompile
+//-----------------------------------------------------------------------------
 
 void decompile(const char *byte_code, size_t byte_code_size, std::ostream &out,
                bool need_output = true) {
@@ -1782,18 +1781,32 @@ void decompile(const char *byte_code, size_t byte_code_size, std::ostream &out,
   auto address = header_.start_address;
 
   auto type = get_output_type(byte_code, byte_code_size);
-  if (type == OutputType::uint32_t) {
-    decompile_core<uint32_t>(byte_code, header_, address, std::string(),
-                             OutputTraits<uint32_t>::initial_value(), out,
-                             need_output);
+  if (type == OutputType::none_t) {
+    depth_first_visit<none_t>(
+        byte_code, header_, address, std::string(),
+        OutputTraits<none_t>::initial_value(),
+        [&](const auto &word, auto output) { out << word << std::endl; });
+  } else if (type == OutputType::uint32_t) {
+    depth_first_visit<uint32_t>(byte_code, header_, address, std::string(),
+                                OutputTraits<uint32_t>::initial_value(),
+                                [&](const auto &word, auto output) {
+                                  if (need_output) {
+                                    out << word << '\t' << output << std::endl;
+                                  } else {
+                                    out << word << std::endl;
+                                  }
+                                });
   } else if (type == OutputType::string) {
-    decompile_core<std::string>(byte_code, header_, address, std::string(),
-                                OutputTraits<std::string>::initial_value(), out,
-                                need_output);
-  } else if (type == OutputType::none_t) {
-    decompile_core<none_t>(byte_code, header_, address, std::string(),
-                           OutputTraits<none_t>::initial_value(), out,
-                           need_output);
+    depth_first_visit<std::string>(byte_code, header_, address, std::string(),
+                                   OutputTraits<std::string>::initial_value(),
+                                   [&](const auto &word, const auto &output) {
+                                     if (need_output) {
+                                       out << word << '\t' << output
+                                           << std::endl;
+                                     } else {
+                                       out << word << std::endl;
+                                     }
+                                   });
   }
 }
 
