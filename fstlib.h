@@ -1797,4 +1797,51 @@ void decompile(const char *byte_code, size_t byte_code_size, std::ostream &out,
   }
 }
 
+//-----------------------------------------------------------------------------
+// LevenshteinAutomaton
+//-----------------------------------------------------------------------------
+
+class LevenshteinAutomaton {
+public:
+  LevenshteinAutomaton(std::string_view sv, size_t max_edits)
+      : s_(sv), max_edits_(max_edits) {}
+
+  LevenshteinAutomaton(const LevenshteinAutomaton &rhs) = default;
+
+  void start() {
+    state_.resize(s_.size() + 1);
+    std::iota(state_.begin(), state_.end(), 0);
+  }
+
+  void step(char c) {
+    std::vector<size_t> new_state{state_[0] + 1};
+
+    for (size_t i = 0; i < state_.size() - 1; i++) {
+      size_t cost = (s_[i] == c) ? 0 : 1;
+
+      auto val = std::min(new_state[i] + 1, state_[i] + cost);
+      val = std::min(val, state_[i + 1] + 1);
+
+      new_state.push_back(val);
+    }
+
+    std::transform(new_state.begin(), new_state.end(), state_.begin(),
+                   [=](auto val) { return std::min(val, max_edits_ + 1); });
+  }
+
+  bool is_match() const { return state_.back() <= max_edits_; }
+
+  bool can_match() const {
+    auto it = std::min_element(state_.begin(), state_.end());
+    return *it <= max_edits_;
+  }
+
+  // void print_state() { fmt::print("[state] {}\n", state_); }
+
+private:
+  std::string s_;
+  size_t max_edits_;
+  std::vector<size_t> state_;
+};
+
 } // namespace fst

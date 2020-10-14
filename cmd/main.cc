@@ -326,6 +326,7 @@ void usage() {
     -t          output type ('uint32_t' or 'string')
     -v          verbose output
     -set        compile without output
+    -noout      decompile map without output
     -sorted     skip sorting input
 
   note:
@@ -346,7 +347,8 @@ int main(int argc, char **argv) {
   auto opt_format = args.get<string>("f");
   auto opt_output_type = args.get<string>("t");
   auto opt_verbose = args.get<bool>("v", false);
-  auto opt_need_output = !args.get<bool>("set", false);
+  auto opt_set = args.get<bool>("set", false);
+  auto opt_noout = args.get<bool>("noout", false);
   auto opt_sorted = args.get<bool>("sorted", false);
 
   auto cmd = args.positional().at(0);
@@ -389,7 +391,7 @@ int main(int argc, char **argv) {
                                             opt_verbose);
             },
             [&](const auto &input) {
-              return fst::compile(input, fout, opt_need_output, opt_sorted,
+              return fst::compile(input, fout, !opt_set, opt_sorted,
                                   opt_verbose);
             });
       }
@@ -399,7 +401,7 @@ int main(int argc, char **argv) {
       if (!fin) { return error(1); }
 
       auto byte_code = load_byte_code(fin);
-      fst::decompile(byte_code.data(), byte_code.size(), std::cout);
+      fst::decompile(byte_code.data(), byte_code.size(), std::cout, !opt_noout);
 
     } else if (cmd == "dump") {
       ifstream fin(in_path);
@@ -419,8 +421,7 @@ int main(int argc, char **argv) {
               return fst::dump<uint32_t>(input, cout, opt_sorted, opt_verbose);
             },
             [&](const auto &input) {
-              return fst::dump(input, cout, opt_need_output, opt_sorted,
-                               opt_verbose);
+              return fst::dump(input, cout, !opt_set, opt_sorted, opt_verbose);
             });
       }
 
@@ -442,7 +443,7 @@ int main(int argc, char **argv) {
               return fst::dot<uint32_t>(input, cout, opt_sorted);
             },
             [&](const auto &input) {
-              return fst::dot(input, cout, opt_need_output, opt_sorted);
+              return fst::dot(input, cout, !opt_set, opt_sorted);
             });
       }
 
@@ -487,10 +488,10 @@ int main(int argc, char **argv) {
               return ret;
             },
             [&](const auto &input) {
-              auto ret = fst::compile(input, ss, opt_need_output, opt_sorted,
-                                      opt_verbose);
+              auto ret =
+                  fst::compile(input, ss, !opt_set, opt_sorted, opt_verbose);
               if (ret.first == fst::Result::Success) {
-                regression_test(input, ss.str(), opt_need_output);
+                regression_test(input, ss.str(), !opt_set);
               }
               return ret;
             });
