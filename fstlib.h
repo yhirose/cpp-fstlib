@@ -1408,6 +1408,15 @@ inline OutputType get_output_type(const char *byte_code,
 }
 
 //-----------------------------------------------------------------------------
+// read_arc
+//-----------------------------------------------------------------------------
+
+char read_arc(const FstHeader &header, FstOpe ope, const char *&p) {
+  auto index = ope.label_index(header.need_output, header.need_state_output);
+  return index == 0 ? *p-- : header.char_index[index];
+}
+
+//-----------------------------------------------------------------------------
 // Matcher
 //-----------------------------------------------------------------------------
 
@@ -1471,11 +1480,11 @@ protected:
 
         auto base_address = byte_code_ + address - jump_table_byte_size;
 
-        auto get_arc = [&](auto i) {
+        auto get_arc = [&](auto i) -> uint8_t {
           auto p = base_address -
                    lookup_jump_table(jump_table, i, jump_table_element_size);
           auto ope = FstOpe(*p--);
-          return read_arc(ope, p);
+          return read_arc(header_, ope, p);
         };
 
         auto found = lower_bound_index(0, jump_table_count,
@@ -1491,7 +1500,7 @@ protected:
         continue;
       }
 
-      auto arc = read_arc(ope, p);
+      uint8_t arc = read_arc(header_, ope, p);
 
       auto delta = 0u;
       if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
@@ -1586,12 +1595,6 @@ protected:
     } else {
       return reinterpret_cast<const uint8_t *>(p + 1)[index];
     }
-  }
-
-  uint8_t read_arc(FstOpe ope, const char *&p) const {
-    auto index =
-        ope.label_index(header_.need_output, header_.need_state_output);
-    return index == 0 ? *p-- : header_.char_index[index];
   }
 
   const char *byte_code_;
@@ -1692,133 +1695,105 @@ public:
 };
 
 //-----------------------------------------------------------------------------
-// Decompiler
-//-----------------------------------------------------------------------------
-
-template <typename output_t> class Decompiler {
-public:
-  Decompiler(const char *byte_code, size_t byte_code_size)
-      : byte_code_(byte_code), byte_code_size_(byte_code_size) {
-
-    if (!header_.read(byte_code, byte_code_size)) { return; }
-
-    if (static_cast<OutputType>(header_.flags.data.output_type) !=
-        OutputTraits<output_t>::type()) {
-      return;
-    }
-
-    is_valid_ = true;
-  }
-
-  operator bool() const { return is_valid_; }
-
-  void decompile(std::ostream &out) const {
-    auto address = header_.start_address;
-    std::string word;
-    auto output = OutputTraits<output_t>::initial_value();
-    decompile_core(address, word, output, out);
-  }
-
-protected:
-  void decompile_core(uint32_t address, const std::string &partial_word,
-                      const output_t &partial_output, std::ostream &out) const {
-
-    while (true) {
-      auto state_output = OutputTraits<output_t>::initial_value();
-
-      auto end = byte_code_ + address;
-      auto p = end;
-
-      auto ope = FstOpe(*p--);
-
-      if (ope.has_jump_table()) {
-        auto jump_table_element_size = ope.jump_table_element_size();
-        size_t jump_table_count = 0;
-        auto vb_len = vb_decode_value_reverse(p, jump_table_count);
-        p -= vb_len;
-        p -= jump_table_count * jump_table_element_size;
-
-        address -= std::distance(p, end);
-        continue;
-      }
-
-      auto arc = read_arc(ope, p);
-
-      auto delta = 0u;
-      if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
-
-      auto output_suffix = OutputTraits<output_t>::initial_value();
-      if (ope.data.has_output) {
-        p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
-      }
-
-      if (header_.need_state_output) {
-        if (ope.data.has_state_output) {
-          p -= OutputTraits<output_t>::read_byte_value(p, state_output);
-        }
-      }
-
-      auto byte_size = std::distance(p, end);
-
-      auto next_address = 0u;
-      if (!ope.data.no_address) {
-        if (delta) { next_address = address - byte_size - delta + 1; }
-      } else {
-        next_address = address - byte_size;
-      }
-
-      auto word = partial_word + arc;
-      auto output = partial_output + output_suffix;
-
-      if (ope.data.final) {
-        out << word << '\t';
-        if (OutputTraits<output_t>::type() == OutputType::none_t) {
-          out << std::endl;
-        } else {
-          if (OutputTraits<output_t>::empty(state_output)) {
-            output += state_output;
-          }
-          out << output << std::endl;
-        }
-      }
-
-      if (next_address) { decompile_core(next_address, word, output, out); }
-
-      if (ope.data.last_transition) { break; }
-      address -= byte_size;
-    }
-  }
-
-  char read_arc(FstOpe ope, const char *&p) const {
-    auto index =
-        ope.label_index(header_.need_output, header_.need_state_output);
-    return index == 0 ? *p-- : header_.char_index[index];
-  }
-
-  const char *byte_code_;
-  const size_t byte_code_size_;
-
-  FstHeader header_;
-  bool is_valid_ = false;
-};
-
-//-----------------------------------------------------------------------------
 // decompile
 //-----------------------------------------------------------------------------
 
-void decompile(const char *byte_code, size_t byte_code_size,
-               std::ostream &out) {
-  auto type = get_output_type(byte_code, byte_code_size);
+template <typename output_t>
+void decompile_core(const char *byte_code_, const FstHeader &header_,
+                    uint32_t address, const std::string &partial_word,
+                    const output_t &partial_output, std::ostream &out,
+                    bool need_output) {
 
+  while (true) {
+    auto state_output = OutputTraits<output_t>::initial_value();
+
+    auto end = byte_code_ + address;
+    auto p = end;
+
+    auto ope = FstOpe(*p--);
+
+    if (ope.has_jump_table()) {
+      auto jump_table_element_size = ope.jump_table_element_size();
+      size_t jump_table_count = 0;
+      auto vb_len = vb_decode_value_reverse(p, jump_table_count);
+      p -= vb_len;
+      p -= jump_table_count * jump_table_element_size;
+
+      address -= std::distance(p, end);
+      continue;
+    }
+
+    auto arc = read_arc(header_, ope, p);
+
+    auto delta = 0u;
+    if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
+
+    auto output_suffix = OutputTraits<output_t>::initial_value();
+    if (ope.data.has_output) {
+      p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
+    }
+
+    if (header_.need_state_output) {
+      if (ope.data.has_state_output) {
+        p -= OutputTraits<output_t>::read_byte_value(p, state_output);
+      }
+    }
+
+    auto byte_size = std::distance(p, end);
+
+    auto next_address = 0u;
+    if (!ope.data.no_address) {
+      if (delta) { next_address = address - byte_size - delta + 1; }
+    } else {
+      next_address = address - byte_size;
+    }
+
+    auto word = partial_word + arc;
+    auto output = partial_output + output_suffix;
+
+    if (ope.data.final) {
+      out << word;
+      if (!need_output ||
+          OutputTraits<output_t>::type() == OutputType::none_t) {
+        out << std::endl;
+      } else {
+        if (OutputTraits<output_t>::empty(state_output)) {
+          output += state_output;
+        }
+        out << '\t' << output << std::endl;
+      }
+    }
+
+    if (next_address) {
+      decompile_core(byte_code_, header_, next_address, word, output, out,
+                     need_output);
+    }
+
+    if (ope.data.last_transition) { break; }
+    address -= byte_size;
+  }
+}
+
+void decompile(const char *byte_code, size_t byte_code_size, std::ostream &out,
+               bool need_output = true) {
+  FstHeader header_;
+  if (!header_.read(byte_code, byte_code_size)) { return; }
+
+  auto address = header_.start_address;
+
+  auto type = get_output_type(byte_code, byte_code_size);
   if (type == OutputType::uint32_t) {
-    Decompiler<uint32_t> decompiler(byte_code, byte_code_size);
-    if (decompiler) { decompiler.decompile(out); }
+    decompile_core<uint32_t>(byte_code, header_, address, std::string(),
+                             OutputTraits<uint32_t>::initial_value(), out,
+                             need_output);
   } else if (type == OutputType::string) {
-    Decompiler<std::string> decompiler(byte_code, byte_code_size);
-    if (decompiler) { decompiler.decompile(out); }
+    decompile_core<std::string>(byte_code, header_, address, std::string(),
+                                OutputTraits<std::string>::initial_value(), out,
+                                need_output);
   } else if (type == OutputType::none_t) {
-    Decompiler<none_t> decompiler(byte_code, byte_code_size);
-    if (decompiler) { decompiler.decompile(out); }
+    decompile_core<none_t>(byte_code, header_, address, std::string(),
+                           OutputTraits<none_t>::initial_value(), out,
+                           need_output);
   }
 }
 

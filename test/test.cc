@@ -423,3 +423,142 @@ TEST_CASE("Normal Set test", "[set]") {
     REQUIRE(set.contains("apr_") == false);
   });
 }
+
+TEST_CASE("Decompile map", "[decompile]") {
+  vector<pair<string, output_t>> input = {
+      {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
+      {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
+      {"sep", V(30)}, {"oct", V(31)}, {"nov", V(30)}, {"dec", V(31)},
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile<output_t>(input, ss, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &bytecode = ss.str();
+
+  stringstream out;
+  fst::decompile(bytecode.data(), bytecode.size(), out);
+
+  auto expected = R"(apr	30
+aug	31
+dec	31
+feb	28
+jul	31
+jun	30
+jan	31
+mar	31
+may	31
+nov	30
+oct	31
+sep	30
+)";
+
+  REQUIRE(out.str() == expected);
+}
+
+TEST_CASE("Decompile map, need output", "[decompile]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile(input, ss, true, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &bytecode = ss.str();
+
+  stringstream out;
+  fst::decompile(bytecode.data(), bytecode.size(), out, false);
+
+  auto expected = R"(apr
+aug
+dec
+feb
+jul
+jun
+jan
+mar
+may
+nov
+oct
+sep
+)";
+
+  REQUIRE(out.str() == expected);
+}
+
+TEST_CASE("Decompile map, no need output", "[decompile]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile(input, ss, true, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &bytecode = ss.str();
+
+  stringstream out;
+  fst::decompile(bytecode.data(), bytecode.size(), out);
+
+  auto expected = R"(apr	3
+aug	7
+dec	11
+feb	1
+jul	6
+jun	5
+jan	0
+mar	2
+may	4
+nov	10
+oct	9
+sep	8
+)";
+
+  REQUIRE(out.str() == expected);
+}
+
+TEST_CASE("Decompile set", "[compile]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile(input, ss, false, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &bytecode = ss.str();
+
+  stringstream out;
+  fst::decompile(bytecode.data(), bytecode.size(), out);
+
+  auto expected = R"(apr
+aug
+dec
+feb
+jul
+jun
+jan
+mar
+may
+nov
+oct
+sep
+)";
+
+  REQUIRE(out.str().size() == strlen(expected));
+  REQUIRE(out.str() == expected);
+}
+
