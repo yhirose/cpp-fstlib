@@ -437,10 +437,10 @@ TEST_CASE("Decompile map", "[decompile]") {
     REQUIRE(result == fst::Result::Success);
   }
 
-  const auto &bytecode = ss.str();
+  const auto &byte_code = ss.str();
 
   stringstream out;
-  fst::decompile(bytecode.data(), bytecode.size(), out);
+  fst::decompile(byte_code.data(), byte_code.size(), out);
 
   auto expected = R"(apr	30
 aug	31
@@ -471,10 +471,10 @@ TEST_CASE("Decompile map, need output", "[decompile]") {
     REQUIRE(result == fst::Result::Success);
   }
 
-  const auto &bytecode = ss.str();
+  const auto &byte_code = ss.str();
 
   stringstream out;
-  fst::decompile(bytecode.data(), bytecode.size(), out, false);
+  fst::decompile(byte_code.data(), byte_code.size(), out, false);
 
   auto expected = R"(apr
 aug
@@ -505,10 +505,10 @@ TEST_CASE("Decompile map, no need output", "[decompile]") {
     REQUIRE(result == fst::Result::Success);
   }
 
-  const auto &bytecode = ss.str();
+  const auto &byte_code = ss.str();
 
   stringstream out;
-  fst::decompile(bytecode.data(), bytecode.size(), out);
+  fst::decompile(byte_code.data(), byte_code.size(), out);
 
   auto expected = R"(apr	3
 aug	7
@@ -527,7 +527,7 @@ sep	8
   REQUIRE(out.str() == expected);
 }
 
-TEST_CASE("Decompile set", "[compile]") {
+TEST_CASE("Decompile set", "[decompile]") {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -539,10 +539,10 @@ TEST_CASE("Decompile set", "[compile]") {
     REQUIRE(result == fst::Result::Success);
   }
 
-  const auto &bytecode = ss.str();
+  const auto &byte_code = ss.str();
 
   stringstream out;
-  fst::decompile(bytecode.data(), bytecode.size(), out);
+  fst::decompile(byte_code.data(), byte_code.size(), out);
 
   auto expected = R"(apr
 aug
@@ -562,3 +562,40 @@ sep
   REQUIRE(out.str() == expected);
 }
 
+TEST_CASE("Edit distance search map", "[edit distance]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile(input, ss, true, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &byte_code = ss.str();
+
+  fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
+  auto ret = matcher.edit_distance_search("joe", 2);
+  REQUIRE(ret.size() == 4);
+}
+
+TEST_CASE("Edit distance search set", "[edit distance]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile(input, ss, false, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &byte_code = ss.str();
+
+  fst::Set matcher(byte_code.data(), byte_code.size());
+  auto ret = matcher.edit_distance_search("joe", 2);
+  REQUIRE(ret.size() == 4);
+}
