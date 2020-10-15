@@ -192,7 +192,7 @@ void regression_test(const vector<string> &input, const string &byte_code,
 
 template <typename output_t, typename T, typename U>
 void map_search_word(const T &byte_code, string_view cmd, bool verbose,
-                     const U &matcher, string_view word) {
+                     const U &matcher, string_view word, size_t edit_distance) {
   auto ret = false;
   if (cmd == "search") {
     output_t output;
@@ -203,12 +203,19 @@ void map_search_word(const T &byte_code, string_view cmd, bool verbose,
         matcher.common_prefix_search(word, [&](size_t len, const auto &output) {
           cout << word.substr(0, len) << ": " << output << endl;
         });
-  } else { // "longest"
+  } else if (cmd == "longest") {
     output_t output;
     auto len = matcher.longest_common_prefix_search(word, output);
     if (len > 0) {
       ret = true;
       cout << word.substr(0, len) << ": " << output << endl;
+    }
+  } else { // "fuzzy"
+    cerr << "edit_distance: " << edit_distance << endl;
+    auto results = matcher.edit_distance_search(word, edit_distance);
+    ret = !results.empty();
+    for (const auto& [word, output]: results) {
+      cout << word << ": " << output << endl;
     }
   }
   if (!ret) { cout << "not found..." << endl; }
@@ -216,7 +223,7 @@ void map_search_word(const T &byte_code, string_view cmd, bool verbose,
 
 template <typename output_t, typename T>
 void map_search(const T &byte_code, string_view cmd, bool verbose,
-                string_view word) {
+                string_view word, size_t edit_distance) {
   fst::Map<output_t> matcher(byte_code.data(), byte_code.size());
   matcher.set_trace(verbose);
 
@@ -224,19 +231,19 @@ void map_search(const T &byte_code, string_view cmd, bool verbose,
     if (word.empty()) {
       string word;
       while (getline(cin, word)) {
-        map_search_word<output_t>(byte_code, cmd, verbose, matcher, word);
+        map_search_word<output_t>(byte_code, cmd, verbose, matcher, word, edit_distance);
       }
     } else {
-      map_search_word<output_t>(byte_code, cmd, verbose, matcher, word);
+      map_search_word<output_t>(byte_code, cmd, verbose, matcher, word, edit_distance);
     }
   } else {
-    cout << "invalid file..." << endl;
+    cerr << "invalid file..." << endl;
   }
 }
 
 template <typename T, typename U>
 void set_search_word(const T &byte_code, string_view cmd, bool verbose,
-                     const U &matcher, string_view word) {
+                     const U &matcher, string_view word, size_t edit_distance) {
   bool ret = false;
   if (cmd == "search") {
     ret = matcher.contains(word);
@@ -244,19 +251,26 @@ void set_search_word(const T &byte_code, string_view cmd, bool verbose,
   } else if (cmd == "prefix") {
     ret = matcher.common_prefix_search(
         word, [&](size_t len) { cout << word.substr(0, len) << endl; });
-  } else { // "longest"
+  } else if (cmd == "longest") {
     auto len = matcher.longest_common_prefix_search(word);
     if (len > 0) {
       ret = true;
       cout << word.substr(0, len) << endl;
     }
+  } else { // "fuzzy"
+    cerr << "edit_distance: " << edit_distance << endl;
+    auto results = matcher.edit_distance_search(word, edit_distance);
+    ret = !results.empty();
+    for (const auto& word: results) {
+      cout << word << endl;
+    }
   }
-  if (!ret) { cout << "not found..." << endl; }
+  if (!ret) { cerr << "not found..." << endl; }
 }
 
 template <typename T>
 void set_search(const T &byte_code, string_view cmd, bool verbose,
-                string_view word) {
+                string_view word, size_t edit_distance) {
   fst::Set matcher(byte_code.data(), byte_code.size());
   matcher.set_trace(verbose);
 
@@ -264,27 +278,27 @@ void set_search(const T &byte_code, string_view cmd, bool verbose,
     if (word.empty()) {
       string word;
       while (getline(cin, word)) {
-        set_search_word(byte_code, cmd, verbose, matcher, word);
+        set_search_word(byte_code, cmd, verbose, matcher, word, edit_distance);
       }
     } else {
-      set_search_word(byte_code, cmd, verbose, matcher, word);
+      set_search_word(byte_code, cmd, verbose, matcher, word, edit_distance);
     }
   } else {
-    cout << "invalid file..." << endl;
+    cerr << "invalid file..." << endl;
   }
 }
 
 template <typename T>
 void search(const T &byte_code, string_view cmd, bool verbose,
-            string_view word) {
+            string_view word, size_t edit_distance) {
   auto type = fst::get_output_type(byte_code.data(), byte_code.size());
 
   if (type == fst::OutputType::uint32_t) {
-    map_search<uint32_t>(byte_code, cmd, verbose, word);
+    map_search<uint32_t>(byte_code, cmd, verbose, word, edit_distance);
   } else if (type == fst::OutputType::string) {
-    map_search<string>(byte_code, cmd, verbose, word);
+    map_search<string>(byte_code, cmd, verbose, word, edit_distance);
   } else if (type == fst::OutputType::none_t) {
-    set_search(byte_code, cmd, verbose, word);
+    set_search(byte_code, cmd, verbose, word, edit_distance);
   }
 }
 
@@ -311,23 +325,25 @@ void usage() {
   cout << R"(usage: fst [options] <command> [<args>]
 
   commends:
-    compile     source FST  - make fst byte code
-    decompile   FST         - decompile fst byte code
+    compile      source FST  - make fst byte code
+    decompile    FST         - decompile fst byte code
 
-    search      FST [word]  - exact match search
-    prefix      FST [word]  - common prefix search
-    longest     FST [word]  - longest common prefix search
+    search       FST [word]  - exact match search
+    prefix       FST [word]  - common prefix search
+    longest      FST [word]  - longest common prefix search
+    fuzzy        FST [word]  - edit distance search
 
-    dot         source      - convert to dot format
-    dump        source      - convert to byte code dump
+    dot          source      - convert to dot format
+    dump         source      - convert to byte code dump
 
   options:
-    -f          source file format ('csv' or 'tsv')
-    -t          output type ('uint32_t' or 'string')
-    -v          verbose output
-    -set        compile without output
-    -noout      decompile map without output
-    -sorted     skip sorting input
+    -f           source file format ('csv' or 'tsv')
+    -t           output type ('uint32_t' or 'string')
+    -v           verbose output
+    -set         compile without output
+    -no          decompile map without output
+    -sorted      skip sorting input
+    -ed number   edit distance (deault is 1)
 
   note:
     On macOS, you can show FST graph with `./fst dot source | dot -T png | open -a Preview.app -f`.
@@ -348,8 +364,9 @@ int main(int argc, char **argv) {
   auto opt_output_type = args.get<string>("t");
   auto opt_verbose = args.get<bool>("v", false);
   auto opt_set = args.get<bool>("set", false);
-  auto opt_noout = args.get<bool>("noout", false);
+  auto opt_no = args.get<bool>("no", false);
   auto opt_sorted = args.get<bool>("sorted", false);
+  auto opt_ed = args.get<size_t>("ed", 1);
 
   auto cmd = args.positional().at(0);
   const string in_path{args.positional().at(1)};
@@ -396,13 +413,6 @@ int main(int argc, char **argv) {
             });
       }
 
-    } else if (cmd == "decompile") {
-      ifstream fin(in_path, ios_base::binary);
-      if (!fin) { return error(1); }
-
-      auto byte_code = load_byte_code(fin);
-      fst::decompile(byte_code.data(), byte_code.size(), std::cout, !opt_noout);
-
     } else if (cmd == "dump") {
       ifstream fin(in_path);
       if (!fin) { return error(1); }
@@ -447,7 +457,7 @@ int main(int argc, char **argv) {
             });
       }
 
-    } else if (cmd == "search" || cmd == "prefix" || cmd == "longest") {
+    } else if (cmd == "search" || cmd == "prefix" || cmd == "longest" || cmd == "fuzzy") {
       ifstream fin(in_path, ios_base::binary);
       if (!fin) { return error(1); }
 
@@ -456,7 +466,15 @@ int main(int argc, char **argv) {
       std::string word;
       if (args.positional().size() > 2) { word = args.positional().at(2); }
 
-      search(byte_code, cmd, opt_verbose, word);
+      search(byte_code, cmd, opt_verbose, word, opt_ed);
+
+    } else if (cmd == "decompile") {
+      ifstream fin(in_path, ios_base::binary);
+      if (!fin) { return error(1); }
+
+      auto byte_code = load_byte_code(fin);
+
+      fst::decompile(byte_code.data(), byte_code.size(), std::cout, !opt_no);
 
     } else if (cmd == "test") {
       ifstream fin(in_path);

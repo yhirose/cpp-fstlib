@@ -459,7 +459,7 @@ sep	30
   REQUIRE(out.str() == expected);
 }
 
-TEST_CASE("Decompile map, need output", "[decompile]") {
+TEST_CASE("Decompile map, no need output", "[decompile]") {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -493,7 +493,7 @@ sep
   REQUIRE(out.str() == expected);
 }
 
-TEST_CASE("Decompile map, no need output", "[decompile]") {
+TEST_CASE("Decompile map, need output", "[decompile]") {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",

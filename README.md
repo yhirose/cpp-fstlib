@@ -65,9 +65,13 @@ public:
 
   bool exact_match_search(std::string_view sv, output_t &output) const;
 
-  std::vector<std::pair<size_t length, output_t output>> common_prefix_search(std::string_view sv) const;
+  std::vector<std::pair<size_t length, output_t output>>
+  common_prefix_search(std::string_view sv) const;
 
   size_t longest_common_prefix_search(std::string_view sv, output_t &output) const;
+
+  std::vector<std::pair<std::string, output_t>>
+  edit_distance_search(std::string_view sv, size_t max_edits) const;
 }
 
 class Set {
@@ -81,6 +85,9 @@ public:
   std::vector<size_t> common_prefix_search(std::string_view sv) const;
 
   size_t longest_common_prefix_search(std::string_view sv) const;
+
+  std::vector<std::string>
+  edit_distance_search(std::string_view sv, size_t max_edits) const;
 }
 
 } // namespace fst

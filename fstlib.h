@@ -1408,96 +1408,6 @@ inline OutputType get_output_type(const char *byte_code,
 }
 
 //-----------------------------------------------------------------------------
-// read_arc
-//-----------------------------------------------------------------------------
-
-char read_arc(const FstHeader &header, FstOpe ope, const char *&p) {
-  auto index = ope.label_index(header.need_output, header.need_state_output);
-  return index == 0 ? *p-- : header.char_index[index];
-}
-
-//-----------------------------------------------------------------------------
-// depth_first_visit
-//-----------------------------------------------------------------------------
-
-template <typename output_t, typename T, typename U>
-void depth_first_visit(const char *byte_code, const FstHeader &header,
-                       uint32_t address, const std::string &partial_word,
-                       const output_t &partial_output, const T &transit,
-                       U accept) {
-
-  while (true) {
-    auto state_output = OutputTraits<output_t>::initial_value();
-
-    auto end = byte_code + address;
-    auto p = end;
-
-    auto ope = FstOpe(*p--);
-
-    if (ope.has_jump_table()) {
-      auto jump_table_element_size = ope.jump_table_element_size();
-      size_t jump_table_count = 0;
-      auto vb_len = vb_decode_value_reverse(p, jump_table_count);
-      p -= vb_len;
-      p -= jump_table_count * jump_table_element_size;
-
-      address -= std::distance(p, end);
-      continue;
-    }
-
-    auto arc = read_arc(header, ope, p);
-
-    auto delta = 0u;
-    if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
-
-    auto output_suffix = OutputTraits<output_t>::initial_value();
-    if (ope.data.has_output) {
-      p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
-    }
-
-    if (header.need_state_output) {
-      if (ope.data.has_state_output) {
-        p -= OutputTraits<output_t>::read_byte_value(p, state_output);
-      }
-    }
-
-    auto byte_size = std::distance(p, end);
-
-    auto next_address = 0u;
-    if (!ope.data.no_address) {
-      if (delta) { next_address = address - byte_size - delta + 1; }
-    } else {
-      next_address = address - byte_size;
-    }
-
-    auto atm = transit; // copy
-    atm.step(arc);
-
-    auto word = partial_word + arc;
-    auto output = partial_output + output_suffix;
-
-    if (ope.data.final) {
-      if (OutputTraits<output_t>::type() != OutputType::none_t) {
-        if (OutputTraits<output_t>::empty(state_output)) {
-          output += state_output;
-        }
-      }
-      if (atm.is_match()) { accept(word, output); }
-    }
-
-    if (!atm.can_match()) { break; }
-
-    if (next_address) {
-      depth_first_visit(byte_code, header, next_address, word, output, atm,
-                        accept);
-    }
-
-    if (ope.data.last_transition) { break; }
-    address -= byte_size;
-  }
-}
-
-//-----------------------------------------------------------------------------
 // Matcher
 //-----------------------------------------------------------------------------
 
@@ -1565,7 +1475,7 @@ protected:
           auto p = base_address -
                    lookup_jump_table(jump_table, i, jump_table_element_size);
           auto ope = FstOpe(*p--);
-          return read_arc(header_, ope, p);
+          return read_arc(ope, p);
         };
 
         auto found = lower_bound_index(0, jump_table_count,
@@ -1581,7 +1491,7 @@ protected:
         continue;
       }
 
-      uint8_t arc = read_arc(header_, ope, p);
+      uint8_t arc = read_arc(ope, p);
 
       auto delta = 0u;
       if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
@@ -1669,6 +1579,87 @@ protected:
     return ret;
   }
 
+  template <typename T, typename U>
+  void depth_first_visit(uint32_t address, const std::string &partial_word,
+                         const output_t &partial_output, const T &transit,
+                         U accept) const {
+
+    while (true) {
+      auto state_output = OutputTraits<output_t>::initial_value();
+
+      auto end = byte_code_ + address;
+      auto p = end;
+
+      auto ope = FstOpe(*p--);
+
+      if (ope.has_jump_table()) {
+        auto jump_table_element_size = ope.jump_table_element_size();
+        size_t jump_table_count = 0;
+        auto vb_len = vb_decode_value_reverse(p, jump_table_count);
+        p -= vb_len;
+        p -= jump_table_count * jump_table_element_size;
+
+        address -= std::distance(p, end);
+        continue;
+      }
+
+      auto arc = read_arc(ope, p);
+
+      auto delta = 0u;
+      if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
+
+      auto output_suffix = OutputTraits<output_t>::initial_value();
+      if (ope.data.has_output) {
+        p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
+      }
+
+      if (header_.need_state_output) {
+        if (ope.data.has_state_output) {
+          p -= OutputTraits<output_t>::read_byte_value(p, state_output);
+        }
+      }
+
+      auto byte_size = std::distance(p, end);
+
+      auto next_address = 0u;
+      if (!ope.data.no_address) {
+        if (delta) { next_address = address - byte_size - delta + 1; }
+      } else {
+        next_address = address - byte_size;
+      }
+
+      auto atm = transit; // copy
+      atm.step(arc);
+
+      auto word = partial_word + arc;
+      auto output = partial_output + output_suffix;
+
+      if (ope.data.final) {
+        if (OutputTraits<output_t>::type() != OutputType::none_t) {
+          if (OutputTraits<output_t>::empty(state_output)) {
+            output += state_output;
+          }
+        }
+        if (atm.is_match()) { accept(word, output); }
+      }
+
+      if (!atm.can_match()) { break; }
+
+      if (next_address) {
+        depth_first_visit(next_address, word, output, atm, accept);
+      }
+
+      if (ope.data.last_transition) { break; }
+      address -= byte_size;
+    }
+  }
+
+  char read_arc(FstOpe ope, const char *&p) const {
+    auto index =
+        ope.label_index(header_.need_output, header_.need_state_output);
+    return index == 0 ? *p-- : header_.char_index[index];
+  }
+
   size_t lookup_jump_table(const char *p, size_t index,
                            size_t element_size) const {
     if (element_size == 2) {
@@ -1704,10 +1695,14 @@ public:
     std::vector<size_t> new_state{state_[0] + 1};
 
     for (size_t i = 0; i < state_.size() - 1; i++) {
-      size_t cost = (s_[i] == c) ? 0 : 1;
+      const double insert_cost = 1;
+      const double delete_cost = 1;
+      const double replace_cost = 2;
 
-      auto val = std::min(new_state[i] + 1, state_[i] + cost);
-      val = std::min(val, state_[i + 1] + 1);
+      double cost = (s_[i] == c) ? 0 : replace_cost;
+
+      auto val = std::min(new_state[i] + insert_cost, state_[i] + cost);
+      val = std::min(val, state_[i + 1] + delete_cost);
 
       new_state.push_back(val);
     }
@@ -1730,6 +1725,16 @@ private:
 };
 
 //-----------------------------------------------------------------------------
+// DummyAutomaton
+//-----------------------------------------------------------------------------
+
+struct DummyAutomaton {
+  void step(char c) {}
+  bool is_match() const { return true; }
+  bool can_match() const { return true; }
+};
+
+//-----------------------------------------------------------------------------
 // Map
 //-----------------------------------------------------------------------------
 
@@ -1739,7 +1744,7 @@ public:
       : Matcher<output_t>(byte_code, byte_code_size) {}
 
   bool contains(std::string_view sv) const {
-    return Matcher<output_t>::match(sv.data(), sv.size(), [&](const auto &) {});
+    return Matcher<output_t>::match(sv.data(), sv.size());
   }
 
   output_t operator[](std::string_view sv) const { return at(sv); }
@@ -1789,15 +1794,21 @@ public:
 
     std::vector<std::pair<std::string, output_t>> ret;
 
-    depth_first_visit<output_t>(
-        Matcher<output_t>::byte_code_, Matcher<output_t>::header_,
+    Matcher<output_t>::depth_first_visit(
         Matcher<output_t>::header_.start_address, std::string(),
-        OutputTraits<output_t>::initial_value(), LevenshteinAutomaton(sv, max_edits),
+        OutputTraits<output_t>::initial_value(),
+        LevenshteinAutomaton(sv, max_edits),
         [&](const auto &word, const auto &output) {
           ret.emplace_back(std::make_pair(word, output));
         });
 
     return ret;
+  }
+
+  template <typename T> void enumerate(T callback) const {
+    Matcher<output_t>::depth_first_visit(
+        Matcher<output_t>::header_.start_address, std::string(),
+        OutputTraits<output_t>::initial_value(), DummyAutomaton(), callback);
   }
 };
 
@@ -1833,20 +1844,24 @@ public:
     return prefix_len;
   }
 
-  std::vector<std::string>
-  edit_distance_search(std::string_view sv, size_t max_edits) const {
+  std::vector<std::string> edit_distance_search(std::string_view sv,
+                                                size_t max_edits) const {
 
     std::vector<std::string> ret;
 
-    depth_first_visit<none_t>(
-        Matcher<none_t>::byte_code_, Matcher<none_t>::header_,
+    Matcher<none_t>::depth_first_visit(
         Matcher<none_t>::header_.start_address, std::string(),
-        OutputTraits<none_t>::initial_value(), LevenshteinAutomaton(sv, max_edits),
-        [&](const auto &word, const auto&) {
-          ret.emplace_back(word);
-        });
+        OutputTraits<none_t>::initial_value(),
+        LevenshteinAutomaton(sv, max_edits),
+        [&](const auto &word, const auto &) { ret.emplace_back(word); });
 
     return ret;
+  }
+
+  template <typename T> void enumerate(T callback) const {
+    Matcher<none_t>::depth_first_visit(
+        Matcher<none_t>::header_.start_address, std::string(),
+        OutputTraits<none_t>::initial_value(), DummyAutomaton(), callback);
   }
 };
 
@@ -1854,47 +1869,39 @@ public:
 // decompile
 //-----------------------------------------------------------------------------
 
-struct DummyAutomaton {
-  void step(char c) {}
-  bool is_match() const { return true; }
-  bool can_match() const { return true; }
-};
-
 void decompile(const char *byte_code, size_t byte_code_size, std::ostream &out,
                bool need_output = true) {
-  FstHeader header;
-  if (!header.read(byte_code, byte_code_size)) { return; }
 
-  auto address = header.start_address;
   auto type = get_output_type(byte_code, byte_code_size);
 
-  if (type == OutputType::none_t) {
-    depth_first_visit<none_t>(
-        byte_code, header, address, std::string(),
-        OutputTraits<none_t>::initial_value(), DummyAutomaton(),
-        [&](const auto &word, auto output) { out << word << std::endl; });
-  } else if (type == OutputType::uint32_t) {
-    depth_first_visit<uint32_t>(byte_code, header, address, std::string(),
-                                OutputTraits<uint32_t>::initial_value(),
-                                DummyAutomaton(),
-                                [&](const auto &word, auto output) {
-                                  if (need_output) {
-                                    out << word << '\t' << output << std::endl;
-                                  } else {
-                                    out << word << std::endl;
-                                  }
-                                });
+  if (type == OutputType::uint32_t) {
+    Map<uint32_t> matcher(byte_code, byte_code_size);
+    if (matcher) {
+      matcher.enumerate([&](const auto &word, auto output) {
+        if (need_output) {
+          out << word << '\t' << output << std::endl;
+        } else {
+          out << word << std::endl;
+        }
+      });
+    }
   } else if (type == OutputType::string) {
-    depth_first_visit<std::string>(
-        byte_code, header, address, std::string(),
-        OutputTraits<std::string>::initial_value(), DummyAutomaton(),
-        [&](const auto &word, const auto &output) {
-          if (need_output) {
-            out << word << '\t' << output << std::endl;
-          } else {
-            out << word << std::endl;
-          }
-        });
+    Map<std::string> matcher(byte_code, byte_code_size);
+    if (matcher) {
+      matcher.enumerate([&](const auto &word, auto output) {
+        if (need_output) {
+          out << word << '\t' << output << std::endl;
+        } else {
+          out << word << std::endl;
+        }
+      });
+    }
+  } else if (type == OutputType::none_t) {
+    Set matcher(byte_code, byte_code_size);
+    if (matcher) {
+      matcher.enumerate(
+          [&](const auto &word, auto output) { out << word << std::endl; });
+    }
   }
 }
 
