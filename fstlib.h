@@ -1695,20 +1695,17 @@ public:
     std::vector<size_t> new_state{state_[0] + 1};
 
     for (size_t i = 0; i < state_.size() - 1; i++) {
-      const double insert_cost = 1;
-      const double delete_cost = 1;
-      const double replace_cost = 2;
+      auto cost = (s_[i] == c) ? 0 : replace_cost_;
 
-      double cost = (s_[i] == c) ? 0 : replace_cost;
+      auto edits =
+          std::min(std::min(new_state[i] + insert_cost_, state_[i] + cost),
+                   state_[i + 1] + delete_cost_);
 
-      auto val = std::min(new_state[i] + insert_cost, state_[i] + cost);
-      val = std::min(val, state_[i + 1] + delete_cost);
-
-      new_state.push_back(val);
+      new_state.push_back(edits);
     }
 
     std::transform(new_state.begin(), new_state.end(), state_.begin(),
-                   [=](auto val) { return std::min(val, max_edits_ + 1); });
+                   [=](auto edits) { return std::min(edits, max_edits_ + 1); });
   }
 
   bool is_match() const { return state_.back() <= max_edits_; }
@@ -1722,6 +1719,10 @@ private:
   std::string s_;
   size_t max_edits_;
   std::vector<size_t> state_;
+
+  const double insert_cost_ = 1;
+  const double delete_cost_ = 1;
+  const double replace_cost_ = 1;
 };
 
 //-----------------------------------------------------------------------------
@@ -1742,6 +1743,8 @@ template <typename output_t> class Map : public Matcher<output_t> {
 public:
   Map(const char *byte_code, size_t byte_code_size)
       : Matcher<output_t>(byte_code, byte_code_size) {}
+
+  static const bool has_output = true;
 
   bool contains(std::string_view sv) const {
     return Matcher<output_t>::match(sv.data(), sv.size());
@@ -1799,7 +1802,7 @@ public:
         OutputTraits<output_t>::initial_value(),
         LevenshteinAutomaton(sv, max_edits),
         [&](const auto &word, const auto &output) {
-          ret.emplace_back(std::make_pair(word, output));
+          ret.emplace_back(std::pair(word, output));
         });
 
     return ret;
@@ -1820,6 +1823,8 @@ class Set : public Matcher<none_t> {
 public:
   Set(const char *byte_code, size_t byte_code_size)
       : Matcher<none_t>(byte_code, byte_code_size) {}
+
+  static const bool has_output = false;
 
   bool contains(std::string_view sv) const {
     return Matcher<none_t>::match(sv.data(), sv.size());

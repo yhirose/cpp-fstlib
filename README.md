@@ -24,6 +24,19 @@ hello: 83713
 
 > ./cmd/fst longest words.fst helloworld
 hello: 83713
+
+> ./cmd/fst fuzzy words.fst fuzzy -ed 2 // Edit distance 2
+Suzy: 195759
+buzz: 28064
+buzzy: 28076
+...
+
+> ./cmd/fst spellcheck words.fst thier
+their: 0.946667
+thir: 0.762667
+tier: 0.752
+thief: 0.736
+trier: 0.704
 ```
 
 ## API reference

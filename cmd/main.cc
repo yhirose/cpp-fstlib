@@ -1,6 +1,7 @@
-#include "./flags.h"
+#include "flags.h"
 #include <fstlib.h>
 #include <fstream>
+#include <spellcheck.h>
 #include <sstream>
 
 using namespace std;
@@ -190,9 +191,32 @@ void regression_test(const vector<string> &input, const string &byte_code,
   }
 }
 
+template <typename T>
+bool spellcheck_word(const T &matcher, const std::string word) {
+  auto &&[ret, candidates] = fst::spellcheck(matcher, word);
+
+  if (ret) {
+    cout << "correct word!" << std::endl;
+    return true;
+  }
+
+  size_t count = 10;
+  for (auto [candidate, similarity] : candidates) {
+    if (count == 0) { break; }
+    cout << candidate << ": " << similarity << std::endl;
+    count--;
+  }
+  return false;
+}
+
 template <typename output_t, typename T, typename U>
 void map_search_word(const T &byte_code, string_view cmd, bool verbose,
                      const U &matcher, string_view word, size_t edit_distance) {
+  if (cmd == "spellcheck") {
+    spellcheck_word(matcher, string(word));
+    return;
+  }
+
   auto ret = false;
   if (cmd == "search") {
     output_t output;
@@ -210,11 +234,10 @@ void map_search_word(const T &byte_code, string_view cmd, bool verbose,
       ret = true;
       cout << word.substr(0, len) << ": " << output << endl;
     }
-  } else { // "fuzzy"
-    cerr << "edit_distance: " << edit_distance << endl;
+  } else if (cmd == "fuzzy") {
     auto results = matcher.edit_distance_search(word, edit_distance);
     ret = !results.empty();
-    for (const auto& [word, output]: results) {
+    for (const auto &[word, output] : results) {
       cout << word << ": " << output << endl;
     }
   }
@@ -231,10 +254,12 @@ void map_search(const T &byte_code, string_view cmd, bool verbose,
     if (word.empty()) {
       string word;
       while (getline(cin, word)) {
-        map_search_word<output_t>(byte_code, cmd, verbose, matcher, word, edit_distance);
+        map_search_word<output_t>(byte_code, cmd, verbose, matcher, word,
+                                  edit_distance);
       }
     } else {
-      map_search_word<output_t>(byte_code, cmd, verbose, matcher, word, edit_distance);
+      map_search_word<output_t>(byte_code, cmd, verbose, matcher, word,
+                                edit_distance);
     }
   } else {
     cerr << "invalid file..." << endl;
@@ -257,13 +282,14 @@ void set_search_word(const T &byte_code, string_view cmd, bool verbose,
       ret = true;
       cout << word.substr(0, len) << endl;
     }
-  } else { // "fuzzy"
-    cerr << "edit_distance: " << edit_distance << endl;
+  } else if (cmd == "fuzzy") {
     auto results = matcher.edit_distance_search(word, edit_distance);
     ret = !results.empty();
-    for (const auto& word: results) {
+    for (const auto &word : results) {
       cout << word << endl;
     }
+  } else { // "spellcheck"
+    ret = spellcheck_word(matcher, string(word));
   }
   if (!ret) { cerr << "not found..." << endl; }
 }
@@ -289,8 +315,8 @@ void set_search(const T &byte_code, string_view cmd, bool verbose,
 }
 
 template <typename T>
-void search(const T &byte_code, string_view cmd, bool verbose,
-            string_view word, size_t edit_distance) {
+void search(const T &byte_code, string_view cmd, bool verbose, string_view word,
+            size_t edit_distance) {
   auto type = fst::get_output_type(byte_code.data(), byte_code.size());
 
   if (type == fst::OutputType::uint32_t) {
@@ -332,6 +358,7 @@ void usage() {
     prefix       FST [word]  - common prefix search
     longest      FST [word]  - longest common prefix search
     fuzzy        FST [word]  - edit distance search
+    spellcheck   FST [word]  - check spelling
 
     dot          source      - convert to dot format
     dump         source      - convert to byte code dump
@@ -457,7 +484,8 @@ int main(int argc, char **argv) {
             });
       }
 
-    } else if (cmd == "search" || cmd == "prefix" || cmd == "longest" || cmd == "fuzzy") {
+    } else if (cmd == "search" || cmd == "prefix" || cmd == "longest" ||
+               cmd == "fuzzy" || cmd == "spellcheck") {
       ifstream fin(in_path, ios_base::binary);
       if (!fin) { return error(1); }
 
