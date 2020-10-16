@@ -1797,6 +1797,8 @@ public:
 
     std::vector<std::pair<std::string, output_t>> ret;
 
+    if (sv.empty()) { return ret; }
+
     Matcher<output_t>::depth_first_visit(
         Matcher<output_t>::header_.start_address, std::string(),
         OutputTraits<output_t>::initial_value(),
@@ -1853,6 +1855,8 @@ public:
                                                 size_t max_edits) const {
 
     std::vector<std::string> ret;
+
+    if (sv.empty()) { return ret; }
 
     Matcher<none_t>::depth_first_visit(
         Matcher<none_t>::header_.start_address, std::string(),
