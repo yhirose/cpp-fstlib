@@ -6,17 +6,17 @@
 
 using namespace std;
 
-template <typename output_t> struct traints {
+template <typename output_t> struct traits {
   static output_t convert(uint32_t n) {}
   static output_t convert(const string &s) {}
 };
 
-template <> struct traints<uint32_t> {
+template <> struct traits<uint32_t> {
   static uint32_t convert(uint32_t n) { return n; }
   static uint32_t convert(const string &s) { return stoi(s); }
 };
 
-template <> struct traints<string> {
+template <> struct traits<string> {
   static string convert(uint32_t n) { return to_string(n); }
   static string convert(const string &s) { return s; }
 };
@@ -43,9 +43,9 @@ vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
   while (getline(fin, line)) {
     auto fields = split(line, delimiter);
     if (fields.size() > 1) {
-      input.emplace_back(fields[0], traints<output_t>::convert(fields[1]));
+      input.emplace_back(fields[0], traits<output_t>::convert(fields[1]));
     } else {
-      input.emplace_back(line, traints<output_t>::convert(
+      input.emplace_back(line, traits<output_t>::convert(
                                    static_cast<uint32_t>(input.size())));
     }
   }
