@@ -109,7 +109,6 @@ inline size_t max_range(std::string_view s1, std::string_view s2) {
 inline bool common_string(std::string_view s1, std::string_view s2,
                           std::string &cs) {
   auto r = max_range(s1, s2);
-  int max_dist = std::floor(std::max(s1.size(), s2.size()) / 2) - 1;
 
   for (size_t i = 0; i < s1.length(); i++) {
     auto beg = std::max<int>(0, (int)i - (int)r);
