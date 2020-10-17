@@ -1,6 +1,6 @@
 # cpp-fstlib
 
-[![](https://github.com/yhirose/cpp-httplib/workflows/test/badge.svg)](https://github.com/yhirose/cpp-fstlib/actions)
+[![](https://github.com/yhirose/cpp-fstlib/workflows/CMake/badge.svg)](https://github.com/yhirose/cpp-fstlib/actions)
 
 C++17 header-only FST (finite state transducer) library.
 We can use it as [Trie data structure](https://en.wikipedia.org/wiki/Trie).
