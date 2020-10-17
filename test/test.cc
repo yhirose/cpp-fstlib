@@ -2,6 +2,7 @@
 #include "catch.hpp"
 
 #include <fstlib.h>
+#include <spellcheck.h>
 
 using namespace std;
 
@@ -598,4 +599,36 @@ TEST_CASE("Edit distance search set", "[edit distance]") {
   fst::Set matcher(byte_code.data(), byte_code.size());
   auto ret = matcher.edit_distance_search("joe", 2);
   REQUIRE(ret.size() == 4);
+}
+
+TEST_CASE("Spellcheck", "[spellcheck]") {
+  vector<string> input = {
+      "jan", "feb", "mar", "apr", "may", "jun",
+      "jul", "aug", "sep", "oct", "nov", "dec",
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile(input, ss, false, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &byte_code = ss.str();
+
+  fst::Set matcher(byte_code.data(), byte_code.size());
+  REQUIRE(matcher == true);
+
+  {
+    auto &&[ret, candidates] = fst::spellcheck(matcher, "jun");
+    REQUIRE(ret == true);
+  }
+
+  {
+    auto &&[ret, candidates] = fst::spellcheck(matcher, "joe");
+    REQUIRE(ret == false);
+
+    auto &&[candidate, similarity] = candidates.front();
+    REQUIRE(candidate == "jan");
+    REQUIRE(std::floor(similarity * 1000) == 349);
+  }
 }

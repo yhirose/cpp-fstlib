@@ -1697,9 +1697,8 @@ public:
     for (size_t i = 0; i < state_.size() - 1; i++) {
       auto cost = (s_[i] == c) ? 0 : replace_cost_;
 
-      auto edits =
-          std::min(std::min(new_state[i] + insert_cost_, state_[i] + cost),
-                   state_[i + 1] + delete_cost_);
+      auto edits = std::min({new_state[i] + insert_cost_, state_[i] + cost,
+                             state_[i + 1] + delete_cost_});
 
       new_state.push_back(edits);
     }
