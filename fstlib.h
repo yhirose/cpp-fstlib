@@ -1683,8 +1683,11 @@ protected:
 
 class LevenshteinAutomaton {
 public:
-  LevenshteinAutomaton(std::string_view sv, size_t max_edits)
-      : s_(sv), max_edits_(max_edits) {
+  LevenshteinAutomaton(std::string_view sv, size_t max_edits,
+                       size_t insert_cost, size_t delete_cost,
+                       size_t replace_cost)
+      : s_(sv), max_edits_(max_edits), insert_cost_(insert_cost),
+        delete_cost_(delete_cost), replace_cost_(replace_cost) {
     state_.resize(s_.size() + 1);
     std::iota(state_.begin(), state_.end(), 0);
   }
@@ -1715,13 +1718,13 @@ public:
   }
 
 private:
-  std::string s_;
+  std::string_view s_;
   size_t max_edits_;
-  std::vector<size_t> state_;
+  size_t insert_cost_;
+  size_t delete_cost_;
+  size_t replace_cost_;
 
-  const double insert_cost_ = 1;
-  const double delete_cost_ = 1;
-  const double replace_cost_ = 1;
+  std::vector<size_t> state_;
 };
 
 //-----------------------------------------------------------------------------
@@ -1792,7 +1795,9 @@ public:
   }
 
   std::vector<std::pair<std::string, output_t>>
-  edit_distance_search(std::string_view sv, size_t max_edits) const {
+  edit_distance_search(std::string_view sv, size_t max_edits,
+                       size_t insert_cost = 1, size_t delete_cost = 1,
+                       size_t replace_cost = 1) const {
 
     std::vector<std::pair<std::string, output_t>> ret;
 
@@ -1801,7 +1806,8 @@ public:
     Matcher<output_t>::depth_first_visit(
         Matcher<output_t>::header_.start_address, std::string(),
         OutputTraits<output_t>::initial_value(),
-        LevenshteinAutomaton(sv, max_edits),
+        LevenshteinAutomaton(sv, max_edits, insert_cost, delete_cost,
+                             replace_cost),
         [&](const auto &word, const auto &output) {
           ret.emplace_back(std::pair(word, output));
         });
@@ -1851,7 +1857,10 @@ public:
   }
 
   std::vector<std::string> edit_distance_search(std::string_view sv,
-                                                size_t max_edits) const {
+                                                size_t max_edits,
+                                                size_t insert_cost = 1,
+                                                size_t delete_cost = 1,
+                                                size_t replace_cost = 1) const {
 
     std::vector<std::string> ret;
 
@@ -1860,7 +1869,8 @@ public:
     Matcher<none_t>::depth_first_visit(
         Matcher<none_t>::header_.start_address, std::string(),
         OutputTraits<none_t>::initial_value(),
-        LevenshteinAutomaton(sv, max_edits),
+        LevenshteinAutomaton(sv, max_edits, insert_cost, delete_cost,
+                             replace_cost),
         [&](const auto &word, const auto &) { ret.emplace_back(word); });
 
     return ret;

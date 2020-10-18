@@ -45,8 +45,8 @@ vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
     if (fields.size() > 1) {
       input.emplace_back(fields[0], traits<output_t>::convert(fields[1]));
     } else {
-      input.emplace_back(line, traits<output_t>::convert(
-                                   static_cast<uint32_t>(input.size())));
+      input.emplace_back(
+          line, traits<output_t>::convert(static_cast<uint32_t>(input.size())));
     }
   }
   return input;
@@ -235,7 +235,7 @@ void map_search_word(const T &byte_code, string_view cmd, bool verbose,
       cout << word.substr(0, len) << ": " << output << endl;
     }
   } else if (cmd == "fuzzy") {
-    auto results = matcher.edit_distance_search(word, edit_distance);
+    auto results = matcher.edit_distance_search(word, edit_distance, 1, 1, 2);
     ret = !results.empty();
     for (const auto &[word, output] : results) {
       cout << word << ": " << output << endl;
@@ -283,7 +283,7 @@ void set_search_word(const T &byte_code, string_view cmd, bool verbose,
       cout << word.substr(0, len) << endl;
     }
   } else if (cmd == "fuzzy") {
-    auto results = matcher.edit_distance_search(word, edit_distance);
+    auto results = matcher.edit_distance_search(word, edit_distance, 1, 1, 2);
     ret = !results.empty();
     for (const auto &word : results) {
       cout << word << endl;
