@@ -1,12 +1,12 @@
-cmake_minimum_required(VERSION 3.1.0)
+cmake_minimum_required(VERSION 3.14)
 project(test)
-
-include_directories(..)
-set(CMAKE_CXX_STANDARD 17)
 
 add_executable(test-main test.cc)
 
+target_include_directories(test-main PRIVATE ..)
+
 enable_testing()
+
 add_test(
   NAME TestMain
   COMMAND test-main

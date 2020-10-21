@@ -1,16 +1,9 @@
-cmake_minimum_required(VERSION 3.1.0)
+cmake_minimum_required(VERSION 3.14)
 project(benchmark)
-
-set(CMAKE_CXX_STANDARD 17)
 
 if(NOT MSVC)
     add_definitions("-Wno-register")
 endif()
-
-include_directories(
-    ..
-    marisa-0.2.5/include
-    marisa-0.2.5/lib)
 
 add_executable(benchmark
     marisa-0.2.5/lib/marisa/agent.cc
@@ -27,3 +20,9 @@ add_executable(benchmark
     ux-trie/uxTrie.cpp
     ux-trie/uxUtil.cpp
     main.cc)
+
+target_include_directories(
+    benchmark PRIVATE
+    ..
+    marisa-0.2.5/include
+    marisa-0.2.5/lib)
