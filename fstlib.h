@@ -292,6 +292,45 @@ template <> struct OutputTraits<uint32_t> {
   }
 };
 
+template <> struct OutputTraits<uint64_t> {
+  using value_type = uint64_t;
+
+  static OutputType type() { return OutputType::uint64_t; }
+
+  static value_type initial_value() { return 0; }
+
+  static bool empty(value_type val) { return val == 0; }
+
+  static void clear(value_type &val) { val = 0; }
+
+  static std::string to_string(value_type val) { return std::to_string(val); }
+
+  static void prepend_value(value_type &base, value_type val) { base += val; }
+
+  static value_type get_suffix(value_type a, value_type b) { return a - b; }
+
+  static value_type get_common_prefix(value_type a, value_type b) {
+    return std::min(a, b);
+  }
+
+  static size_t write_value(char *buff, size_t buff_len, value_type val) {
+    memcpy(&buff[buff_len], &val, sizeof(val));
+    return sizeof(val);
+  }
+
+  static size_t get_byte_value_size(value_type val) {
+    return vb_encode_value_length(val);
+  }
+
+  static void write_byte_value(std::ostream &os, value_type val) {
+    vb_encode_value_reverse(val, os);
+  }
+
+  static size_t read_byte_value(const char *p, value_type &val) {
+    return vb_decode_value_reverse(p, val);
+  }
+};
+
 template <> struct OutputTraits<std::string> {
   using value_type = std::string;
 
@@ -1894,6 +1933,17 @@ void decompile(const char *byte_code, size_t byte_code_size, std::ostream &out,
 
   if (type == OutputType::uint32_t) {
     Map<uint32_t> matcher(byte_code, byte_code_size);
+    if (matcher) {
+      matcher.enumerate([&](const auto &word, auto output) {
+        if (need_output) {
+          out << word << '\t' << output << std::endl;
+        } else {
+          out << word << std::endl;
+        }
+      });
+    }
+  } else if (type == OutputType::uint64_t) {
+    Map<uint64_t> matcher(byte_code, byte_code_size);
     if (matcher) {
       matcher.enumerate([&](const auto &word, auto output) {
         if (need_output) {

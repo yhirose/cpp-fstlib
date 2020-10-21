@@ -8,16 +8,19 @@ using namespace std;
 
 template <typename output_t> struct traits {
   static output_t convert(uint32_t n) {}
+  static output_t convert(uint64_t n) {}
   static output_t convert(const string &s) {}
 };
 
 template <> struct traits<uint32_t> {
   static uint32_t convert(uint32_t n) { return n; }
+  static uint32_t convert(uint64_t n) { return static_cast<uint64_t>(n); }
   static uint32_t convert(const string &s) { return stoi(s); }
 };
 
 template <> struct traits<string> {
   static string convert(uint32_t n) { return to_string(n); }
+  static string convert(uint64_t n) { return to_string(n); }
   static string convert(const string &s) { return s; }
 };
 
@@ -45,6 +48,7 @@ vector<pair<string, output_t>> load_input(istream &fin, char delimiter) {
     if (fields.size() > 1) {
       input.emplace_back(fields[0], traits<output_t>::convert(fields[1]));
     } else {
+      // TODO:
       input.emplace_back(
           line, traits<output_t>::convert(static_cast<uint32_t>(input.size())));
     }
@@ -120,6 +124,7 @@ void map_regression_test(const vector<pair<string, output_t>> &input,
 }
 
 void map_regression_test(const vector<string> &input, const string &byte_code) {
+  // TODO:
   fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
 
   if (matcher) {
@@ -321,6 +326,8 @@ void search(const T &byte_code, string_view cmd, bool verbose, string_view word,
 
   if (type == fst::OutputType::uint32_t) {
     map_search<uint32_t>(byte_code, cmd, verbose, word, edit_distance);
+  } else if (type == fst::OutputType::uint64_t) {
+    map_search<uint64_t>(byte_code, cmd, verbose, word, edit_distance);
   } else if (type == fst::OutputType::string) {
     map_search<string>(byte_code, cmd, verbose, word, edit_distance);
   } else if (type == fst::OutputType::none_t) {
@@ -365,7 +372,7 @@ void usage() {
 
   options:
     -f           source file format ('csv' or 'tsv')
-    -t           output type ('uint32_t' or 'string')
+    -t           output type ('uint32_t', 'uint64_t' or 'string')
     -v           verbose output
     -set         compile without output
     -no          decompile map without output
@@ -428,6 +435,7 @@ int main(int argc, char **argv) {
             },
             [&](const auto &input) { return pair(fst::Result::Success, 0); });
       } else {
+        // TODO:
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
@@ -474,6 +482,7 @@ int main(int argc, char **argv) {
             },
             [&](const auto &input) { return pair(fst::Result::Success, 0); });
       } else {
+        // TODO:
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {
@@ -523,6 +532,7 @@ int main(int argc, char **argv) {
             },
             [&](const auto &input) { return pair(fst::Result::Success, 0); });
       } else {
+        // TODO:
         return build<uint32_t>(
             fin, format,
             [&](const auto &input) {

@@ -6,10 +6,10 @@
 
 using namespace std;
 
-#define USE_UINT32_OUTPUT_T
+#define USE_UINT64_OUTPUT_T
 
-#ifdef USE_UINT32_OUTPUT_T
-typedef uint32_t output_t;
+#ifdef USE_UINT64_OUTPUT_T
+typedef uint64_t output_t;
 #define V(x) (x)
 #else
 typedef string output_t;
