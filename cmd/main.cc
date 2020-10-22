@@ -107,7 +107,7 @@ void map_regression_test(const vector<pair<string, output_t>> &input,
 
   if (matcher) {
     for (const auto &[word, expected] : input) {
-      auto actual = fst::OutputTraits<output_t>::initial_value();
+      auto actual = output_t{};
       if (!matcher.exact_match_search(word, actual)) {
         if (expected != actual) {
           cerr << "word: " << word << endl;

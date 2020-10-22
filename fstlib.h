@@ -244,11 +244,7 @@ template <> struct OutputTraits<none_t> {
 
   static OutputType type() { return OutputType::none_t; }
 
-  static value_type initial_value() { return 0; }
-
   static bool empty(value_type val) { return val == 0; }
-
-  static void clear(value_type &val) { val = 0; }
 
   static size_t read_byte_value(const char *p, value_type &val) { return 0; }
 };
@@ -258,11 +254,7 @@ template <> struct OutputTraits<uint32_t> {
 
   static OutputType type() { return OutputType::uint32_t; }
 
-  static value_type initial_value() { return 0; }
-
   static bool empty(value_type val) { return val == 0; }
-
-  static void clear(value_type &val) { val = 0; }
 
   static std::string to_string(value_type val) { return std::to_string(val); }
 
@@ -297,11 +289,7 @@ template <> struct OutputTraits<uint64_t> {
 
   static OutputType type() { return OutputType::uint64_t; }
 
-  static value_type initial_value() { return 0; }
-
   static bool empty(value_type val) { return val == 0; }
-
-  static void clear(value_type &val) { val = 0; }
 
   static std::string to_string(value_type val) { return std::to_string(val); }
 
@@ -336,11 +324,7 @@ template <> struct OutputTraits<std::string> {
 
   static OutputType type() { return OutputType::string; }
 
-  static value_type initial_value() { return value_type(); }
-
   static bool empty(const value_type &val) { return val.empty(); }
-
-  static void clear(value_type &val) { val.clear(); }
 
   static value_type to_string(const value_type &val) { return val; }
 
@@ -509,13 +493,13 @@ public:
     id = state_id;
     set_final(false);
     transitions.clear();
-    OutputTraits<output_t>::clear(state_output);
+    state_output = output_t{};
   }
 
   size_t id = -1;
   bool final = false;
   Transitions transitions;
-  output_t state_output = OutputTraits<output_t>::initial_value();
+  output_t state_output = output_t{};
 
 private:
   State(const State &) = delete;
@@ -735,8 +719,8 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
 
         const auto &output = prev_state->output(arc);
 
-        auto common_prefix = OutputTraits<output_t>::initial_value();
-        auto word_suffix = OutputTraits<output_t>::initial_value();
+        auto common_prefix = output_t{};
+        auto word_suffix = output_t{};
         get_common_prefix_and_word_suffix(current_output, output, common_prefix,
                                           word_suffix);
 
@@ -1483,13 +1467,13 @@ protected:
     }
 
     auto ret = false;
-    auto output = OutputTraits<output_t>::initial_value();
+    auto output = output_t{};
 
     auto address = header_.start_address;
     auto i = 0u;
     while (i < len) {
       auto ch = static_cast<uint8_t>(str[i]);
-      auto state_output = OutputTraits<output_t>::initial_value();
+      auto state_output = output_t{};
 
       auto end = byte_code_ + address;
       auto p = end;
@@ -1535,7 +1519,7 @@ protected:
       auto delta = 0u;
       if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
 
-      auto output_suffix = OutputTraits<output_t>::initial_value();
+      auto output_suffix = output_t{};
       if (ope.data.has_output) {
         p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
       }
@@ -1624,7 +1608,7 @@ protected:
                          U accept) const {
 
     while (true) {
-      auto state_output = OutputTraits<output_t>::initial_value();
+      auto state_output = output_t{};
 
       auto end = byte_code_ + address;
       auto p = end;
@@ -1647,7 +1631,7 @@ protected:
       auto delta = 0u;
       if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
 
-      auto output_suffix = OutputTraits<output_t>::initial_value();
+      auto output_suffix = output_t{};
       if (ope.data.has_output) {
         p -= OutputTraits<output_t>::read_byte_value(p, output_suffix);
       }
@@ -1796,7 +1780,7 @@ public:
   output_t operator[](const char *s) const { return at(s); }
 
   output_t at(std::string_view sv) const {
-    auto output = fst::OutputTraits<output_t>::initial_value();
+    auto output = output_t{};
     auto ret = Matcher<output_t>::match(sv.data(), sv.size(),
                                         [&](const auto &_) { output = _; });
     if (!ret) { throw std::out_of_range("invalid key..."); }
@@ -1844,7 +1828,7 @@ public:
 
     Matcher<output_t>::depth_first_visit(
         Matcher<output_t>::header_.start_address, std::string(),
-        OutputTraits<output_t>::initial_value(),
+        output_t{},
         LevenshteinAutomaton(sv, max_edits, insert_cost, delete_cost,
                              replace_cost),
         [&](const auto &word, const auto &output) {
@@ -1857,7 +1841,7 @@ public:
   template <typename T> void enumerate(T callback) const {
     Matcher<output_t>::depth_first_visit(
         Matcher<output_t>::header_.start_address, std::string(),
-        OutputTraits<output_t>::initial_value(), DummyAutomaton(), callback);
+        output_t{}, DummyAutomaton(), callback);
   }
 };
 
@@ -1907,7 +1891,7 @@ public:
 
     Matcher<none_t>::depth_first_visit(
         Matcher<none_t>::header_.start_address, std::string(),
-        OutputTraits<none_t>::initial_value(),
+        none_t{},
         LevenshteinAutomaton(sv, max_edits, insert_cost, delete_cost,
                              replace_cost),
         [&](const auto &word, const auto &) { ret.emplace_back(word); });
@@ -1918,7 +1902,7 @@ public:
   template <typename T> void enumerate(T callback) const {
     Matcher<none_t>::depth_first_visit(
         Matcher<none_t>::header_.start_address, std::string(),
-        OutputTraits<none_t>::initial_value(), DummyAutomaton(), callback);
+        none_t{}, DummyAutomaton(), callback);
   }
 };
 
