@@ -1712,8 +1712,9 @@ public:
   LevenshteinAutomaton(std::string_view sv, size_t max_edits,
                        size_t insert_cost, size_t delete_cost,
                        size_t replace_cost)
-      : s_(sv), max_edits_(max_edits), insert_cost_(insert_cost),
-        delete_cost_(delete_cost), replace_cost_(replace_cost) {
+      : s_(decode(sv)), max_edits_(max_edits),
+        insert_cost_(insert_cost), delete_cost_(delete_cost),
+        replace_cost_(replace_cost) {
     state_.resize(s_.size() + 1);
     std::iota(state_.begin(), state_.end(), 0);
   }
@@ -1721,9 +1722,16 @@ public:
   LevenshteinAutomaton(const LevenshteinAutomaton &rhs) = default;
 
   void step(char c) {
+    u8code_ += c;
+    char32_t cp;
+    if (!decode_codepoint(u8code_.data(), u8code_.size(), cp)) { return; }
+    std::cout << "cp: " << std::hex << (int)cp << " " << u8code_ << std::endl;
+    u8code_.clear();
+
     std::vector<size_t> new_state{state_[0] + 1};
 
     for (size_t i = 0; i < state_.size() - 1; i++) {
+      std::cout << i << " " << (int)s_[i] << std::endl;
       auto cost = (s_[i] == c) ? 0 : replace_cost_;
 
       auto edits = std::min({new_state[i] + insert_cost_, state_[i] + cost,
@@ -1736,21 +1744,109 @@ public:
                    [=](auto edits) { return std::min(edits, max_edits_ + 1); });
   }
 
-  bool is_match() const { return state_.back() <= max_edits_; }
+  bool is_match() const {
+    if (intermidiate_codepoint_state()) { return false; }
+    return state_.back() <= max_edits_;
+  }
 
   bool can_match() const {
     auto it = std::min_element(state_.begin(), state_.end());
     return *it <= max_edits_;
   }
 
+  bool back_track() const {
+    return intermidiate_codepoint_state();
+  }
+
 private:
-  std::string_view s_;
+  std::u32string s_;
   size_t max_edits_;
   size_t insert_cost_;
   size_t delete_cost_;
   size_t replace_cost_;
 
   std::vector<size_t> state_;
+  std::string u8code_;
+
+  bool intermidiate_codepoint_state() const { return !u8code_.empty(); }
+
+  bool decode_codepoint(const char *s8, size_t l, size_t &bytes, char32_t &cp) {
+    if (l) {
+      uint8_t b = s8[0];
+      if ((b & 0x80) == 0) {
+        bytes = 1;
+        cp = b;
+        return true;
+      } else if ((b & 0xE0) == 0xC0) {
+        if (l >= 2) {
+          bytes = 2;
+          cp = ((static_cast<char32_t>(s8[0] & 0x1F)) << 6) |
+               (static_cast<char32_t>(s8[1] & 0x3F));
+          return true;
+        }
+      } else if ((b & 0xF0) == 0xE0) {
+        if (l >= 3) {
+          bytes = 3;
+          cp = ((static_cast<char32_t>(s8[0] & 0x0F)) << 12) |
+               ((static_cast<char32_t>(s8[1] & 0x3F)) << 6) |
+               (static_cast<char32_t>(s8[2] & 0x3F));
+          return true;
+        }
+      } else if ((b & 0xF8) == 0xF0) {
+        if (l >= 4) {
+          bytes = 4;
+          cp = ((static_cast<char32_t>(s8[0] & 0x07)) << 18) |
+               ((static_cast<char32_t>(s8[1] & 0x3F)) << 12) |
+               ((static_cast<char32_t>(s8[2] & 0x3F)) << 6) |
+               (static_cast<char32_t>(s8[3] & 0x3F));
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  size_t decode_codepoint(const char *s8, size_t l, char32_t &out) {
+    size_t bytes;
+    if (decode_codepoint(s8, l, bytes, out)) { return bytes; }
+    return 0;
+  }
+
+  template <typename T> void for_each(const char *s8, size_t l, T callback) {
+    size_t id = 0;
+    size_t i = 0;
+    while (i < l) {
+      auto beg = i++;
+      while (i < l && (s8[i] & 0xc0) == 0x80) {
+        i++;
+      }
+      callback(s8, l, beg, i, id++);
+    }
+  }
+
+  void decode(std::string_view s8, std::u32string &out) {
+    decode(s8.data(), s8.length(), out);
+  }
+
+  void decode(const char *s8, size_t l, std::u32string &out) {
+    for_each(s8, l,
+             [&](const char *s, size_t l, size_t beg, size_t end, size_t i) {
+               size_t bytes;
+               char32_t cp;
+               decode_codepoint(&s[beg], (end - beg), bytes, cp);
+               out += cp;
+             });
+  }
+
+  std::u32string decode(const char *s8, size_t l) {
+    std::u32string out;
+    decode(s8, l, out);
+    return out;
+  }
+
+  std::u32string decode(std::string_view s8) {
+    return decode(s8.data(), s8.length());
+  }
 };
 
 //-----------------------------------------------------------------------------
@@ -1761,6 +1857,7 @@ struct DummyAutomaton {
   void step(char c) {}
   bool is_match() const { return true; }
   bool can_match() const { return true; }
+  bool back_track() const { return false; }
 };
 
 //-----------------------------------------------------------------------------
