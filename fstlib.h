@@ -266,8 +266,10 @@ template <> struct OutputTraits<uint32_t> {
     return std::min(a, b);
   }
 
-  static size_t write_value(char *buff, size_t buff_len, value_type val) {
-    memcpy(&buff[buff_len], &val, sizeof(val));
+  template <typename T>
+  static size_t write_value(T &buff, value_type val) {
+    auto p = reinterpret_cast<const char*>(&val);
+    buff.insert(buff.begin(), p, p + sizeof(val));
     return sizeof(val);
   }
 
@@ -301,8 +303,10 @@ template <> struct OutputTraits<uint64_t> {
     return std::min(a, b);
   }
 
-  static size_t write_value(char *buff, size_t buff_len, value_type val) {
-    memcpy(&buff[buff_len], &val, sizeof(val));
+  template <typename T>
+  static size_t write_value(T &buff, value_type val) {
+    auto p = reinterpret_cast<const char*>(&val);
+    buff.insert(buff.begin(), p, p + sizeof(val));
     return sizeof(val);
   }
 
@@ -341,9 +345,9 @@ template <> struct OutputTraits<std::string> {
     return a.substr(0, get_common_prefix_length(a, b));
   }
 
-  static size_t write_value(char *buff, size_t buff_len,
-                            const value_type &val) {
-    memcpy(&buff[buff_len], val.data(), val.size());
+  template <typename T>
+  static size_t write_value(T &buff, value_type val) {
+    buff.insert(buff.begin(), val.data(), val.data() + val.size());
     return val.size();
   }
 
@@ -507,27 +511,25 @@ private:
 };
 
 template <typename output_t> inline uint64_t State<output_t>::hash() const {
-  char buff[1024];
-  auto buff_len = 0u;
+  std::vector<char> buff;
 
   transitions.for_each([&](char arc, const State::Transition &t) {
-    buff[buff_len++] = arc;
+    buff.push_back(arc);
 
     auto val = static_cast<uint32_t>(t.id);
-    memcpy(&buff[buff_len], &val, sizeof(val));
-    buff_len += sizeof(val);
+    auto p = reinterpret_cast<const char*>(&val);
+    buff.insert(buff.begin(), p, p + sizeof(val));
 
     if (!OutputTraits<output_t>::empty(t.output)) {
-      buff_len += OutputTraits<output_t>::write_value(buff, buff_len, t.output);
+      OutputTraits<output_t>::write_value(buff, t.output);
     }
   });
 
   if (final && !OutputTraits<output_t>::empty(state_output)) {
-    buff_len +=
-        OutputTraits<output_t>::write_value(buff, buff_len, state_output);
+    OutputTraits<output_t>::write_value(buff, state_output);
   }
 
-  return MurmurHash64B(buff, buff_len, 0);
+  return MurmurHash64B(buff.data(), buff.size(), 0);
 }
 
 //-----------------------------------------------------------------------------
