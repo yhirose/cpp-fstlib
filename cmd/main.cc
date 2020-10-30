@@ -103,7 +103,7 @@ void show_error_message(fst::Result result, size_t line) {
 template <typename output_t>
 void map_regression_test(const vector<pair<string, output_t>> &input,
                          const string &byte_code) {
-  fst::Map<output_t> matcher(byte_code.data(), byte_code.size());
+  fst::Map<output_t> matcher(byte_code);
 
   if (matcher) {
     for (const auto &[word, expected] : input) {
@@ -125,7 +125,7 @@ void map_regression_test(const vector<pair<string, output_t>> &input,
 
 void map_regression_test(const vector<string> &input, const string &byte_code) {
   // TODO:
-  fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
+  fst::Map<uint32_t> matcher(byte_code);
 
   if (matcher) {
     uint32_t expected = 0;
@@ -150,7 +150,7 @@ void map_regression_test(const vector<string> &input, const string &byte_code) {
 template <typename output_t>
 void set_regression_test(const vector<pair<string, output_t>> &input,
                          const string &byte_code) {
-  fst::Set matcher(byte_code.data(), byte_code.size());
+  fst::Set matcher(byte_code);
 
   if (matcher) {
     for (const auto &[word, _] : input) {
@@ -164,7 +164,7 @@ void set_regression_test(const vector<pair<string, output_t>> &input,
 }
 
 void set_regression_test(const vector<string> &input, const string &byte_code) {
-  fst::Set matcher(byte_code.data(), byte_code.size());
+  fst::Set matcher(byte_code);
 
   if (matcher) {
     for (const auto &word : input) {
@@ -252,7 +252,7 @@ void map_search_word(const T &byte_code, string_view cmd, bool verbose,
 template <typename output_t, typename T>
 void map_search(const T &byte_code, string_view cmd, bool verbose,
                 string_view word, size_t edit_distance) {
-  fst::Map<output_t> matcher(byte_code.data(), byte_code.size());
+  fst::Map<output_t> matcher(byte_code);
   matcher.set_trace(verbose);
 
   if (matcher) {
@@ -302,7 +302,7 @@ void set_search_word(const T &byte_code, string_view cmd, bool verbose,
 template <typename T>
 void set_search(const T &byte_code, string_view cmd, bool verbose,
                 string_view word, size_t edit_distance) {
-  fst::Set matcher(byte_code.data(), byte_code.size());
+  fst::Set matcher(byte_code);
   matcher.set_trace(verbose);
 
   if (matcher) {
@@ -322,7 +322,7 @@ void set_search(const T &byte_code, string_view cmd, bool verbose,
 template <typename T>
 void search(const T &byte_code, string_view cmd, bool verbose, string_view word,
             size_t edit_distance) {
-  auto type = fst::get_output_type(byte_code.data(), byte_code.size());
+  auto type = fst::get_output_type(byte_code);
 
   if (type == fst::OutputType::uint32_t) {
     map_search<uint32_t>(byte_code, cmd, verbose, word, edit_distance);
@@ -511,7 +511,7 @@ int main(int argc, char **argv) {
 
       auto byte_code = load_byte_code(fin);
 
-      fst::decompile(byte_code.data(), byte_code.size(), std::cout, !opt_no);
+      fst::decompile(byte_code, std::cout, !opt_no);
 
     } else if (cmd == "test") {
       ifstream fin(in_path);

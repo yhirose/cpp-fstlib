@@ -266,9 +266,8 @@ template <> struct OutputTraits<uint32_t> {
     return std::min(a, b);
   }
 
-  template <typename T>
-  static size_t write_value(T &buff, value_type val) {
-    auto p = reinterpret_cast<const char*>(&val);
+  template <typename T> static size_t write_value(T &buff, value_type val) {
+    auto p = reinterpret_cast<const char *>(&val);
     buff.insert(buff.begin(), p, p + sizeof(val));
     return sizeof(val);
   }
@@ -303,9 +302,8 @@ template <> struct OutputTraits<uint64_t> {
     return std::min(a, b);
   }
 
-  template <typename T>
-  static size_t write_value(T &buff, value_type val) {
-    auto p = reinterpret_cast<const char*>(&val);
+  template <typename T> static size_t write_value(T &buff, value_type val) {
+    auto p = reinterpret_cast<const char *>(&val);
     buff.insert(buff.begin(), p, p + sizeof(val));
     return sizeof(val);
   }
@@ -345,8 +343,7 @@ template <> struct OutputTraits<std::string> {
     return a.substr(0, get_common_prefix_length(a, b));
   }
 
-  template <typename T>
-  static size_t write_value(T &buff, value_type val) {
+  template <typename T> static size_t write_value(T &buff, value_type val) {
     buff.insert(buff.begin(), val.data(), val.data() + val.size());
     return val.size();
   }
@@ -517,7 +514,7 @@ template <typename output_t> inline uint64_t State<output_t>::hash() const {
     buff.push_back(arc);
 
     auto val = static_cast<uint32_t>(t.id);
-    auto p = reinterpret_cast<const char*>(&val);
+    auto p = reinterpret_cast<const char *>(&val);
     buff.insert(buff.begin(), p, p + sizeof(val));
 
     if (!OutputTraits<output_t>::empty(t.output)) {
@@ -1432,6 +1429,10 @@ inline OutputType get_output_type(const char *byte_code,
   return static_cast<OutputType>(header.flags.data.output_type);
 }
 
+template <typename T> OutputType get_output_type(const T &byte_code) {
+  return get_output_type(byte_code.data(), byte_code.size());
+}
+
 //-----------------------------------------------------------------------------
 // Matcher
 //-----------------------------------------------------------------------------
@@ -1771,6 +1772,10 @@ public:
   Map(const char *byte_code, size_t byte_code_size)
       : Matcher<output_t>(byte_code, byte_code_size) {}
 
+  template <typename T>
+  Map(const T &byte_code)
+      : Matcher<output_t>(byte_code.data(), byte_code.size()) {}
+
   static const bool has_output = true;
 
   bool contains(std::string_view sv) const {
@@ -1829,8 +1834,7 @@ public:
     if (sv.empty()) { return ret; }
 
     Matcher<output_t>::depth_first_visit(
-        Matcher<output_t>::header_.start_address, std::string(),
-        output_t{},
+        Matcher<output_t>::header_.start_address, std::string(), output_t{},
         LevenshteinAutomaton(sv, max_edits, insert_cost, delete_cost,
                              replace_cost),
         [&](const auto &word, const auto &output) {
@@ -1842,8 +1846,8 @@ public:
 
   template <typename T> void enumerate(T callback) const {
     Matcher<output_t>::depth_first_visit(
-        Matcher<output_t>::header_.start_address, std::string(),
-        output_t{}, DummyAutomaton(), callback);
+        Matcher<output_t>::header_.start_address, std::string(), output_t{},
+        DummyAutomaton(), callback);
   }
 };
 
@@ -1855,6 +1859,10 @@ class Set : public Matcher<none_t> {
 public:
   Set(const char *byte_code, size_t byte_code_size)
       : Matcher<none_t>(byte_code, byte_code_size) {}
+
+  template <typename T>
+  Set(const T &byte_code)
+      : Matcher<none_t>(byte_code.data(), byte_code.size()) {}
 
   static const bool has_output = false;
 
@@ -1892,8 +1900,7 @@ public:
     if (sv.empty()) { return ret; }
 
     Matcher<none_t>::depth_first_visit(
-        Matcher<none_t>::header_.start_address, std::string(),
-        none_t{},
+        Matcher<none_t>::header_.start_address, std::string(), none_t{},
         LevenshteinAutomaton(sv, max_edits, insert_cost, delete_cost,
                              replace_cost),
         [&](const auto &word, const auto &) { ret.emplace_back(word); });
@@ -1902,9 +1909,9 @@ public:
   }
 
   template <typename T> void enumerate(T callback) const {
-    Matcher<none_t>::depth_first_visit(
-        Matcher<none_t>::header_.start_address, std::string(),
-        none_t{}, DummyAutomaton(), callback);
+    Matcher<none_t>::depth_first_visit(Matcher<none_t>::header_.start_address,
+                                       std::string(), none_t{},
+                                       DummyAutomaton(), callback);
   }
 };
 
@@ -1912,8 +1919,8 @@ public:
 // decompile
 //-----------------------------------------------------------------------------
 
-void decompile(const char *byte_code, size_t byte_code_size, std::ostream &out,
-               bool need_output = true) {
+inline void decompile(const char *byte_code, size_t byte_code_size,
+                      std::ostream &out, bool need_output = true) {
 
   auto type = get_output_type(byte_code, byte_code_size);
 
@@ -1957,6 +1964,12 @@ void decompile(const char *byte_code, size_t byte_code_size, std::ostream &out,
           [&](const auto &word, auto output) { out << word << std::endl; });
     }
   }
+}
+
+template <typename T>
+inline void decompile(const T &byte_code, std::ostream &out,
+                      bool need_output = true) {
+  decompile(byte_code.data(), byte_code.size(), out, need_output);
 }
 
 } // namespace fst

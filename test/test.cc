@@ -23,7 +23,7 @@ void make_map(const Input &input, bool sorted, Callback callback) {
   REQUIRE(result == fst::Result::Success);
 
   const auto &byte_code = out.str();
-  fst::Map<output_t> matcher(byte_code.data(), byte_code.size());
+  fst::Map<output_t> matcher(byte_code);
   callback(matcher);
 }
 
@@ -35,7 +35,7 @@ void make_map_with_auto_index(const Input &input, bool sorted,
   REQUIRE(result == fst::Result::Success);
 
   const auto &byte_code = out.str();
-  fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
+  fst::Map<uint32_t> matcher(byte_code);
   callback(matcher);
 }
 
@@ -46,7 +46,7 @@ void make_set(const Input &input, bool sorted, Callback callback) {
   REQUIRE(result == fst::Result::Success);
 
   const auto &byte_code = out.str();
-  fst::Set matcher(byte_code.data(), byte_code.size());
+  fst::Set matcher(byte_code);
   callback(matcher);
 }
 
@@ -441,7 +441,7 @@ TEST_CASE("Decompile map", "[decompile]") {
   const auto &byte_code = ss.str();
 
   stringstream out;
-  fst::decompile(byte_code.data(), byte_code.size(), out);
+  fst::decompile(byte_code, out);
 
   auto expected = R"(apr	30
 aug	31
@@ -475,7 +475,7 @@ TEST_CASE("Decompile map, no need output", "[decompile]") {
   const auto &byte_code = ss.str();
 
   stringstream out;
-  fst::decompile(byte_code.data(), byte_code.size(), out, false);
+  fst::decompile(byte_code, out, false);
 
   auto expected = R"(apr
 aug
@@ -509,7 +509,7 @@ TEST_CASE("Decompile map, need output", "[decompile]") {
   const auto &byte_code = ss.str();
 
   stringstream out;
-  fst::decompile(byte_code.data(), byte_code.size(), out);
+  fst::decompile(byte_code, out);
 
   auto expected = R"(apr	3
 aug	7
@@ -543,7 +543,7 @@ TEST_CASE("Decompile set", "[decompile]") {
   const auto &byte_code = ss.str();
 
   stringstream out;
-  fst::decompile(byte_code.data(), byte_code.size(), out);
+  fst::decompile(byte_code, out);
 
   auto expected = R"(apr
 aug
@@ -577,7 +577,7 @@ TEST_CASE("Edit distance search map", "[edit distance]") {
 
   const auto &byte_code = ss.str();
 
-  fst::Map<uint32_t> matcher(byte_code.data(), byte_code.size());
+  fst::Map<uint32_t> matcher(byte_code);
   auto ret = matcher.edit_distance_search("joe", 2);
   REQUIRE(ret.size() == 4);
 }
@@ -596,7 +596,7 @@ TEST_CASE("Edit distance search set", "[edit distance]") {
 
   const auto &byte_code = ss.str();
 
-  fst::Set matcher(byte_code.data(), byte_code.size());
+  fst::Set matcher(byte_code);
   auto ret = matcher.edit_distance_search("joe", 2);
   REQUIRE(ret.size() == 4);
 }
@@ -615,7 +615,7 @@ TEST_CASE("Spellcheck", "[spellcheck]") {
 
   const auto &byte_code = ss.str();
 
-  fst::Set matcher(byte_code.data(), byte_code.size());
+  fst::Set matcher(byte_code);
   REQUIRE(matcher == true);
 
   {
