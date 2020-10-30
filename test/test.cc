@@ -425,6 +425,31 @@ TEST_CASE("Normal Set test", "[set]") {
   });
 }
 
+TEST_CASE("Japanese Set test", "[set]") {
+  vector<string> input = {
+      u8"一", u8"一二", u8"一二三", u8"二", u8"二三",
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile(input, ss, false, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &byte_code = ss.str();
+  fst::Set set(byte_code);
+
+  {
+    REQUIRE(set.contains(u8"一"));
+    REQUIRE(set.contains(u8"一二"));
+    REQUIRE(set.contains(u8"一二三"));
+    REQUIRE(set.contains(u8"二"));
+    REQUIRE(set.contains(u8"二三"));
+    REQUIRE(!set.contains(u8"一二三四"));
+    REQUIRE(!set.contains(""));
+  }
+}
+
 TEST_CASE("Decompile map", "[decompile]") {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
@@ -576,8 +601,8 @@ TEST_CASE("Edit distance search map", "[edit distance]") {
   }
 
   const auto &byte_code = ss.str();
-
   fst::Map<uint32_t> matcher(byte_code);
+
   auto ret = matcher.edit_distance_search("joe", 2);
   REQUIRE(ret.size() == 4);
 }
@@ -595,10 +620,40 @@ TEST_CASE("Edit distance search set", "[edit distance]") {
   }
 
   const auto &byte_code = ss.str();
-
   fst::Set matcher(byte_code);
+
   auto ret = matcher.edit_distance_search("joe", 2);
   REQUIRE(ret.size() == 4);
+}
+
+TEST_CASE("Japanese edit distance search", "[edit distance]") {
+  vector<string> input = {
+      u8"一", u8"一二", u8"一二三", u8"一二三四",
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile(input, ss, false, false);
+    REQUIRE(result == fst::Result::Success);
+  }
+
+  const auto &byte_code = ss.str();
+  fst::Set matcher(byte_code);
+
+  {
+    auto ret = matcher.edit_distance_search(u8"二", 1);
+    REQUIRE(ret.size() == 2);
+    REQUIRE(ret[0] == u8"一");
+    REQUIRE(ret[1] == u8"一二");
+  }
+
+  {
+    auto ret = matcher.edit_distance_search(u8"二", 2);
+    REQUIRE(ret.size() == 3);
+    REQUIRE(ret[0] == u8"一");
+    REQUIRE(ret[1] == u8"一二");
+    REQUIRE(ret[2] == u8"一二三");
+  }
 }
 
 TEST_CASE("Spellcheck", "[spellcheck]") {

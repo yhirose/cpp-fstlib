@@ -1673,6 +1673,7 @@ protected:
 
       if (next_address) {
         depth_first_visit(next_address, word, output, atm, accept);
+        // if (transit.back_track()) { break; }
       }
 
       if (ope.data.last_transition) { break; }
@@ -1712,9 +1713,8 @@ public:
   LevenshteinAutomaton(std::string_view sv, size_t max_edits,
                        size_t insert_cost, size_t delete_cost,
                        size_t replace_cost)
-      : s_(decode(sv)), max_edits_(max_edits),
-        insert_cost_(insert_cost), delete_cost_(delete_cost),
-        replace_cost_(replace_cost) {
+      : s_(decode(sv)), max_edits_(max_edits), insert_cost_(insert_cost),
+        delete_cost_(delete_cost), replace_cost_(replace_cost) {
     state_.resize(s_.size() + 1);
     std::iota(state_.begin(), state_.end(), 0);
   }
@@ -1725,23 +1725,20 @@ public:
     u8code_ += c;
     char32_t cp;
     if (!decode_codepoint(u8code_.data(), u8code_.size(), cp)) { return; }
-    std::cout << "cp: " << std::hex << (int)cp << " " << u8code_ << std::endl;
     u8code_.clear();
 
     std::vector<size_t> new_state{state_[0] + 1};
 
     for (size_t i = 0; i < state_.size() - 1; i++) {
-      std::cout << i << " " << (int)s_[i] << std::endl;
-      auto cost = (s_[i] == c) ? 0 : replace_cost_;
-
+      auto cost = (s_[i] == cp) ? 0 : replace_cost_;
       auto edits = std::min({new_state[i] + insert_cost_, state_[i] + cost,
                              state_[i + 1] + delete_cost_});
-
       new_state.push_back(edits);
     }
 
     std::transform(new_state.begin(), new_state.end(), state_.begin(),
                    [=](auto edits) { return std::min(edits, max_edits_ + 1); });
+
   }
 
   bool is_match() const {
@@ -1754,9 +1751,7 @@ public:
     return *it <= max_edits_;
   }
 
-  bool back_track() const {
-    return intermidiate_codepoint_state();
-  }
+  bool back_track() const { return intermidiate_codepoint_state(); }
 
 private:
   std::u32string s_;
