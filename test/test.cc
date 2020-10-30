@@ -628,7 +628,10 @@ TEST_CASE("Edit distance search set", "[edit distance]") {
 
 TEST_CASE("Japanese edit distance search", "[edit distance]") {
   vector<string> input = {
-      u8"一", u8"一二", u8"一二三", u8"一二三四",
+      u8"一",
+      u8"一二",
+      u8"一二三",
+      u8"一二三四",
   };
 
   stringstream ss;

@@ -1673,7 +1673,6 @@ protected:
 
       if (next_address) {
         depth_first_visit(next_address, word, output, atm, accept);
-        // if (transit.back_track()) { break; }
       }
 
       if (ope.data.last_transition) { break; }
@@ -1738,11 +1737,10 @@ public:
 
     std::transform(new_state.begin(), new_state.end(), state_.begin(),
                    [=](auto edits) { return std::min(edits, max_edits_ + 1); });
-
   }
 
   bool is_match() const {
-    if (intermidiate_codepoint_state()) { return false; }
+    if (!u8code_.empty()) { return false; }
     return state_.back() <= max_edits_;
   }
 
@@ -1750,8 +1748,6 @@ public:
     auto it = std::min_element(state_.begin(), state_.end());
     return *it <= max_edits_;
   }
-
-  bool back_track() const { return intermidiate_codepoint_state(); }
 
 private:
   std::u32string s_;
@@ -1762,8 +1758,6 @@ private:
 
   std::vector<size_t> state_;
   std::string u8code_;
-
-  bool intermidiate_codepoint_state() const { return !u8code_.empty(); }
 
   bool decode_codepoint(const char *s8, size_t l, size_t &bytes, char32_t &cp) {
     if (l) {
@@ -1852,7 +1846,6 @@ struct DummyAutomaton {
   void step(char c) {}
   bool is_match() const { return true; }
   bool can_match() const { return true; }
-  bool back_track() const { return false; }
 };
 
 //-----------------------------------------------------------------------------
