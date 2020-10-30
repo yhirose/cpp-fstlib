@@ -38,3 +38,5 @@ tags
 out/
 sample/
 dict/
+.idea/
+cmake-build-*/
