@@ -1712,7 +1712,7 @@ public:
   LevenshteinAutomaton(std::string_view sv, size_t max_edits,
                        size_t insert_cost, size_t delete_cost,
                        size_t replace_cost)
-      : s_(sv), max_edits_(max_edits), insert_cost_(insert_cost),
+      : s_(decode(sv)), max_edits_(max_edits), insert_cost_(insert_cost),
         delete_cost_(delete_cost), replace_cost_(replace_cost) {
     state_.resize(s_.size() + 1);
     std::iota(state_.begin(), state_.end(), 0);
@@ -1721,14 +1721,17 @@ public:
   LevenshteinAutomaton(const LevenshteinAutomaton &rhs) = default;
 
   void step(char c) {
+    u8code_ += c;
+    char32_t cp;
+    if (!decode_codepoint(u8code_, cp)) { return; }
+    u8code_.clear();
+
     std::vector<size_t> new_state{state_[0] + 1};
 
     for (size_t i = 0; i < state_.size() - 1; i++) {
-      auto cost = (s_[i] == c) ? 0 : replace_cost_;
-
+      auto cost = (s_[i] == cp) ? 0 : replace_cost_;
       auto edits = std::min({new_state[i] + insert_cost_, state_[i] + cost,
                              state_[i + 1] + delete_cost_});
-
       new_state.push_back(edits);
     }
 
@@ -1736,7 +1739,10 @@ public:
                    [=](auto edits) { return std::min(edits, max_edits_ + 1); });
   }
 
-  bool is_match() const { return state_.back() <= max_edits_; }
+  bool is_match() const {
+    if (!u8code_.empty()) { return false; }
+    return state_.back() <= max_edits_;
+  }
 
   bool can_match() const {
     auto it = std::min_element(state_.begin(), state_.end());
@@ -1744,13 +1750,61 @@ public:
   }
 
 private:
-  std::string_view s_;
+  std::u32string s_;
   size_t max_edits_;
   size_t insert_cost_;
   size_t delete_cost_;
-  size_t replace_cost_;
-
+  size_t replace_cost_; // TODO: better const function is needed?
   std::vector<size_t> state_;
+  std::string u8code_;
+
+  bool decode_codepoint(std::string_view s8, char32_t &cp) const {
+    auto l = s8.size();
+    if (l) {
+      uint8_t b = s8[0];
+      if ((b & 0x80) == 0) {
+        cp = b;
+        return true;
+      } else if ((b & 0xE0) == 0xC0) {
+        if (l >= 2) {
+          cp = ((static_cast<char32_t>(s8[0] & 0x1F)) << 6) |
+               (static_cast<char32_t>(s8[1] & 0x3F));
+          return true;
+        }
+      } else if ((b & 0xF0) == 0xE0) {
+        if (l >= 3) {
+          cp = ((static_cast<char32_t>(s8[0] & 0x0F)) << 12) |
+               ((static_cast<char32_t>(s8[1] & 0x3F)) << 6) |
+               (static_cast<char32_t>(s8[2] & 0x3F));
+          return true;
+        }
+      } else if ((b & 0xF8) == 0xF0) {
+        if (l >= 4) {
+          cp = ((static_cast<char32_t>(s8[0] & 0x07)) << 18) |
+               ((static_cast<char32_t>(s8[1] & 0x3F)) << 12) |
+               ((static_cast<char32_t>(s8[2] & 0x3F)) << 6) |
+               (static_cast<char32_t>(s8[3] & 0x3F));
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  std::u32string decode(std::string_view s8) const {
+    std::u32string out;
+    size_t i = 0;
+    while (i < s8.size()) {
+      auto beg = i++;
+      while (i < s8.size() && (s8[i] & 0xc0) == 0x80) {
+        i++;
+      }
+      char32_t cp;
+      decode_codepoint(s8.substr(beg, i - beg), cp);
+      out += cp;
+    }
+    return out;
+  }
 };
 
 //-----------------------------------------------------------------------------
