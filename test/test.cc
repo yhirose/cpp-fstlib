@@ -2,7 +2,6 @@
 #include "catch.hpp"
 
 #include <fstlib.h>
-#include <spellcheck.h>
 
 using namespace std;
 
@@ -659,7 +658,7 @@ TEST_CASE("Japanese edit distance search", "[edit distance]") {
   }
 }
 
-TEST_CASE("Spellcheck", "[spellcheck]") {
+TEST_CASE("Spellcheck set", "[spellcheck]") {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -677,16 +676,38 @@ TEST_CASE("Spellcheck", "[spellcheck]") {
   REQUIRE(matcher == true);
 
   {
-    auto &&[ret, candidates] = fst::spellcheck(matcher, "jun");
-    REQUIRE(ret == true);
+    const auto &items = matcher.suggest("joe");
+
+    auto &[similarity, word] = items.front();
+    REQUIRE(word == "jan");
+    REQUIRE(std::floor(similarity * 1000) == 349);
+  }
+}
+
+TEST_CASE("Spellcheck map", "[spellcheck]") {
+  vector<pair<string, output_t>> input = {
+      {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
+      {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
+      {"sep", V(30)}, {"oct", V(31)}, {"nov", V(30)}, {"dec", V(31)},
+  };
+
+  stringstream ss;
+  {
+    auto [result, _] = fst::compile<output_t>(input, ss, false);
+    REQUIRE(result == fst::Result::Success);
   }
 
-  {
-    auto &&[ret, candidates] = fst::spellcheck(matcher, "joe");
-    REQUIRE(ret == false);
+  const auto &byte_code = ss.str();
 
-    auto &&[candidate, similarity] = candidates.front();
-    REQUIRE(candidate == "jan");
+  fst::Map<output_t> matcher(byte_code);
+  REQUIRE(matcher == true);
+
+  {
+    const auto &items = matcher.suggest("joe");
+
+    auto &[similarity, word, output] = items.front();
+    REQUIRE(word == "jan");
+    REQUIRE(output == 31);
     REQUIRE(std::floor(similarity * 1000) == 349);
   }
 }

@@ -1,7 +1,6 @@
 #include "flags.h"
 #include <fstlib.h>
 #include <fstream>
-#include <spellcheck.h>
 #include <sstream>
 
 using namespace std;
@@ -198,16 +197,16 @@ void regression_test(const vector<string> &input, const string &byte_code,
 
 template <typename T>
 bool spellcheck_word(const T &matcher, const std::string word) {
-  auto &&[ret, candidates] = fst::spellcheck(matcher, word);
-
-  if (ret) {
+  if (matcher.contains(word)) {
     cout << "correct word!" << std::endl;
     return true;
   }
 
   size_t count = 10;
-  for (auto [candidate, similarity] : candidates) {
+  for (const auto &item : matcher.suggest(word)) {
     if (count == 0) { break; }
+    auto similarity = std::get<0>(item);
+    const auto &candidate = std::get<1>(item);
     cout << candidate << ": " << similarity << std::endl;
     count--;
   }

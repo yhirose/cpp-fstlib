@@ -87,6 +87,9 @@ public:
 
   std::vector<std::pair<std::string, output_t>>
   edit_distance_search(std::string_view sv, size_t max_edits) const;
+
+  std::vector<std::tuple<double, std::string, output_t>>
+  suggest(std::string_view word) const;
 }
 
 class Set {
@@ -103,6 +106,9 @@ public:
 
   std::vector<std::string>
   edit_distance_search(std::string_view sv, size_t max_edits) const;
+
+  std::vector<std::pair<double, std::string>>
+  suggest(std::string_view word) const;
 }
 
 } // namespace fst
