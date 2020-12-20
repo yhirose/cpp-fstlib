@@ -1583,14 +1583,14 @@ inline double jaro_winkler_distance(std::string_view s1, std::string_view s2) {
 }
 
 //-----------------------------------------------------------------------------
-// Matcher
+// matcher
 //-----------------------------------------------------------------------------
 
-template <typename output_t> class Matcher {
+template <typename output_t> class matcher {
 public:
   using output_type = output_t;
 
-  Matcher(const char *byte_code, size_t byte_code_size)
+  matcher(const char *byte_code, size_t byte_code_size)
       : byte_code_(byte_code), byte_code_size_(byte_code_size) {
 
     if (!header_.read(byte_code, byte_code_size)) { return; }
@@ -1608,7 +1608,7 @@ public:
   void set_trace(bool on) { trace_ = on; }
 
   bool contains(std::string_view sv) const {
-    return Matcher<output_t>::match(sv.data(), sv.size());
+    return matcher<output_t>::match(sv.data(), sv.size());
   }
 
 protected:
@@ -2025,17 +2025,17 @@ struct DummyAutomaton {
 };
 
 //-----------------------------------------------------------------------------
-// Map
+// map
 //-----------------------------------------------------------------------------
 
-template <typename output_t> class Map : public Matcher<output_t> {
+template <typename output_t> class map : public matcher<output_t> {
 public:
-  Map(const char *byte_code, size_t byte_code_size)
-      : Matcher<output_t>(byte_code, byte_code_size) {}
+  map(const char *byte_code, size_t byte_code_size)
+      : matcher<output_t>(byte_code, byte_code_size) {}
 
   template <typename T>
-  Map(const T &byte_code)
-      : Matcher<output_t>(byte_code.data(), byte_code.size()) {}
+  map(const T &byte_code)
+      : matcher<output_t>(byte_code.data(), byte_code.size()) {}
 
   static const bool has_output = true;
 
@@ -2045,21 +2045,21 @@ public:
 
   output_t at(std::string_view sv) const {
     auto output = output_t{};
-    auto ret = Matcher<output_t>::match(sv.data(), sv.size(),
+    auto ret = matcher<output_t>::match(sv.data(), sv.size(),
                                         [&](const auto &_) { output = _; });
     if (!ret) { throw std::out_of_range("invalid key..."); }
     return output;
   }
 
   bool exact_match_search(std::string_view sv, output_t &output) const {
-    return Matcher<output_t>::match(sv.data(), sv.size(),
+    return matcher<output_t>::match(sv.data(), sv.size(),
                                     [&](const auto &_) { output = _; });
   }
 
   bool common_prefix_search(
       std::string_view sv,
       std::function<void(size_t, const output_t &)> prefixes) const {
-    return Matcher<output_t>::match(sv.data(), sv.size(), nullptr, prefixes);
+    return matcher<output_t>::match(sv.data(), sv.size(), nullptr, prefixes);
   }
 
   std::vector<std::pair<size_t, output_t>>
@@ -2090,8 +2090,8 @@ public:
 
     if (sv.empty()) { return ret; }
 
-    Matcher<output_t>::depth_first_visit(
-        Matcher<output_t>::header_.start_address, std::string(), output_t{},
+    matcher<output_t>::depth_first_visit(
+        matcher<output_t>::header_.start_address, std::string(), output_t{},
         LevenshteinAutomaton(sv, max_edits, insert_cost, delete_cost,
                              replace_cost),
         [&](const auto &word, const auto &output) {
@@ -2103,34 +2103,34 @@ public:
 
   std::vector<std::tuple<double, std::string, output_t>>
   suggest(std::string_view word) const {
-    return Matcher<output_t>::suggest_core(word, *this);
+    return matcher<output_t>::suggest_core(word, *this);
   }
 
   template <typename T> void enumerate(T callback) const {
-    Matcher<output_t>::depth_first_visit(
-        Matcher<output_t>::header_.start_address, std::string(), output_t{},
+    matcher<output_t>::depth_first_visit(
+        matcher<output_t>::header_.start_address, std::string(), output_t{},
         DummyAutomaton(), callback);
   }
 };
 
 //-----------------------------------------------------------------------------
-// Set
+// set
 //-----------------------------------------------------------------------------
 
-class Set : public Matcher<none_t> {
+class set : public matcher<none_t> {
 public:
-  Set(const char *byte_code, size_t byte_code_size)
-      : Matcher<none_t>(byte_code, byte_code_size) {}
+  set(const char *byte_code, size_t byte_code_size)
+      : matcher<none_t>(byte_code, byte_code_size) {}
 
   template <typename T>
-  Set(const T &byte_code)
-      : Matcher<none_t>(byte_code.data(), byte_code.size()) {}
+  set(const T &byte_code)
+      : matcher<none_t>(byte_code.data(), byte_code.size()) {}
 
   static const bool has_output = false;
 
   bool common_prefix_search(std::string_view sv,
                             std::function<void(size_t)> prefixes) const {
-    return Matcher<none_t>::match(
+    return matcher<none_t>::match(
         sv.data(), sv.size(), nullptr,
         [&](size_t len, const none_t &) { prefixes(len); });
   }
@@ -2157,8 +2157,8 @@ public:
 
     if (sv.empty()) { return ret; }
 
-    Matcher<none_t>::depth_first_visit(
-        Matcher<none_t>::header_.start_address, std::string(), none_t{},
+    matcher<none_t>::depth_first_visit(
+        matcher<none_t>::header_.start_address, std::string(), none_t{},
         LevenshteinAutomaton(sv, max_edits, insert_cost, delete_cost,
                              replace_cost),
         [&](const auto &word, const auto &) { ret.emplace_back(word); });
@@ -2168,11 +2168,11 @@ public:
 
   std::vector<std::pair<double, std::string>>
   suggest(std::string_view word) const {
-    return Matcher<none_t>::suggest_core(word, *this);
+    return matcher<none_t>::suggest_core(word, *this);
   }
 
   template <typename T> void enumerate(T callback) const {
-    Matcher<none_t>::depth_first_visit(Matcher<none_t>::header_.start_address,
+    matcher<none_t>::depth_first_visit(matcher<none_t>::header_.start_address,
                                        std::string(), none_t{},
                                        DummyAutomaton(), callback);
   }
@@ -2188,7 +2188,7 @@ inline void decompile(const char *byte_code, size_t byte_code_size,
   auto type = get_output_type(byte_code, byte_code_size);
 
   if (type == OutputType::uint32_t) {
-    Map<uint32_t> matcher(byte_code, byte_code_size);
+    map<uint32_t> matcher(byte_code, byte_code_size);
     if (matcher) {
       matcher.enumerate([&](const auto &word, auto output) {
         if (need_output) {
@@ -2199,7 +2199,7 @@ inline void decompile(const char *byte_code, size_t byte_code_size,
       });
     }
   } else if (type == OutputType::uint64_t) {
-    Map<uint64_t> matcher(byte_code, byte_code_size);
+    map<uint64_t> matcher(byte_code, byte_code_size);
     if (matcher) {
       matcher.enumerate([&](const auto &word, auto output) {
         if (need_output) {
@@ -2210,7 +2210,7 @@ inline void decompile(const char *byte_code, size_t byte_code_size,
       });
     }
   } else if (type == OutputType::string) {
-    Map<std::string> matcher(byte_code, byte_code_size);
+    map<std::string> matcher(byte_code, byte_code_size);
     if (matcher) {
       matcher.enumerate([&](const auto &word, auto output) {
         if (need_output) {
@@ -2221,7 +2221,7 @@ inline void decompile(const char *byte_code, size_t byte_code_size,
       });
     }
   } else if (type == OutputType::none_t) {
-    Set matcher(byte_code, byte_code_size);
+    set matcher(byte_code, byte_code_size);
     if (matcher) {
       matcher.enumerate(
           [&](const auto &word, auto output) { out << word << std::endl; });

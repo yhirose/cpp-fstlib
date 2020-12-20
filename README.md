@@ -66,9 +66,9 @@ std::pair<Result, size_t /* error input index */> compile(
   bool sorted
 );
 
-template <typename output_t> class Map {
+template <typename output_t> class map {
 public:
-  Map(const char *byte_code, size_t byte_code_size);
+  map(const char *byte_code, size_t byte_code_size);
 
   operator bool() const;
 
@@ -92,9 +92,9 @@ public:
   suggest(std::string_view word) const;
 }
 
-class Set {
+class set {
 public:
-  Set(const char *byte_code, size_t byte_code_size);
+  set(const char *byte_code, size_t byte_code_size);
 
   operator bool() const;
 
@@ -129,7 +129,7 @@ auto [result, error_line] = fst::compile<std::string>(items, out, sorted);
 
 if (result == fst::Result::Success) {
   const auto& byte_code = out.str();
-  fst::Map<std::string> matcher(byte_code.data(), byte_code.size());
+  fst::map<std::string> matcher(byte_code.data(), byte_code.size());
 
   if (matcher) {
     assert(matcher.contains("hello world"));

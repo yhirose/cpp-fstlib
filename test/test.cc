@@ -22,7 +22,7 @@ void make_map(const Input &input, bool sorted, Callback callback) {
   REQUIRE(result == fst::Result::Success);
 
   const auto &byte_code = out.str();
-  fst::Map<output_t> matcher(byte_code);
+  fst::map<output_t> matcher(byte_code);
   callback(matcher);
 }
 
@@ -34,7 +34,7 @@ void make_map_with_auto_index(const Input &input, bool sorted,
   REQUIRE(result == fst::Result::Success);
 
   const auto &byte_code = out.str();
-  fst::Map<uint32_t> matcher(byte_code);
+  fst::map<uint32_t> matcher(byte_code);
   callback(matcher);
 }
 
@@ -45,7 +45,7 @@ void make_set(const Input &input, bool sorted, Callback callback) {
   REQUIRE(result == fst::Result::Success);
 
   const auto &byte_code = out.str();
-  fst::Set matcher(byte_code);
+  fst::set matcher(byte_code);
   callback(matcher);
 }
 
@@ -436,7 +436,7 @@ TEST_CASE("Japanese Set test", "[set]") {
   }
 
   const auto &byte_code = ss.str();
-  fst::Set set(byte_code);
+  fst::set set(byte_code);
 
   {
     REQUIRE(set.contains(u8"一"));
@@ -600,7 +600,7 @@ TEST_CASE("Edit distance search map", "[edit distance]") {
   }
 
   const auto &byte_code = ss.str();
-  fst::Map<uint32_t> matcher(byte_code);
+  fst::map<uint32_t> matcher(byte_code);
 
   auto ret = matcher.edit_distance_search("joe", 2);
   REQUIRE(ret.size() == 4);
@@ -619,7 +619,7 @@ TEST_CASE("Edit distance search set", "[edit distance]") {
   }
 
   const auto &byte_code = ss.str();
-  fst::Set matcher(byte_code);
+  fst::set matcher(byte_code);
 
   auto ret = matcher.edit_distance_search("joe", 2);
   REQUIRE(ret.size() == 4);
@@ -640,7 +640,7 @@ TEST_CASE("Japanese edit distance search", "[edit distance]") {
   }
 
   const auto &byte_code = ss.str();
-  fst::Set matcher(byte_code);
+  fst::set matcher(byte_code);
 
   {
     auto ret = matcher.edit_distance_search(u8"二", 1);
@@ -672,7 +672,7 @@ TEST_CASE("Spellcheck set", "[spellcheck]") {
 
   const auto &byte_code = ss.str();
 
-  fst::Set matcher(byte_code);
+  fst::set matcher(byte_code);
   REQUIRE(matcher == true);
 
   {
@@ -699,7 +699,7 @@ TEST_CASE("Spellcheck map", "[spellcheck]") {
 
   const auto &byte_code = ss.str();
 
-  fst::Map<output_t> matcher(byte_code);
+  fst::map<output_t> matcher(byte_code);
   REQUIRE(matcher == true);
 
   {
