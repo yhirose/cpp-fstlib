@@ -147,8 +147,27 @@ if (result == fst::Result::Success) {
     auto length = matcher.longest_common_prefix_search("hello world!", output);
     assert(length == 11);
     assert(output == "こんにちは世界!");
+
+    std::cout << "[Edit distance 1]" << std::endl;
+    for (auto [k, o]: matcher.edit_distance_search("hellow", 1)) {
+      std::cout << "key: " << k << " output: " << o << std::endl;
+    }
+
+    std::cout << "[Suggestions]" << std::endl;
+    for (auto [r, k, o]: matcher.suggest("hellow")) {
+      std::cout << "ratio: " << r << " key: " << k << " output: " << o << std::endl;
+    }
   }
 }
+```
+
+```
+[Edit distance 1]
+key: hello output: こんにちは
+[Suggestions]
+ratio: 0.810185 key: hello output: こんにちは
+ratio: 0.504132 key: hello world output: こんにちは世界!
+ratio: 0.0962963 key: world output: 世界!
 ```
 
 ### Try out a demo on Repl.it!
