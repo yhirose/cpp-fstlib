@@ -2,9 +2,11 @@
 #include "darts/darts.h"
 #include "fstlib.h"
 #include "marisa.h"
+#include "sqlitelib.h"
 #include "ux-trie/ux.hpp"
 #include <chrono>
 #include <fstream>
+#include <rocksdb/db.h>
 
 using namespace std;
 
@@ -74,14 +76,22 @@ int main(int argc, const char **argv) {
     lengths.push_back(item.first.length());
   }
 
-  cerr << keys.size() << " keys" << endl;
-  cerr << endl;
+  {
+    auto PATH = argv[1];
+    fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
+            (double)(file_size(PATH) * 100 / 1024 / 1024) / 100.0,
+            (int)file_size(PATH));
+    fprintf(stdout, "keys\t%d\n", (int)keys.size());
+    cerr << endl;
+  }
 
   bool darts = false;
   bool ux = false;
   bool marisa = false;
   bool fstlib = true;
-  bool fstlib_only_keys = true;
+  bool fstlib_only_keys = false;
+  bool rocksdb = false;
+  bool sqlite = true;
 
   if (argc > 2 && string(argv[2]) == "-a") {
     darts = true;
@@ -364,6 +374,128 @@ int main(int argc, const char **argv) {
               if (!ret) { cerr << "error: (" << key << ")" << endl; }
             }
           }
+        }
+      }
+    }
+
+    cerr << endl;
+  }
+
+  // rocksdb
+  if (rocksdb) {
+    cerr << "#### rocksdb ####" << endl;
+    system("rm -rf ./rocksdb");
+
+    rocksdb::DB *db;
+    rocksdb::Options options;
+    options.create_if_missing = true;
+    auto s = rocksdb::DB::Open(options, "./rocksdb", &db);
+
+    if (build) {
+      StopWatch sw("build");
+
+      uint32_t i = 0;
+      for (auto key : keys) {
+        db->Put(rocksdb::WriteOptions(), key, std::to_string(i));
+        i++;
+      }
+
+      const char *PATH = "rocksdb/000003.log";
+
+      fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
+              (double)(file_size(PATH) * 100 / 1024 / 1024) / 100.0,
+              (int)file_size(PATH));
+    }
+
+    {
+      if (exact) {
+        StopWatch sw("exact");
+
+        for (int i = 0; i < count; i++) {
+          for (auto key : keys) {
+            std::string id;
+            db->Get(rocksdb::ReadOptions(), key, &id);
+          }
+        }
+      }
+
+      if (common_prefix) {
+        StopWatch sw("prefix");
+
+        auto it = db->NewIterator(rocksdb::ReadOptions());
+
+        for (int i = 0; i < count; i++) {
+          for (auto key : keys) {
+            std::string id;
+            db->Get(rocksdb::ReadOptions(), key, &id);
+            for (it->Seek(key); it->Valid() && it->key().starts_with(key);
+                 it->Next()) {
+              ;
+            }
+          }
+        }
+      }
+    }
+
+    delete db;
+
+    cerr << endl;
+  }
+
+  // sqlite
+  if (sqlite) {
+    cerr << "#### sqlite ####" << endl;
+    const char *PATH = "sqlite.bin";
+
+    sqlitelib::Sqlite db(PATH);
+    db.execute("DROP TABLE IF EXISTS word");
+
+    db.execute(R"(
+      CREATE TABLE IF NOT EXISTS word (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        word TEXT
+      )
+    )");
+
+    db.execute("CREATE INDEX word_index ON word (word)");
+
+    if (build) {
+      StopWatch sw("build");
+
+      db.execute("BEGIN");
+
+      auto stmt = db.prepare("INSERT INTO word (word) VALUES (?)");
+
+      for (auto key : keys) {
+        stmt.execute(key);
+      }
+
+      db.execute("COMMIT");
+
+      fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
+              (double)(file_size(PATH) * 100 / 1024 / 1024) / 100.0,
+              (int)file_size(PATH));
+    }
+
+    {
+      if (exact) {
+        StopWatch sw("exact");
+
+        std::string sql = "SELECT id FROM word WHERE word=?";
+        auto stmt = db.prepare<int>(sql.c_str());
+
+        for (int i = 0; i < count; i++) {
+          for (const auto &item : input) {
+            stmt.execute_value(item.first);
+          }
+        }
+      }
+
+      if (common_prefix) {
+        StopWatch sw("prefix");
+
+        for (int i = 0; i < count; i++) {
+          for (auto key : keys) {}
         }
       }
     }

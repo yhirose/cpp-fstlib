@@ -19,10 +19,22 @@ add_executable(benchmark
     ux-trie/rsDic.cpp
     ux-trie/uxTrie.cpp
     ux-trie/uxUtil.cpp
+    sqlite3/sqlite3.c
     main.cc)
 
 target_include_directories(
     benchmark PRIVATE
     ..
+    /usr/local/Cellar/rocksdb/6.14.6_1/include
+    /usr/local/Cellar/rocksdb/6.14.6_1/lib
     marisa-0.2.5/include
-    marisa-0.2.5/lib)
+    marisa-0.2.5/lib
+    sqlite3)
+
+target_link_directories(
+    benchmark PRIVATE
+    /usr/local/Cellar/rocksdb/6.14.6_1/lib)
+
+target_link_libraries(
+    benchmark PRIVATE
+    rocksdb)
