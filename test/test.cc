@@ -1,6 +1,7 @@
 ﻿#include <catch2/catch_test_macros.hpp>
 
 #include <fstlib.h>
+#include <cmath>
 
 using namespace std;
 
