@@ -1,7 +1,7 @@
-﻿#include <catch2/catch_test_macros.hpp>
+﻿#include <gtest/gtest.h>
 
-#include <fstlib.h>
 #include <cmath>
+#include <fstlib.h>
 
 using namespace std;
 
@@ -19,7 +19,7 @@ template <typename Input, typename Callback>
 void make_map(const Input &input, bool sorted, Callback callback) {
   stringstream out;
   auto [result, _] = fst::compile<output_t>(input, out, sorted);
-  REQUIRE(result == fst::Result::Success);
+  EXPECT_EQ(fst::Result::Success, result);
 
   const auto &byte_code = out.str();
   fst::map<output_t> matcher(byte_code);
@@ -31,7 +31,7 @@ void make_map_with_auto_index(const Input &input, bool sorted,
                               Callback callback) {
   stringstream out;
   auto [result, _] = fst::compile(input, out, true, sorted);
-  REQUIRE(result == fst::Result::Success);
+  EXPECT_EQ(fst::Result::Success, result);
 
   const auto &byte_code = out.str();
   fst::map<uint32_t> matcher(byte_code);
@@ -42,14 +42,14 @@ template <typename Input, typename Callback>
 void make_set(const Input &input, bool sorted, Callback callback) {
   stringstream out;
   auto [result, _] = fst::compile(input, out, false, sorted);
-  REQUIRE(result == fst::Result::Success);
+  EXPECT_EQ(fst::Result::Success, result);
 
   const auto &byte_code = out.str();
   fst::set matcher(byte_code);
   callback(matcher);
 }
 
-TEST_CASE("Success", "[compile]") {
+TEST(CompileTest, Success) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
       {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
@@ -58,10 +58,10 @@ TEST_CASE("Success", "[compile]") {
 
   stringstream out;
   auto [result, _] = fst::compile<output_t>(input, out, false);
-  REQUIRE(result == fst::Result::Success);
+  EXPECT_EQ(fst::Result::Success, result);
 }
 
-TEST_CASE("Success with no output", "[compile]") {
+TEST(CompileTest, Success_with_no_output) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -70,15 +70,15 @@ TEST_CASE("Success with no output", "[compile]") {
   stringstream out;
   {
     auto [result, _] = fst::compile(input, out, true, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
   {
     auto [result, _] = fst::compile(input, out, false, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 }
 
-TEST_CASE("Empty key", "[compile]") {
+TEST(CompileTest, Empty_key) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"", V(31)},    {"apr", V(30)},
       {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
@@ -87,11 +87,11 @@ TEST_CASE("Empty key", "[compile]") {
 
   stringstream out;
   auto [result, index] = fst::compile<output_t>(input, out, false);
-  REQUIRE(result == fst::Result::EmptyKey);
-  REQUIRE(index == 2);
+  EXPECT_EQ(fst::Result::EmptyKey, result);
+  EXPECT_EQ(2, index);
 }
 
-TEST_CASE("Empty key with no output", "[compile]") {
+TEST(CompileTest, Empty_key_with_no_output) {
   vector<string> input = {
       "jan", "feb", "",    "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -100,17 +100,17 @@ TEST_CASE("Empty key with no output", "[compile]") {
   stringstream out;
   {
     auto [result, index] = fst::compile(input, out, true, false);
-    REQUIRE(result == fst::Result::EmptyKey);
-    REQUIRE(index == 2);
+    EXPECT_EQ(fst::Result::EmptyKey, result);
+    EXPECT_EQ(2, index);
   }
   {
     auto [result, index] = fst::compile(input, out, false, false);
-    REQUIRE(result == fst::Result::EmptyKey);
-    REQUIRE(index == 2);
+    EXPECT_EQ(fst::Result::EmptyKey, result);
+    EXPECT_EQ(2, index);
   }
 }
 
-TEST_CASE("Unsorted key", "[compile]") {
+TEST(CompileTest, Unsorted_key) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
       {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
@@ -119,11 +119,11 @@ TEST_CASE("Unsorted key", "[compile]") {
 
   stringstream out;
   auto [result, index] = fst::compile<output_t>(input, out, true);
-  REQUIRE(result == fst::Result::UnsortedKey);
-  REQUIRE(index == 1);
+  EXPECT_EQ(fst::Result::UnsortedKey, result);
+  EXPECT_EQ(1, index);
 }
 
-TEST_CASE("Unsorted key with no output", "[compile]") {
+TEST(CompileTest, Unsorted_key_with_no_output) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -132,17 +132,17 @@ TEST_CASE("Unsorted key with no output", "[compile]") {
   stringstream out;
   {
     auto [result, index] = fst::compile(input, out, true, true);
-    REQUIRE(result == fst::Result::UnsortedKey);
-    REQUIRE(index == 1);
+    EXPECT_EQ(fst::Result::UnsortedKey, result);
+    EXPECT_EQ(1, index);
   }
   {
     auto [result, index] = fst::compile(input, out, false, true);
-    REQUIRE(result == fst::Result::UnsortedKey);
-    REQUIRE(index == 1);
+    EXPECT_EQ(fst::Result::UnsortedKey, result);
+    EXPECT_EQ(1, index);
   }
 }
 
-TEST_CASE("Duplicate key", "[compile]") {
+TEST(CompileTest, Duplicate_key) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"feb", V(29)}, {"mar", V(31)},
       {"apr", V(30)}, {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)},
@@ -152,11 +152,11 @@ TEST_CASE("Duplicate key", "[compile]") {
 
   stringstream out;
   auto [result, index] = fst::compile<output_t>(input, out, false);
-  REQUIRE(result == fst::Result::DuplicateKey);
-  REQUIRE(index == 2);
+  EXPECT_EQ(fst::Result::DuplicateKey, result);
+  EXPECT_EQ(2, index);
 }
 
-TEST_CASE("Duplicate key with no value", "[compile]") {
+TEST(CompileTest, Duplicate_key_with_no_value) {
   vector<string> input = {
       "jan", "feb", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -165,17 +165,17 @@ TEST_CASE("Duplicate key with no value", "[compile]") {
   stringstream out;
   {
     auto [result, index] = fst::compile(input, out, true, false);
-    REQUIRE(result == fst::Result::DuplicateKey);
-    REQUIRE(index == 2);
+    EXPECT_EQ(fst::Result::DuplicateKey, result);
+    EXPECT_EQ(2, index);
   }
   {
     auto [result, index] = fst::compile(input, out, false, false);
-    REQUIRE(result == fst::Result::DuplicateKey);
-    REQUIRE(index == 2);
+    EXPECT_EQ(fst::Result::DuplicateKey, result);
+    EXPECT_EQ(2, index);
   }
 }
 
-TEST_CASE("Normal Map test", "[map]") {
+TEST(MapTest, Normal_Map_test) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
       {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
@@ -185,74 +185,74 @@ TEST_CASE("Normal Map test", "[map]") {
   make_map(input, false, [](auto &map) {
     {
       output_t actual;
-      REQUIRE(map.exact_match_search("apr", actual));
-      REQUIRE(actual == V(30));
+      EXPECT_TRUE(map.exact_match_search("apr", actual));
+      EXPECT_EQ(V(30), actual);
     }
 
-    REQUIRE(map.contains("jan"));
-    REQUIRE(map.at("jan") == V(31));
-    REQUIRE(map["apr"] == V(30));
-    REQUIRE(map[string("apr")] == V(30));
-    REQUIRE(map[string_view("apr")] == V(30));
+    EXPECT_TRUE(map.contains("jan"));
+    EXPECT_EQ(V(31), map.at("jan"));
+    EXPECT_EQ(V(30), map["apr"]);
+    EXPECT_EQ(V(30), map[string("apr")]);
+    EXPECT_EQ(V(30), map[string_view("apr")]);
 
-    REQUIRE(map["feb"] == V(28));
-    REQUIRE(map["mar"] == V(31));
-    REQUIRE(map["apr"] == V(30));
-    REQUIRE(map["may"] == V(31));
-    REQUIRE(map["jun"] == V(30));
-    REQUIRE(map["jul"] == V(31));
-    REQUIRE(map["aug"] == V(31));
-    REQUIRE(map["sep"] == V(30));
-    REQUIRE(map["oct"] == V(31));
-    REQUIRE(map["nov"] == V(30));
-    REQUIRE(map["dec"] == V(31));
+    EXPECT_EQ(V(28), map["feb"]);
+    EXPECT_EQ(V(31), map["mar"]);
+    EXPECT_EQ(V(30), map["apr"]);
+    EXPECT_EQ(V(31), map["may"]);
+    EXPECT_EQ(V(30), map["jun"]);
+    EXPECT_EQ(V(31), map["jul"]);
+    EXPECT_EQ(V(31), map["aug"]);
+    EXPECT_EQ(V(30), map["sep"]);
+    EXPECT_EQ(V(31), map["oct"]);
+    EXPECT_EQ(V(30), map["nov"]);
+    EXPECT_EQ(V(31), map["dec"]);
 
-    REQUIRE(map.contains("") == false);
-    REQUIRE(map.contains("_") == false);
-    REQUIRE(map.contains("a") == false);
-    REQUIRE(map.contains("ap") == false);
-    REQUIRE(map.contains("ap_") == false);
-    REQUIRE(map.contains("apr_") == false);
+    EXPECT_FALSE(map.contains(""));
+    EXPECT_FALSE(map.contains("_"));
+    EXPECT_FALSE(map.contains("a"));
+    EXPECT_FALSE(map.contains("ap"));
+    EXPECT_FALSE(map.contains("ap_"));
+    EXPECT_FALSE(map.contains("apr_"));
   });
 }
 
-TEST_CASE("Edge case test1", "[map]") {
+TEST(MapTest, Edge_case_test1) {
   vector<pair<string, output_t>> input = {
       {"a", V(0)},
       {"ab", V(1)},
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map["a"] == V(0));
-    REQUIRE(map["ab"] == V(1));
+    EXPECT_EQ(V(0), map["a"]);
+    EXPECT_EQ(V(1), map["ab"]);
   });
 }
 
-TEST_CASE("Edge case test2", "[map]") {
+TEST(MapTest, Edge_case_test2) {
   vector<pair<string, output_t>> input = {
       {"aa", V(0)},
       {"abb", V(1)},
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map["aa"] == V(0));
-    REQUIRE(map["abb"] == V(1));
+    EXPECT_EQ(V(0), map["aa"]);
+    EXPECT_EQ(V(1), map["abb"]);
   });
 }
 
-TEST_CASE("Edge case test3", "[map]") {
+TEST(MapTest, Edge_case_test3) {
   vector<pair<string, output_t>> input = {
       {"abc", V(0)},
       {"bc", V(1)},
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map["abc"] == V(0));
-    REQUIRE(map["bc"] == V(1));
+    EXPECT_EQ(V(0), map["abc"]);
+    EXPECT_EQ(V(1), map["bc"]);
   });
 }
 
-TEST_CASE("Edge case test4", "[map]") {
+TEST(MapTest, Edge_case_test4) {
   vector<pair<string, output_t>> input = {
       {"z", V(0)},
       {"zc", V(10)},
@@ -261,14 +261,14 @@ TEST_CASE("Edge case test4", "[map]") {
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map["z"] == V(0));
-    REQUIRE(map["zc"] == V(10));
-    REQUIRE(map["zcd"] == V(11));
-    REQUIRE(map["zd"] == V(1));
+    EXPECT_EQ(V(0), map["z"]);
+    EXPECT_EQ(V(10), map["zc"]);
+    EXPECT_EQ(V(11), map["zcd"]);
+    EXPECT_EQ(V(1), map["zd"]);
   });
 }
 
-TEST_CASE("Edge case test5", "[map]") {
+TEST(MapTest, Edge_case_test5) {
   vector<pair<string, output_t>> input = {
       {"aba", V(1)},
       {"abz", V(2)},
@@ -277,14 +277,14 @@ TEST_CASE("Edge case test5", "[map]") {
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map["aba"] == V(1));
-    REQUIRE(map["abz"] == V(2));
-    REQUIRE(map["baz"] == V(31));
-    REQUIRE(map["bz"] == V(32));
+    EXPECT_EQ(V(1), map["aba"]);
+    EXPECT_EQ(V(2), map["abz"]);
+    EXPECT_EQ(V(31), map["baz"]);
+    EXPECT_EQ(V(32), map["bz"]);
   });
 }
 
-TEST_CASE("Duplicate final states test", "[map]") {
+TEST(MapTest, Duplicate_final_states_test) {
   vector<pair<string, output_t>> input = {
       {"az", V(0)},
       {"bz", V(1)},
@@ -293,14 +293,14 @@ TEST_CASE("Duplicate final states test", "[map]") {
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map["az"] == V(0));
-    REQUIRE(map["bz"] == V(1));
-    REQUIRE(map["cy"] == V(2));
-    REQUIRE(map["dz"] == V(3));
+    EXPECT_EQ(V(0), map["az"]);
+    EXPECT_EQ(V(1), map["bz"]);
+    EXPECT_EQ(V(2), map["cy"]);
+    EXPECT_EQ(V(3), map["dz"]);
   });
 }
 
-TEST_CASE("Duplicate final states test2", "[map]") {
+TEST(MapTest, Duplicate_final_states_test2) {
   vector<pair<string, output_t>> input = {
       {"a_a", V(0)},
       {"ab", V(1)},
@@ -309,26 +309,26 @@ TEST_CASE("Duplicate final states test2", "[map]") {
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map["a_a"] == V(0));
-    REQUIRE(map["ab"] == V(1));
-    REQUIRE(map["ab_a"] == V(2));
-    REQUIRE(map["b_a"] == V(3));
+    EXPECT_EQ(V(0), map["a_a"]);
+    EXPECT_EQ(V(1), map["ab"]);
+    EXPECT_EQ(V(2), map["ab_a"]);
+    EXPECT_EQ(V(3), map["b_a"]);
   });
 }
 
-TEST_CASE("UTF-8 test", "[map]") {
+TEST(MapTest, UTF8_test) {
   vector<pair<string, output_t>> input = {
       {u8"あ", V(0)},
       {u8"あい", V(1)},
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map[u8"あ"] == V(0));
-    REQUIRE(map[u8"あい"] == V(1));
+    EXPECT_EQ(V(0), map[u8"あ"]);
+    EXPECT_EQ(V(1), map[u8"あい"]);
   });
 }
 
-TEST_CASE("Common prefix search test", "[map]") {
+TEST(MapTest, Common_prefix_search_test) {
   vector<pair<string, output_t>> input = {
       {"a", V(0)},
       {"and", V(1)},
@@ -338,20 +338,20 @@ TEST_CASE("Common prefix search test", "[map]") {
   make_map(input, true, [](auto &map) {
     auto ret = map.common_prefix_search("android phone");
 
-    REQUIRE(ret.size() == 3);
+    EXPECT_EQ(3, ret.size());
 
-    REQUIRE(ret[0].first == 1);
-    REQUIRE(ret[0].second == V(0));
+    EXPECT_EQ(1, ret[0].first);
+    EXPECT_EQ(V(0), ret[0].second);
 
-    REQUIRE(ret[1].first == 3);
-    REQUIRE(ret[1].second == V(1));
+    EXPECT_EQ(3, ret[1].first);
+    EXPECT_EQ(V(1), ret[1].second);
 
-    REQUIRE(ret[2].first == 7);
-    REQUIRE(ret[2].second == V(2));
+    EXPECT_EQ(7, ret[2].first);
+    EXPECT_EQ(V(2), ret[2].second);
   });
 }
 
-TEST_CASE("Invalid arc jump test", "[string]") {
+TEST(StringTest, Invalid_arc_jump_test) {
   vector<pair<string, output_t>> input = {
       {"aazasl;kfjasfl;", V(0)}, {"acza;slkdfjas;", V(1)},
       {"adzs;ldfkjas;", V(2)},   {"aezs;lkdfjals;f", V(3)},
@@ -360,71 +360,70 @@ TEST_CASE("Invalid arc jump test", "[string]") {
       {"akzs;ldkfjas;", V(8)},   {"alzs;lfkjasdf;l", V(9)},
   };
 
-  make_map(input, true,
-           [](auto &map) { REQUIRE(map.contains("az") == false); });
+  make_map(input, true, [](auto &map) { EXPECT_FALSE(map.contains("az")); });
 }
 
-TEST_CASE("Single output value test", "[map]") {
+TEST(MapTest, Single_output_value_test) {
   vector<pair<string, output_t>> input = {
       {"a", V(0)},
       {"ab", V(1)},
   };
 
   make_map(input, true, [](auto &map) {
-    REQUIRE(map["a"] == V(0));
-    REQUIRE(map["ab"] == V(1));
+    EXPECT_EQ(V(0), map["a"]);
+    EXPECT_EQ(V(1), map["ab"]);
   });
 }
 
-TEST_CASE("Auto Index Dictionary", "[map]") {
+TEST(MapTest, Auto_Index_Dictionary) {
   vector<string> input = {"a", "and", "android"};
 
   make_map_with_auto_index(input, true, [](auto &map) {
     auto ret = map.common_prefix_search("android phone");
 
-    REQUIRE(ret.size() == 3);
+    EXPECT_EQ(3, ret.size());
 
-    REQUIRE(ret[0].first == 1);
-    REQUIRE(ret[0].second == 0);
+    EXPECT_EQ(1, ret[0].first);
+    EXPECT_EQ(0, ret[0].second);
 
-    REQUIRE(ret[1].first == 3);
-    REQUIRE(ret[1].second == 1);
+    EXPECT_EQ(3, ret[1].first);
+    EXPECT_EQ(1, ret[1].second);
 
-    REQUIRE(ret[2].first == 7);
-    REQUIRE(ret[2].second == 2);
+    EXPECT_EQ(7, ret[2].first);
+    EXPECT_EQ(2, ret[2].second);
   });
 }
 
-TEST_CASE("Normal Set test", "[set]") {
+TEST(SetTest, Normal_Set_test) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
   };
 
   make_set(input, false, [](auto &set) {
-    REQUIRE(set.contains("jan"));
-    REQUIRE(set.contains("feb"));
-    REQUIRE(set.contains("mar"));
-    REQUIRE(set.contains("apr"));
-    REQUIRE(set.contains("may"));
-    REQUIRE(set.contains("jun"));
-    REQUIRE(set.contains("jul"));
-    REQUIRE(set.contains("aug"));
-    REQUIRE(set.contains("sep"));
-    REQUIRE(set.contains("oct"));
-    REQUIRE(set.contains("nov"));
-    REQUIRE(set.contains("dec"));
+    EXPECT_TRUE(set.contains("jan"));
+    EXPECT_TRUE(set.contains("feb"));
+    EXPECT_TRUE(set.contains("mar"));
+    EXPECT_TRUE(set.contains("apr"));
+    EXPECT_TRUE(set.contains("may"));
+    EXPECT_TRUE(set.contains("jun"));
+    EXPECT_TRUE(set.contains("jul"));
+    EXPECT_TRUE(set.contains("aug"));
+    EXPECT_TRUE(set.contains("sep"));
+    EXPECT_TRUE(set.contains("oct"));
+    EXPECT_TRUE(set.contains("nov"));
+    EXPECT_TRUE(set.contains("dec"));
 
-    REQUIRE(set.contains("") == false);
-    REQUIRE(set.contains("_") == false);
-    REQUIRE(set.contains("a") == false);
-    REQUIRE(set.contains("ap") == false);
-    REQUIRE(set.contains("ap_") == false);
-    REQUIRE(set.contains("apr_") == false);
+    EXPECT_FALSE(set.contains(""));
+    EXPECT_FALSE(set.contains("_"));
+    EXPECT_FALSE(set.contains("a"));
+    EXPECT_FALSE(set.contains("ap"));
+    EXPECT_FALSE(set.contains("ap_"));
+    EXPECT_FALSE(set.contains("apr_"));
   });
 }
 
-TEST_CASE("Japanese Set test", "[set]") {
+TEST(SetTest, Japanese_Set_test) {
   vector<string> input = {
       u8"一", u8"一二", u8"一二三", u8"二", u8"二三",
   };
@@ -432,24 +431,24 @@ TEST_CASE("Japanese Set test", "[set]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile(input, ss, false, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
   fst::set set(byte_code);
 
   {
-    REQUIRE(set.contains(u8"一"));
-    REQUIRE(set.contains(u8"一二"));
-    REQUIRE(set.contains(u8"一二三"));
-    REQUIRE(set.contains(u8"二"));
-    REQUIRE(set.contains(u8"二三"));
-    REQUIRE(!set.contains(u8"一二三四"));
-    REQUIRE(!set.contains(""));
+    EXPECT_TRUE(set.contains(u8"一"));
+    EXPECT_TRUE(set.contains(u8"一二"));
+    EXPECT_TRUE(set.contains(u8"一二三"));
+    EXPECT_TRUE(set.contains(u8"二"));
+    EXPECT_TRUE(set.contains(u8"二三"));
+    EXPECT_FALSE(set.contains(u8"一二三四"));
+    EXPECT_FALSE(set.contains(""));
   }
 }
 
-TEST_CASE("Decompile map", "[decompile]") {
+TEST(DecompileTest, Decompile_map) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
       {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
@@ -459,7 +458,7 @@ TEST_CASE("Decompile map", "[decompile]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile<output_t>(input, ss, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
@@ -481,10 +480,10 @@ oct	31
 sep	30
 )";
 
-  REQUIRE(out.str() == expected);
+  EXPECT_EQ(expected, out.str());
 }
 
-TEST_CASE("Decompile map, no need output", "[decompile]") {
+TEST(DecompileTest, Decompile_map_no_need_output) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -493,7 +492,7 @@ TEST_CASE("Decompile map, no need output", "[decompile]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile(input, ss, true, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
@@ -515,10 +514,10 @@ oct
 sep
 )";
 
-  REQUIRE(out.str() == expected);
+  EXPECT_EQ(expected, out.str());
 }
 
-TEST_CASE("Decompile map, need output", "[decompile]") {
+TEST(DecompileTest, Decompile_map_need_output) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -527,7 +526,7 @@ TEST_CASE("Decompile map, need output", "[decompile]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile(input, ss, true, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
@@ -549,10 +548,10 @@ oct	9
 sep	8
 )";
 
-  REQUIRE(out.str() == expected);
+  EXPECT_EQ(expected, out.str());
 }
 
-TEST_CASE("Decompile set", "[decompile]") {
+TEST(DecompileTest, Decompile_set) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -561,7 +560,7 @@ TEST_CASE("Decompile set", "[decompile]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile(input, ss, false, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
@@ -583,11 +582,11 @@ oct
 sep
 )";
 
-  REQUIRE(out.str().size() == strlen(expected));
-  REQUIRE(out.str() == expected);
+  EXPECT_EQ(strlen(expected), out.str().size());
+  EXPECT_EQ(expected, out.str());
 }
 
-TEST_CASE("Edit distance search map", "[edit distance]") {
+TEST(EditDistanceTest, Edit_distance_search_map) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -596,17 +595,17 @@ TEST_CASE("Edit distance search map", "[edit distance]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile(input, ss, true, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
   fst::map<uint32_t> matcher(byte_code);
 
   auto ret = matcher.edit_distance_search("joe", 2);
-  REQUIRE(ret.size() == 4);
+  EXPECT_EQ(4, ret.size());
 }
 
-TEST_CASE("Edit distance search set", "[edit distance]") {
+TEST(EditDistanceTest, Edit_distance_search_set) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -615,17 +614,17 @@ TEST_CASE("Edit distance search set", "[edit distance]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile(input, ss, false, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
   fst::set matcher(byte_code);
 
   auto ret = matcher.edit_distance_search("joe", 2);
-  REQUIRE(ret.size() == 4);
+  EXPECT_EQ(4, ret.size());
 }
 
-TEST_CASE("Japanese edit distance search", "[edit distance]") {
+TEST(EditDistanceTest, Japanese_edit_distance_search) {
   vector<string> input = {
       u8"一",
       u8"一二",
@@ -636,7 +635,7 @@ TEST_CASE("Japanese edit distance search", "[edit distance]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile(input, ss, false, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
@@ -644,21 +643,21 @@ TEST_CASE("Japanese edit distance search", "[edit distance]") {
 
   {
     auto ret = matcher.edit_distance_search(u8"二", 1);
-    REQUIRE(ret.size() == 2);
-    REQUIRE(ret[0] == u8"一");
-    REQUIRE(ret[1] == u8"一二");
+    EXPECT_EQ(2, ret.size());
+    EXPECT_EQ(u8"一", ret[0]);
+    EXPECT_EQ(u8"一二", ret[1]);
   }
 
   {
     auto ret = matcher.edit_distance_search(u8"二", 2);
-    REQUIRE(ret.size() == 3);
-    REQUIRE(ret[0] == u8"一");
-    REQUIRE(ret[1] == u8"一二");
-    REQUIRE(ret[2] == u8"一二三");
+    EXPECT_EQ(3, ret.size());
+    EXPECT_EQ(u8"一", ret[0]);
+    EXPECT_EQ(u8"一二", ret[1]);
+    EXPECT_EQ(u8"一二三", ret[2]);
   }
 }
 
-TEST_CASE("Spellcheck set", "[spellcheck]") {
+TEST(SpellcheckTest, Spellcheck_set) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
       "jul", "aug", "sep", "oct", "nov", "dec",
@@ -667,24 +666,24 @@ TEST_CASE("Spellcheck set", "[spellcheck]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile(input, ss, false, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
 
   fst::set matcher(byte_code);
-  REQUIRE(matcher == true);
+  EXPECT_TRUE(matcher);
 
   {
     const auto &items = matcher.suggest("joe");
 
     auto &[similarity, word] = items.front();
-    REQUIRE(word == "jan");
-    REQUIRE(std::floor(similarity * 1000) == 349);
+    EXPECT_EQ("jan", word);
+    EXPECT_EQ(349, std::floor(similarity * 1000));
   }
 }
 
-TEST_CASE("Spellcheck map", "[spellcheck]") {
+TEST(SpellcheckTest, Spellcheck_map) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
       {"may", V(31)}, {"jun", V(30)}, {"jul", V(31)}, {"aug", V(31)},
@@ -694,20 +693,20 @@ TEST_CASE("Spellcheck map", "[spellcheck]") {
   stringstream ss;
   {
     auto [result, _] = fst::compile<output_t>(input, ss, false);
-    REQUIRE(result == fst::Result::Success);
+    EXPECT_EQ(fst::Result::Success, result);
   }
 
   const auto &byte_code = ss.str();
 
   fst::map<output_t> matcher(byte_code);
-  REQUIRE(matcher == true);
+  EXPECT_TRUE(matcher);
 
   {
     const auto &items = matcher.suggest("joe");
 
     auto &[similarity, word, output] = items.front();
-    REQUIRE(word == "jan");
-    REQUIRE(output == 31);
-    REQUIRE(std::floor(similarity * 1000) == 349);
+    EXPECT_EQ("jan", word);
+    EXPECT_EQ(31, output);
+    EXPECT_EQ(349, std::floor(similarity * 1000));
   }
 }
