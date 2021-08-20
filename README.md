@@ -49,13 +49,13 @@ namespace fst {
 enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
 std::pair<Result, size_t /* error input index */> compile<uint32_t>(
-  const std::vector<std::string, uint32_t> &input,
+  const std::vector<std::pair<std::string, uint32_t>> &input,
   std::ostream &os,
   bool sorted
 );
 
 std::pair<Result, size_t /* error input index */> compile<std::string>(
-  const std::vector<std::string, std::string> &input,
+  const std::vector<std::pair<std::string, std::string>> &input,
   std::ostream &os
 );
 
