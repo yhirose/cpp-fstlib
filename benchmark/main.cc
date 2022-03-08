@@ -258,7 +258,7 @@ int main(int argc, const char **argv) {
     if (build) {
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] = fst::compile<uint32_t>(input, fout, true, true);
+      fst::compile<uint32_t>(input, fout, true, true);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",
@@ -321,7 +321,7 @@ int main(int argc, const char **argv) {
 
       StopWatch sw("build");
       ofstream fout(PATH, ios_base::binary);
-      auto [result, line] = fst::compile(keys2, fout, true, true);
+      fst::compile(keys2, fout, true, true);
       fout.close();
 
       fprintf(stdout, "size\t%0.1f mega bytes (%d bytes)\n",

@@ -246,6 +246,8 @@ template <> struct OutputTraits<none_t> {
 
   static bool empty(value_type val) { return val == 0; }
 
+  static value_type init_value() { return 0; }
+
   static size_t read_byte_value(const char *p, value_type &val) { return 0; }
 };
 
@@ -255,6 +257,8 @@ template <> struct OutputTraits<uint32_t> {
   static OutputType type() { return OutputType::uint32_t; }
 
   static bool empty(value_type val) { return val == 0; }
+
+  static value_type init_value() { return 0; }
 
   static std::string to_string(value_type val) { return std::to_string(val); }
 
@@ -292,6 +296,8 @@ template <> struct OutputTraits<uint64_t> {
 
   static bool empty(value_type val) { return val == 0; }
 
+  static value_type init_value() { return 0; }
+
   static std::string to_string(value_type val) { return std::to_string(val); }
 
   static void prepend_value(value_type &base, value_type val) { base += val; }
@@ -327,6 +333,8 @@ template <> struct OutputTraits<std::string> {
   static OutputType type() { return OutputType::string; }
 
   static bool empty(const value_type &val) { return val.empty(); }
+
+  static value_type init_value() { return std::string(); }
 
   static value_type to_string(const value_type &val) { return val; }
 
@@ -1377,7 +1385,7 @@ public:
 
   void write(const State<output_t> &state, char prev_arc) {
     if (state.final) {
-      output_t state_output;
+      auto state_output = OutputTraits<output_t>::init_value();;
       if (!OutputTraits<output_t>::empty(state.state_output)) {
         state_output = state.state_output;
       }
@@ -1867,8 +1875,8 @@ protected:
 
     std::vector<R> suggestions;
 
-    auto min_edits = 2;
-    auto max_edits = 6;
+    size_t min_edits = 2;
+    size_t max_edits = 6;
 
     for (size_t edits = min_edits; edits <= max_edits; edits++) {
       auto results = matcher.edit_distance_search(word, edits);
