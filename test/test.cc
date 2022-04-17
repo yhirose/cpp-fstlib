@@ -213,6 +213,18 @@ TEST(MapTest, Normal_Map_test) {
     EXPECT_FALSE(map.contains("ap"));
     EXPECT_FALSE(map.contains("ap_"));
     EXPECT_FALSE(map.contains("apr_"));
+
+    {
+      auto ret = map.predictive_search("ju");
+      std::sort(ret.begin(), ret.end(),
+                [](auto a, auto b) { return a.first < b.first; });
+
+      EXPECT_EQ(2, ret.size());
+      EXPECT_EQ("jul", ret[0].first);
+      EXPECT_EQ(31, ret[0].second);
+      EXPECT_EQ("jun", ret[1].first);
+      EXPECT_EQ(30, ret[1].second);
+    }
   });
 }
 
@@ -420,6 +432,15 @@ TEST(SetTest, Normal_Set_test) {
     EXPECT_FALSE(set.contains("ap"));
     EXPECT_FALSE(set.contains("ap_"));
     EXPECT_FALSE(set.contains("apr_"));
+
+    {
+      auto ret = set.predictive_search("ju");
+      std::sort(ret.begin(), ret.end());
+
+      EXPECT_EQ(2, ret.size());
+      EXPECT_EQ("jul", ret[0]);
+      EXPECT_EQ("jun", ret[1]);
+    }
   });
 }
 
@@ -708,5 +729,99 @@ TEST(SpellcheckTest, Spellcheck_map) {
     EXPECT_EQ("jan", word);
     EXPECT_EQ(31, output);
     EXPECT_EQ(349, std::floor(similarity * 1000));
+  }
+}
+
+TEST(ReadmeTest, General) {
+  const std::vector<std::pair<std::string, std::string>> items = {
+      {"hello", u8"こんにちは!"},
+      {"hello world", u8"こんにちは世界!"}, // incorrect sort order entry...
+      {"world", u8"世界!"},
+  };
+
+  std::stringstream out;
+  auto sorted = false; // ask fst::compile to sort entries
+  auto [result, error_line] = fst::compile<std::string>(items, out, sorted);
+
+  if (result == fst::Result::Success) {
+    const auto &byte_code = out.str();
+    fst::map<std::string> matcher(byte_code.data(), byte_code.size());
+
+    if (matcher) {
+      EXPECT_TRUE(matcher.contains("hello world"));
+      EXPECT_FALSE(matcher.contains("Hello World"));
+      EXPECT_EQ(u8"こんにちは!", matcher["hello"]);
+
+      {
+        auto prefixes = matcher.common_prefix_search("hello world!");
+        EXPECT_EQ(2, prefixes.size());
+        {
+          auto [l, o] = prefixes[0];
+          EXPECT_EQ(5, l);
+          EXPECT_EQ(u8"こんにちは!", o);
+        }
+        {
+          auto [l, o] = prefixes[1];
+          EXPECT_EQ(11, l);
+          EXPECT_EQ(u8"こんにちは世界!", o);
+        }
+      }
+
+      {
+        std::string output;
+        auto length =
+            matcher.longest_common_prefix_search("hello world!", output);
+        EXPECT_EQ(11, length);
+        EXPECT_EQ(u8"こんにちは世界!", output);
+      }
+
+      {
+        auto predictives = matcher.predictive_search("he");
+        EXPECT_EQ(2, predictives.size());
+        {
+          auto [k, o] = predictives[0];
+          EXPECT_EQ("hello", k);
+          EXPECT_EQ(u8"こんにちは", o);
+        }
+        {
+          auto [k, o] = predictives[1];
+          EXPECT_EQ("hello world", k);
+          EXPECT_EQ(u8"こんにちは世界!", o);
+        }
+      }
+
+      {
+        auto edit_distances = matcher.edit_distance_search("hellow", 1);
+        EXPECT_EQ(1, edit_distances.size());
+        {
+          auto [k, o] = edit_distances[0];
+          EXPECT_EQ("hello", k);
+          EXPECT_EQ(u8"こんにちは", o);
+        }
+      }
+
+      {
+        auto suggestions = matcher.suggest("hellow");
+        EXPECT_EQ(3, suggestions.size());
+        {
+          auto [r, k, o] = suggestions[0];
+          EXPECT_TRUE(0.810184 < r && r < 0.810186);
+          EXPECT_EQ("hello", k);
+          EXPECT_EQ(u8"こんにちは", o);
+        }
+        {
+          auto [r, k, o] = suggestions[1];
+          EXPECT_TRUE(0.504131 < r && r < 0.504133);
+          EXPECT_EQ("hello world", k);
+          EXPECT_EQ(u8"こんにちは世界!", o);
+        }
+        {
+          auto [r, k, o] = suggestions[2];
+          EXPECT_TRUE(0.0962962 < r && r < 0.0962964);
+          EXPECT_EQ("world", k);
+          EXPECT_EQ(u8"世界!", o);
+        }
+      }
+    }
   }
 }

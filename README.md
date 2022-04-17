@@ -86,6 +86,9 @@ public:
   size_t longest_common_prefix_search(std::string_view sv, output_t &output) const;
 
   std::vector<std::pair<std::string, output_t>>
+  predictive_search(std::string_view sv) const;
+
+  std::vector<std::pair<std::string, output_t>>
   edit_distance_search(std::string_view sv, size_t max_edits) const;
 
   std::vector<std::tuple<double, std::string, output_t>>
@@ -103,6 +106,8 @@ public:
   std::vector<size_t> common_prefix_search(std::string_view sv) const;
 
   size_t longest_common_prefix_search(std::string_view sv) const;
+
+  std::vector<std::string> predictive_search(std::string_view sv) const;
 
   std::vector<std::string>
   edit_distance_search(std::string_view sv, size_t max_edits) const;
@@ -170,11 +175,7 @@ ratio: 0.504132 key: hello world output: こんにちは世界!
 ratio: 0.0962963 key: world output: 世界!
 ```
 
-### Try out a demo on Repl.it!
-
-https://repl.it/@yhirose/FST
-
 License
 -------
 
-MIT license (© 2020 Yuji Hirose)
+MIT license (© 2022 Yuji Hirose)

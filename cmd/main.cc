@@ -238,6 +238,11 @@ void map_search_word(const T &byte_code, string_view cmd, bool verbose,
       ret = true;
       cout << word.substr(0, len) << ": " << output << endl;
     }
+  } else if (cmd == "predictive") {
+    ret = matcher.predictive_search(word,
+                                    [&](const auto &word, const auto &output) {
+                                      cout << word << ": " << output << endl;
+                                    });
   } else if (cmd == "fuzzy") {
     auto results = matcher.edit_distance_search(word, edit_distance, 1, 1, 2);
     ret = !results.empty();
@@ -286,6 +291,9 @@ void set_search_word(const T &byte_code, string_view cmd, bool verbose,
       ret = true;
       cout << word.substr(0, len) << endl;
     }
+  } else if (cmd == "predictive") {
+    ret = matcher.predictive_search(
+        word, [&](const auto &word) { cout << word << endl; });
   } else if (cmd == "fuzzy") {
     auto results = matcher.edit_distance_search(word, edit_distance, 1, 1, 2);
     ret = !results.empty();
@@ -363,6 +371,7 @@ void usage() {
     search       FST [word]  - exact match search
     prefix       FST [word]  - common prefix search
     longest      FST [word]  - longest common prefix search
+    predictive   FST [word]  - predictive search
     fuzzy        FST [word]  - edit distance search
     spellcheck   FST [word]  - check spelling
 
@@ -493,7 +502,7 @@ int main(int argc, char **argv) {
       }
 
     } else if (cmd == "search" || cmd == "prefix" || cmd == "longest" ||
-               cmd == "fuzzy" || cmd == "spellcheck") {
+               cmd == "predictive" || cmd == "fuzzy" || cmd == "spellcheck") {
       ifstream fin(in_path, ios_base::binary);
       if (!fin) { return error(1); }
 

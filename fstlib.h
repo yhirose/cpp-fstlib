@@ -1,7 +1,7 @@
 //
 //  fstlib.h
 //
-//  Copyright (c) 2020 Yuji Hirose. All rights reserved.
+//  Copyright (c) 2022 Yuji Hirose. All rights reserved.
 //  MIT License
 //
 
@@ -1385,7 +1385,8 @@ public:
 
   void write(const State<output_t> &state, char prev_arc) {
     if (state.final) {
-      auto state_output = OutputTraits<output_t>::init_value();;
+      auto state_output = OutputTraits<output_t>::init_value();
+      ;
       if (!OutputTraits<output_t>::empty(state.state_output)) {
         state_output = state.state_output;
       }
@@ -1771,7 +1772,8 @@ protected:
   template <typename T, typename U>
   void depth_first_visit(uint32_t address, const std::string &partial_word,
                          const output_t &partial_output, const T &transit,
-                         U accept) const {
+                         U accept,
+                         std::string_view prefix = std::string_view()) const {
 
     while (true) {
       auto state_output = output_t{};
@@ -1829,13 +1831,18 @@ protected:
             output += state_output;
           }
         }
-        if (atm.is_match()) { accept(word, output); }
+        if (atm.is_match()) {
+          if (prefix.empty() || prefix.front() == arc) { accept(word, output); }
+        }
       }
 
       if (!atm.can_match()) { break; }
 
       if (next_address) {
-        depth_first_visit(next_address, word, output, atm, accept);
+        if (prefix.empty() || prefix.front() == arc) {
+          depth_first_visit(next_address, word, output, atm, accept,
+                            prefix.empty() ? prefix : prefix.substr(1));
+        }
       }
 
       if (ope.data.last_transition) { break; }
@@ -1969,7 +1976,7 @@ private:
   size_t max_edits_;
   size_t insert_cost_;
   size_t delete_cost_;
-  size_t replace_cost_; // TODO: better const function is needed?
+  size_t replace_cost_; // TODO: better cost function is needed?
   std::vector<size_t> state_;
   std::string u8code_;
 
@@ -2089,6 +2096,31 @@ public:
     return prefix_len;
   }
 
+  bool
+  predictive_search(std::string_view sv,
+                    std::function<void(const std::string &, const output_t &)>
+                        callback) const {
+    auto ret = false;
+    matcher<output_t>::depth_first_visit(
+        matcher<output_t>::header_.start_address, std::string(), output_t{},
+        DummyAutomaton(),
+        [&](const auto &word, const auto &output) {
+          ret = true;
+          callback(word, output);
+        },
+        sv);
+    return ret;
+  }
+
+  std::vector<std::pair<std::string, output_t>>
+  predictive_search(std::string_view sv) const {
+    std::vector<std::pair<std::string, output_t>> ret;
+    predictive_search(sv, [&](const auto &word, const auto &output) {
+      ret.emplace_back(word, output);
+    });
+    return ret;
+  }
+
   std::vector<std::pair<std::string, output_t>>
   edit_distance_search(std::string_view sv, size_t max_edits,
                        size_t insert_cost = 1, size_t delete_cost = 1,
@@ -2153,6 +2185,27 @@ public:
     size_t prefix_len = 0;
     common_prefix_search(sv, [&](size_t len) { prefix_len = len; });
     return prefix_len;
+  }
+
+  bool
+  predictive_search(std::string_view sv,
+                    std::function<void(const std::string &)> callback) const {
+    auto ret = false;
+    matcher<none_t>::depth_first_visit(
+        matcher<none_t>::header_.start_address, std::string(), none_t{},
+        DummyAutomaton(),
+        [&](const auto &word, const auto &) {
+          ret = true;
+          callback(word);
+        },
+        sv);
+    return ret;
+  }
+
+  std::vector<std::string> predictive_search(std::string_view sv) const {
+    std::vector<std::string> ret;
+    predictive_search(sv, [&](const auto &word) { ret.push_back(word); });
+    return ret;
   }
 
   std::vector<std::string> edit_distance_search(std::string_view sv,
