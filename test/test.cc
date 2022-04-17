@@ -735,8 +735,8 @@ TEST(SpellcheckTest, Spellcheck_map) {
 TEST(ReadmeTest, General) {
   const std::vector<std::pair<std::string, std::string>> items = {
       {"hello", u8"こんにちは!"},
-      {"hello world", u8"こんにちは世界!"}, // incorrect sort order entry...
       {"world", u8"世界!"},
+      {"hello world", u8"こんにちは世界!"}, // incorrect sort order entry...
   };
 
   std::stringstream out;
@@ -785,6 +785,16 @@ TEST(ReadmeTest, General) {
         }
         {
           auto [k, o] = predictives[1];
+          EXPECT_EQ("hello world", k);
+          EXPECT_EQ(u8"こんにちは世界!", o);
+        }
+      }
+
+      {
+        auto predictives = matcher.predictive_search("hello w");
+        EXPECT_EQ(1, predictives.size());
+        {
+          auto [k, o] = predictives[0];
           EXPECT_EQ("hello world", k);
           EXPECT_EQ(u8"こんにちは世界!", o);
         }

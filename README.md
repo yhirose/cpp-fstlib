@@ -27,6 +27,11 @@ hello: 83713
 > ./cmd/fst longest words.fst helloworld
 hello: 83713
 
+> ./cmd/fst predictive words.fst predictiv
+predictive: 153474
+predictively: 153475
+predictiveness: 153476
+
 > ./cmd/fst fuzzy words.fst fuzzy -ed 2 // Edit distance 2
 Suzy: 195759
 buzz: 28064
@@ -124,8 +129,8 @@ public:
 ```cpp
 const std::vector<std::pair<std::string, std::string>> items = {
   {"hello", "こんにちは!"},
-  {"hello world", "こんにちは世界!"}, // incorrect sort order entry...
   {"world", "世界!"},
+  {"hello world", "こんにちは世界!"}, // incorrect sort order entry...
 };
 
 std::stringstream out;
@@ -152,6 +157,13 @@ if (result == fst::Result::Success) {
     auto length = matcher.longest_common_prefix_search("hello world!", output);
     assert(length == 11);
     assert(output == "こんにちは世界!");
+
+    auto predictives = matcher.predictive_search("he");
+    assert(predictives.size() == 2);
+    assert(predictives[0].first == "hello");
+    assert(predictives[0].second == "こんにちは!");
+    assert(predictives[1].first == "hello world");
+    assert(predictives[1].second == "こんにちは世界!");
 
     std::cout << "[Edit distance 1]" << std::endl;
     for (auto [k, o]: matcher.edit_distance_search("hellow", 1)) {

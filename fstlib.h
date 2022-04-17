@@ -1832,7 +1832,9 @@ protected:
           }
         }
         if (atm.is_match()) {
-          if (prefix.empty() || prefix.front() == arc) { accept(word, output); }
+          if (prefix.empty() || (prefix.size() == 1 && prefix.front() == arc)) {
+            accept(word, output);
+          }
         }
       }
 
