@@ -1825,15 +1825,14 @@ protected:
       auto word = partial_word + arc;
       auto output = partial_output + output_suffix;
 
-      if (ope.data.final) {
-        if (OutputTraits<output_t>::type() != OutputType::none_t) {
-          if (OutputTraits<output_t>::empty(state_output)) {
-            output += state_output;
-          }
-        }
-        if (atm.is_match()) {
-          if (prefix.empty() || (prefix.size() == 1 && prefix.front() == arc)) {
+      if (ope.data.final && atm.is_match()) {
+        if (prefix.empty() || (prefix.size() == 1 && prefix.front() == arc)) {
+          if (OutputTraits<output_t>::type() == OutputType::none_t ||
+              OutputTraits<output_t>::empty(state_output)) 
+          {
             accept(word, output);
+          } else {
+            accept(word, output + state_output);
           }
         }
       }
