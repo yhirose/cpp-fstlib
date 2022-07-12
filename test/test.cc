@@ -1,6 +1,7 @@
 ﻿#include <gtest/gtest.h>
 
 #include <cmath>
+#include <fstream>
 #include <fstlib.h>
 
 using namespace std;
@@ -122,6 +123,51 @@ TEST(CompileTest, Unsorted_key) {
   EXPECT_EQ(fst::Result::UnsortedKey, result);
   EXPECT_EQ(1, index);
 }
+
+
+TEST(CompileTest, Try_to_fix_calculate_output_error) {
+    string keyFilePath = "keywords.txt";
+    ifstream fin(keyFilePath);
+    string word;
+    std::map<string, uint64_t> input;
+
+    while (getline(fin, word)) {
+        input[word] = input.size();
+    }
+
+    stringstream out;
+    {
+        FstWriter<uint64_t, true> writer(out, true, false, false, [&](const auto& feeder) {
+                                                                      for (const auto& item : input) {
+                                                                          feeder(item.first);
+                                                                      }
+                                                                  });
+        auto ret = build_fst_core<uint64_t>(
+                [&](const auto& feeder) {
+                    size_t input_index = 0;
+                    for (const auto& item : input) {
+                        const auto& word = item.first;
+                        const auto& output = item.second;
+                        if (!feeder(word, output, input_index)) {
+                            break;
+                        }
+                        input_index++;
+                    }
+                },
+                writer, true);
+        ASSERT_TRUE(ret.first == fst::Result::Success);
+    }
+
+    string data = out.str();
+    fst::map<uint64_t> fm(data.c_str(), data.size());
+    for (auto& item : input) {
+        ASSERT_EQ(item.second, fm[item.first]);
+    }
+    fm.enumerate([&](const auto& word, auto output) {
+                     ASSERT_EQ(output, input[word]) << word;
+                 });
+}
+
 
 TEST(CompileTest, Unsorted_key_with_no_output) {
   vector<string> input = {
