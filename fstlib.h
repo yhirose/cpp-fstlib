@@ -1828,13 +1828,14 @@ protected:
       if (ope.data.final) {
         if (atm.is_match()) {
           if (prefix.empty() || (prefix.size() == 1 && prefix.front() == arc)) {
-            auto final_output = output;
+            auto should_append_state_output = false;
             if (OutputTraits<output_t>::type() != OutputType::none_t) {
               if (!OutputTraits<output_t>::empty(state_output)) {
-                final_output += state_output;
+                should_append_state_output = true;
               }
             }
-            accept(word, final_output);
+            accept(word,
+                   should_append_state_output ? output + state_output : output);
           }
         }
       }
