@@ -781,7 +781,7 @@ TEST(ReadmeTest, General) {
         {
           auto [k, o] = predictives[0];
           EXPECT_EQ("hello", k);
-          EXPECT_EQ(u8"こんにちは", o);
+          EXPECT_EQ(u8"こんにちは!", o);
         }
         {
           auto [k, o] = predictives[1];
@@ -806,7 +806,7 @@ TEST(ReadmeTest, General) {
         {
           auto [k, o] = edit_distances[0];
           EXPECT_EQ("hello", k);
-          EXPECT_EQ(u8"こんにちは", o);
+          EXPECT_EQ(u8"こんにちは!", o);
         }
       }
 
@@ -817,7 +817,7 @@ TEST(ReadmeTest, General) {
           auto [r, k, o] = suggestions[0];
           EXPECT_TRUE(0.810184 < r && r < 0.810186);
           EXPECT_EQ("hello", k);
-          EXPECT_EQ(u8"こんにちは", o);
+          EXPECT_EQ(u8"こんにちは!", o);
         }
         {
           auto [r, k, o] = suggestions[1];

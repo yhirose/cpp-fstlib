@@ -1826,14 +1826,15 @@ protected:
       auto output = partial_output + output_suffix;
 
       if (ope.data.final) {
-        if (OutputTraits<output_t>::type() != OutputType::none_t) {
-          if (OutputTraits<output_t>::empty(state_output)) {
-            output += state_output;
-          }
-        }
         if (atm.is_match()) {
           if (prefix.empty() || (prefix.size() == 1 && prefix.front() == arc)) {
-            accept(word, output);
+            auto final_output = output;
+            if (OutputTraits<output_t>::type() != OutputType::none_t) {
+              if (!OutputTraits<output_t>::empty(state_output)) {
+                final_output += state_output;
+              }
+            }
+            accept(word, final_output);
           }
         }
       }
