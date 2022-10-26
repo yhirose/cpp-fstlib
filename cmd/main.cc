@@ -419,8 +419,8 @@ int main(int argc, char **argv) {
   } else {
     if (ends_with(in_path, ".csv")) {
       format = "csv";
-    } else if (ends_with(in_path, ".csv")) {
-      format = "csv";
+    } else if (ends_with(in_path, ".tsv")) {
+      format = "tsv";
     }
   }
 
