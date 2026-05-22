@@ -1840,10 +1840,8 @@ protected:
         }
       }
 
-      if (!atm.can_match()) { break; }
-
       if (next_address) {
-        if (prefix.empty() || prefix.front() == arc) {
+        if ((prefix.empty() || prefix.front() == arc) && atm.can_match()) {
           depth_first_visit(next_address, word, output, atm, accept,
                             prefix.empty() ? prefix : prefix.substr(1));
         }
