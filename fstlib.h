@@ -90,9 +90,9 @@ inline size_t vb_decode_value_reverse(const char *data, Val &n) {
   n = 0;
   auto cnt = 0u;
   while (p[i] < 128) {
-    n += (p[i--] << (7 * cnt++));
+    n += (static_cast<Val>(p[i--]) << (7 * cnt++));
   }
-  n += (p[i--] - 128) << (7 * cnt);
+  n += (static_cast<Val>(p[i--]) - 128) << (7 * cnt);
   return i * -1;
 }
 
