@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <any>
 #include <cassert>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <iomanip>
@@ -203,8 +204,8 @@ inline std::string char_to_string(char arc) {
 // get_common_prefix_length
 //-----------------------------------------------------------------------------
 
-inline size_t get_common_prefix_length(const std::string &s1,
-                                       const std::string &s2) {
+inline size_t get_common_prefix_length(std::string_view s1,
+                                       std::string_view s2) {
   auto i = 0u;
   while (i < s1.size() && i < s2.size() && s1[i] == s2[i]) {
     i++;
@@ -216,7 +217,7 @@ inline size_t get_common_prefix_length(const std::string &s1,
 // get_prefix_length
 //-----------------------------------------------------------------------------
 
-inline bool get_prefix_length(const std::string &s1, const std::string &s2,
+inline bool get_prefix_length(std::string_view s1, std::string_view s2,
                               size_t &l) {
   l = 0;
   while (l < s1.size() && l < s2.size()) {
@@ -998,7 +999,9 @@ struct FstHeader {
 
   FstHeader(OutputType output_type, bool need_state_output,
             size_t start_address, const std::vector<size_t> &char_index_table)
-      : start_address(static_cast<uint32_t>(start_address)) {
+      : flags{}, start_address(static_cast<uint32_t>(start_address)),
+        need_output{output_type != OutputType::none_t},
+        need_state_output{need_state_output} {
 
     flags.data.output_type = static_cast<uint8_t>(output_type);
     flags.data.need_state_output = need_state_output;
@@ -1019,6 +1022,11 @@ struct FstHeader {
     auto p = byte_code + (byte_code_size - sizeof(uint8_t));
     flags.byte = *p--;
 
+    // For performance
+    need_output = // needed before char_index_size()
+        static_cast<OutputType>(flags.data.output_type) != OutputType::none_t;
+    need_state_output = flags.data.need_state_output;
+
     remaining -= sizeof(uint8_t);
     if (remaining < sizeof(uint32_t)) { return false; }
 
@@ -1030,11 +1038,6 @@ struct FstHeader {
     if (remaining < size) { return false; }
 
     memcpy(char_index, p - (size - 1), size);
-
-    // For performance
-    need_output =
-        static_cast<OutputType>(flags.data.output_type) != OutputType::none_t;
-    need_state_output = flags.data.need_state_output;
     return true;
   }
 
@@ -1083,10 +1086,12 @@ public:
     if (!dump_) { header.write(os_); }
 
     if (verbose_) {
+      const size_t char_index_size  = FstOpe::char_index_size(need_output_, need_state_output);
+      const size_t total_size = address_ + char_index_size + sizeof(uint32_t) + sizeof(uint8_t);
       std::cerr << "# unique char count: " << char_count_.size() << std::endl;
       std::cerr << "# state count: " << record_index_map_.size() << std::endl;
       std::cerr << "# record count: " << address_table_.size() << std::endl;
-      std::cerr << "# total size: " << address_ + sizeof(header) << std::endl;
+      std::cerr << "# total size: " << total_size << std::endl;
     }
   }
 
@@ -1495,12 +1500,12 @@ inline double cost_replace(std::string_view from, size_t i, std::string_view to,
 }
 
 inline double cost_insert(std::string_view to, size_t j) {
-  if (to[j] == to[j + 1]) return 0.5;
+  if (j + 1 < to.size() && to[j] == to[j + 1]) return 0.5;
   return 1.0;
 }
 
 inline double cost_delete(std::string_view from, size_t i) {
-  if (from[i] == from[i + 1]) return 0.5;
+  if (i + 1 < from.size() && from[i] == from[i + 1]) return 0.5;
   return 1.0;
 }
 
@@ -1537,10 +1542,10 @@ inline bool common_string(std::string_view s1, std::string_view s2,
 
   for (size_t i = 0; i < s1.length(); i++) {
     auto beg = std::max<int>(0, (int)i - (int)r);
-    auto end = std::min(s2.length(), (i + r));
+    auto end = std::min(s2.length(), (i + r + 1));
 
     auto c1 = s1[i];
-    for (size_t j = beg; j <= end; j++) {
+    for (size_t j = beg; j < end; j++) {
       if (c1 == s2[j]) {
         cs += c1;
         break;
