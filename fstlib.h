@@ -989,7 +989,8 @@ struct FstHeader {
       unsigned output_type : 3;
       unsigned need_state_output : 1;
       unsigned jump_table_labels : 1; // jump tables carry a label array
-      unsigned reserved : 3;
+      unsigned hub_table : 1; // hub state addresses are stored in a table
+      unsigned reserved : 2;
     } data;
 
     uint8_t byte;
@@ -998,20 +999,26 @@ struct FstHeader {
   uint32_t start_address = 0;
   char char_index[32] = {0};
 
+  uint32_t hub_count = 0;
+  const char *hub_table = nullptr;
+
   bool need_output = false;
   bool need_state_output = false;
 
   FstHeader() = default;
 
   FstHeader(OutputType output_type, bool need_state_output,
-            size_t start_address, const std::vector<size_t> &char_index_table)
+            size_t start_address, const std::vector<size_t> &char_index_table,
+            size_t hub_count = 0)
       : flags{}, start_address(static_cast<uint32_t>(start_address)),
+        hub_count(static_cast<uint32_t>(hub_count)),
         need_output{output_type != OutputType::none_t},
         need_state_output{need_state_output} {
 
     flags.data.output_type = static_cast<uint8_t>(output_type);
     flags.data.need_state_output = need_state_output;
     flags.data.jump_table_labels = 1;
+    flags.data.hub_table = hub_count > 0;
 
     auto size = char_index_size();
     for (auto ch = 0u; ch < 256; ch++) {
@@ -1035,6 +1042,14 @@ struct FstHeader {
     need_state_output = flags.data.need_state_output;
 
     remaining -= sizeof(uint8_t);
+
+    if (flags.data.hub_table) {
+      if (remaining < sizeof(uint32_t)) { return false; }
+      memcpy(&hub_count, p - (sizeof(uint32_t) - 1), sizeof(hub_count));
+      p -= sizeof(uint32_t);
+      remaining -= sizeof(uint32_t);
+    }
+
     if (remaining < sizeof(uint32_t)) { return false; }
 
     memcpy(&start_address, p - (sizeof(uint32_t) - 1), sizeof(start_address));
@@ -1045,13 +1060,29 @@ struct FstHeader {
     if (remaining < size) { return false; }
 
     memcpy(char_index, p - (size - 1), size);
+    p -= size;
+    remaining -= size;
+
+    if (flags.data.hub_table) {
+      if (remaining < hub_count * sizeof(uint32_t)) { return false; }
+      hub_table = p - (hub_count * sizeof(uint32_t) - 1);
+    }
     return true;
   }
 
   void write(std::ostream &os) {
     os.write(char_index, char_index_size());
     os.write(reinterpret_cast<char *>(&start_address), sizeof(start_address));
+    if (flags.data.hub_table) {
+      os.write(reinterpret_cast<char *>(&hub_count), sizeof(hub_count));
+    }
     os.write(reinterpret_cast<char *>(&flags.byte), sizeof(flags.byte));
+  }
+
+  uint32_t hub_address(size_t index) const {
+    uint32_t address;
+    memcpy(&address, hub_table + index * sizeof(uint32_t), sizeof(address));
+    return address;
   }
 
   size_t char_index_size() const {
@@ -1059,14 +1090,37 @@ struct FstHeader {
   }
 };
 
+// First-pass writer which only collects how many times each state is
+// referenced as a transition target. The counts allow the second pass to
+// place the most referenced states (hubs) in an address table, so that
+// references to them are encoded as short table indexes instead of long
+// deltas.
+template <typename output_t> class FstRefCounter {
+public:
+  void write(const State<output_t> &state, char prev_arc) {
+    if (!state.transitions.empty()) {
+      states_with_transitions.insert(state.id);
+    }
+    for (const auto &t : state.transitions.states_and_outputs) {
+      ref_counts[t.id]++;
+    }
+  }
+
+  std::unordered_map<size_t, size_t> ref_counts;
+  std::unordered_set<size_t> states_with_transitions;
+};
+
 template <typename output_t, bool need_state_output> class FstWriter {
 public:
   template <typename Input>
   FstWriter(std::ostream &os, bool need_output, bool dump, bool verbose,
-            const Input &input)
+            const Input &input,
+            const FstRefCounter<output_t> *ref_counter = nullptr)
       : os_(os), need_output_(need_output), dump_(dump), verbose_(verbose) {
 
     initialize_char_index_table(input);
+
+    if (ref_counter && !dump_) { initialize_hub_ranks(*ref_counter); }
 
     if (dump_) {
       os << "Address\tArc\tN F L\tNxtAddr";
@@ -1087,14 +1141,25 @@ public:
     auto output_type =
         need_output_ ? OutputTraits<output_t>::type() : OutputType::none_t;
 
+    if (!dump_) {
+      for (auto id : hub_ids_) {
+        auto address =
+            static_cast<uint32_t>(address_table_[record_index_map_[id]]);
+        os_.write(reinterpret_cast<char *>(&address), sizeof(address));
+      }
+    }
+
     FstHeader header(output_type, need_state_output, start_byte_adress,
-                     char_index_table_);
+                     char_index_table_, hub_ids_.size());
 
     if (!dump_) { header.write(os_); }
 
     if (verbose_) {
       const size_t char_index_size  = FstOpe::char_index_size(need_output_, need_state_output);
-      const size_t total_size = address_ + char_index_size + sizeof(uint32_t) + sizeof(uint8_t);
+      const size_t hub_table_size =
+          hub_ids_.empty() ? 0
+                           : (hub_ids_.size() + 1) * sizeof(uint32_t);
+      const size_t total_size = address_ + hub_table_size + char_index_size + sizeof(uint32_t) + sizeof(uint8_t);
       std::cerr << "# unique char count: " << char_count_.size() << std::endl;
       std::cerr << "# state count: " << record_index_map_.size() << std::endl;
       std::cerr << "# record count: " << address_table_.size() << std::endl;
@@ -1155,8 +1220,23 @@ public:
       auto next_address = 0u;
       if (!no_address) {
         if (has_address) {
-          rec.delta = address_ - address_table_[recored_index_iter->second];
-          next_address = address_ - rec.delta;
+          auto delta = address_ - address_table_[recored_index_iter->second];
+          next_address = address_ - delta;
+          rec.delta = delta;
+
+          if (!hub_ids_.empty()) {
+            // Real deltas are doubled; references to hub states are encoded
+            // as (rank * 2 + 1) when that is not longer than the delta.
+            rec.delta = delta * 2;
+            auto hub_iter = hub_rank_.find(t.id);
+            if (hub_iter != hub_rank_.end()) {
+              auto index_value = hub_iter->second * 2 + 1;
+              if (vb_encode_value_length(index_value) <=
+                  vb_encode_value_length(rec.delta)) {
+                rec.delta = index_value;
+              }
+            }
+          }
         }
       }
 
@@ -1326,6 +1406,30 @@ private:
     os_.write((char *)table.data(), table.size() * sizeof(T));
   }
 
+  void initialize_hub_ranks(const FstRefCounter<output_t> &ref_counter) {
+    std::vector<std::pair<size_t, size_t>> candidates; // (count, id)
+    for (const auto &[id, count] : ref_counter.ref_counts) {
+      if (count >= 2 &&
+          ref_counter.states_with_transitions.count(id) > 0) {
+        candidates.emplace_back(count, id);
+      }
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const auto &a, const auto &b) {
+                return a.first == b.first ? a.second < b.second
+                                          : a.first > b.first;
+              });
+
+    if (candidates.size() > kMaxHubCount) { candidates.resize(kMaxHubCount); }
+
+    hub_ids_.reserve(candidates.size());
+    for (auto i = 0u; i < candidates.size(); i++) {
+      hub_rank_[candidates[i].second] = i;
+      hub_ids_.push_back(candidates[i].second);
+    }
+  }
+
   std::ostream &os_;
   size_t need_output_ = true;
   size_t dump_ = true;
@@ -1343,17 +1447,31 @@ private:
 
   size_t address_ = 0;
   std::vector<size_t> address_table_;
+
+  static constexpr size_t kMaxHubCount = 1024;
+  std::unordered_map<size_t, size_t> hub_rank_;
+  std::vector<size_t> hub_ids_;
 };
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                          bool sorted, bool verbose = false) {
+  // First pass: count how many times each state is referenced, so that the
+  // second pass can place the most referenced states in the hub table.
+  FstRefCounter<output_t> ref_counter;
+  auto [result, error_input_index] =
+      build_fst<output_t>(input, ref_counter, true, sorted);
+  if (result != Result::Success) {
+    return std::pair(result, error_input_index);
+  }
+
   FstWriter<output_t, true> writer(os, true, false, verbose,
                                    [&](const auto &feeder) {
                                      for (const auto &[word, _] : input) {
                                        feeder(word);
                                      }
-                                   });
+                                   },
+                                   &ref_counter);
   return build_fst<output_t>(input, writer, true, sorted);
 }
 
@@ -1361,12 +1479,20 @@ template <typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                          bool need_output, bool sorted,
                                          bool verbose = false) {
+  FstRefCounter<uint32_t> ref_counter;
+  auto [result, error_input_index] =
+      build_fst(input, ref_counter, need_output, sorted);
+  if (result != Result::Success) {
+    return std::pair(result, error_input_index);
+  }
+
   FstWriter<uint32_t, false> writer(os, need_output, false, verbose,
                                     [&](const auto &feeder) {
                                       for (const auto &word : input) {
                                         feeder(word);
                                       }
-                                    });
+                                    },
+                                    &ref_counter);
   return build_fst(input, writer, need_output, sorted);
 }
 
@@ -1742,7 +1868,21 @@ protected:
       }
 
       auto delta = 0u;
-      if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
+      auto hub_next_address = 0u;
+      auto has_hub_next_address = false;
+      if (!ope.data.no_address) {
+        p -= vb_decode_value_reverse(p, delta);
+        if (header_.flags.data.hub_table) {
+          if (delta & 1) {
+            // Odd values are hub table indexes.
+            hub_next_address = header_.hub_address(delta >> 1);
+            has_hub_next_address = true;
+            delta = 0;
+          } else {
+            delta >>= 1;
+          }
+        }
+      }
 
       auto output_suffix = output_t{};
       if (ope.data.has_output) {
@@ -1759,7 +1899,11 @@ protected:
 
       auto next_address = 0u;
       if (!ope.data.no_address) {
-        if (delta) { next_address = address - byte_size - delta + 1; }
+        if (has_hub_next_address) {
+          next_address = hub_next_address;
+        } else if (delta) {
+          next_address = address - byte_size - delta + 1;
+        }
       } else {
         next_address = address - byte_size;
       }
@@ -1871,7 +2015,21 @@ protected:
       }
 
       auto delta = 0u;
-      if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
+      auto hub_next_address = 0u;
+      auto has_hub_next_address = false;
+      if (!ope.data.no_address) {
+        p -= vb_decode_value_reverse(p, delta);
+        if (header_.flags.data.hub_table) {
+          if (delta & 1) {
+            // Odd values are hub table indexes.
+            hub_next_address = header_.hub_address(delta >> 1);
+            has_hub_next_address = true;
+            delta = 0;
+          } else {
+            delta >>= 1;
+          }
+        }
+      }
 
       auto output_suffix = output_t{};
       if (ope.data.has_output) {
@@ -1888,7 +2046,11 @@ protected:
 
       auto next_address = 0u;
       if (!ope.data.no_address) {
-        if (delta) { next_address = address - byte_size - delta + 1; }
+        if (has_hub_next_address) {
+          next_address = hub_next_address;
+        } else if (delta) {
+          next_address = address - byte_size - delta + 1;
+        }
       } else {
         next_address = address - byte_size;
       }
