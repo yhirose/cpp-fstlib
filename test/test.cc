@@ -469,6 +469,22 @@ TEST(SetTest, Japanese_Set_test) {
   }
 }
 
+TEST(SetTest, Contains_Gravenzande) {
+  const vector<string_view> input = {
+      {"'s-Gravenpolder"}, {"'s-Gravenvoeren"}, {"'s-Gravenweg"},
+      {"'s-Gravenwezel"}, {"'s-Gravenzande"},  {"'s-Gravenzander"},
+  };
+
+  make_set(input, true, [](const auto &set) {
+    EXPECT_TRUE(set.contains("'s-Gravenzande"));
+    EXPECT_TRUE(set.contains("'s-Gravenzander"));
+    EXPECT_TRUE(set.contains("'s-Gravenpolder"));
+    EXPECT_TRUE(set.contains("'s-Gravenvoeren"));
+    EXPECT_TRUE(set.contains("'s-Gravenweg"));
+    EXPECT_TRUE(set.contains("'s-Gravenwezel"));
+  });
+}
+
 TEST(DecompileTest, Decompile_map) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
