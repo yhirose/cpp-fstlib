@@ -936,12 +936,16 @@ template <typename output_t, bool need_state_output> struct FstRecord {
   char label = 0;
   size_t delta = 0;
   bool need_output = false;
+  bool omit_label = false; // label is stored in the state's jump table
   const output_t *output = nullptr;
   const output_t *state_output = nullptr;
 
   size_t byte_size() const {
     auto sz = 1u;
-    if (ope.label_index(need_output, need_state_output) == 0) { sz += 1; }
+    if (!omit_label &&
+        ope.label_index(need_output, need_state_output) == 0) {
+      sz += 1;
+    }
     if (!ope.data.no_address) { sz += vb_encode_value_length(delta); }
     if (need_output) {
       if (ope.data.has_output) {
@@ -971,7 +975,8 @@ template <typename output_t, bool need_state_output> struct FstRecord {
       OutputTraits<uint32_t>::write_byte_value(os,
                                                static_cast<uint32_t>(delta));
     }
-    if (ope.label_index(need_output, need_state_output) == 0) {
+    if (!omit_label &&
+        ope.label_index(need_output, need_state_output) == 0) {
       os.write(&label, 1);
     }
     os.write(reinterpret_cast<const char *>(&ope.byte), sizeof(ope.byte));
@@ -983,7 +988,8 @@ struct FstHeader {
     struct {
       unsigned output_type : 3;
       unsigned need_state_output : 1;
-      unsigned reserved : 4;
+      unsigned jump_table_labels : 1; // jump tables carry a label array
+      unsigned reserved : 3;
     } data;
 
     uint8_t byte;
@@ -1005,6 +1011,7 @@ struct FstHeader {
 
     flags.data.output_type = static_cast<uint8_t>(output_type);
     flags.data.need_state_output = need_state_output;
+    flags.data.jump_table_labels = 1;
 
     auto size = char_index_size();
     for (auto ch = 0u; ch < 256; ch++) {
@@ -1103,6 +1110,7 @@ public:
         FstOpe::char_index_size(need_output_, need_state_output);
 
     std::vector<size_t> jump_table(transition_count);
+    std::vector<char> jump_table_labels(transition_count);
     auto need_jump_table = transition_count >= 8;
 
     size_t indexes_sorted_by_bigram_count[256];
@@ -1168,20 +1176,29 @@ public:
         }
       }
 
-      auto label_index = 0u;
-      auto index = char_index_table_[static_cast<uint8_t>(arc)];
-      if (index < char_index_size) {
-        label_index = index;
-      } else {
-        rec.label = arc;
-      }
-      rec.ope.set_label_index(need_output_, need_state_output, label_index);
-
-      // When the ope byte happens to be the same as jump tag byte, change to
-      // use '.label' field instead.
-      if (rec.ope.has_jump_table()) {
-        rec.label = arc;
+      if (need_jump_table) {
+        // The label is stored in the state's jump table instead of the
+        // record itself. label_index 0 also keeps the ope byte away from
+        // the jump table tag values (0xff/0xfe).
+        rec.omit_label = true;
         rec.ope.set_label_index(need_output_, need_state_output, 0);
+        jump_table_labels[i] = arc;
+      } else {
+        auto label_index = 0u;
+        auto index = char_index_table_[static_cast<uint8_t>(arc)];
+        if (index < char_index_size) {
+          label_index = index;
+        } else {
+          rec.label = arc;
+        }
+        rec.ope.set_label_index(need_output_, need_state_output, label_index);
+
+        // When the ope byte happens to be the same as jump tag byte, change to
+        // use '.label' field instead.
+        if (rec.ope.has_jump_table()) {
+          rec.label = arc;
+          rec.ope.set_label_index(need_output_, need_state_output, 0);
+        }
       }
 
       auto byte_size = rec.byte_size();
@@ -1204,7 +1221,8 @@ public:
 
           auto jump_table_byte_size =
               1 + vb_encode_value_length(jump_table.size()) +
-              jump_table.size() * jump_table_element_size;
+              jump_table.size() * jump_table_element_size +
+              jump_table_labels.size();
 
           auto need_two_bytes = jump_table_element_size == 2;
 
@@ -1213,6 +1231,8 @@ public:
           byte_size += jump_table_byte_size;
           address_table_[address_table_.size() - 1] += jump_table_byte_size;
           address_ += jump_table_byte_size;
+
+          os_.write(jump_table_labels.data(), jump_table_labels.size());
 
           if (need_two_bytes) {
             write_jump_table<uint16_t>(os_, jump_table);
@@ -1643,6 +1663,7 @@ protected:
 
     auto address = header_.start_address;
     auto i = 0u;
+    auto arc_in_jump_table = false;
     while (i < len) {
       auto ch = static_cast<uint8_t>(str[i]);
       auto state_output = output_t{};
@@ -1660,6 +1681,30 @@ protected:
         p -= jump_table_count * jump_table_element_size;
 
         auto jump_table = p;
+
+        if (header_.flags.data.jump_table_labels) {
+          // The labels are stored contiguously next to the jump table, so
+          // the binary search only touches sequential memory.
+          auto labels = reinterpret_cast<const uint8_t *>(p) + 1 -
+                        jump_table_count;
+
+          auto jump_table_byte_size =
+              1 + vb_len + jump_table_count * jump_table_element_size +
+              jump_table_count;
+
+          auto found = lower_bound_index(
+              0, jump_table_count, [&](auto i) { return labels[i] < ch; });
+
+          if (found < jump_table_count && labels[found] == ch) {
+            auto offset =
+                lookup_jump_table(jump_table, found, jump_table_element_size);
+            address -= offset + jump_table_byte_size;
+            arc_in_jump_table = true;
+          } else {
+            break;
+          }
+          continue;
+        }
 
         auto jump_table_byte_size =
             1 + vb_len + jump_table_count * jump_table_element_size;
@@ -1686,7 +1731,15 @@ protected:
         continue;
       }
 
-      uint8_t arc = read_arc(ope, p);
+      uint8_t arc;
+      if (arc_in_jump_table) {
+        // The record was reached through a jump table hit, so its label is
+        // already verified and the record itself carries no label byte.
+        arc = ch;
+        arc_in_jump_table = false;
+      } else {
+        arc = read_arc(ope, p);
+      }
 
       auto delta = 0u;
       if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
@@ -1780,6 +1833,9 @@ protected:
                          U accept,
                          std::string_view prefix = std::string_view()) const {
 
+    const char *jump_table_labels = nullptr;
+    size_t jump_table_label_index = 0;
+
     while (true) {
       auto state_output = output_t{};
 
@@ -1795,11 +1851,24 @@ protected:
         p -= vb_len;
         p -= jump_table_count * jump_table_element_size;
 
+        if (header_.flags.data.jump_table_labels) {
+          // The records of this state carry no label bytes; remember the
+          // label array and read the labels from it while iterating.
+          jump_table_labels = p + 1 - jump_table_count;
+          jump_table_label_index = 0;
+          p -= jump_table_count;
+        }
+
         address -= std::distance(p, end);
         continue;
       }
 
-      auto arc = read_arc(ope, p);
+      char arc;
+      if (jump_table_labels) {
+        arc = jump_table_labels[jump_table_label_index++];
+      } else {
+        arc = read_arc(ope, p);
+      }
 
       auto delta = 0u;
       if (!ope.data.no_address) { p -= vb_decode_value_reverse(p, delta); }
