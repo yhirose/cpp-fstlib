@@ -1175,8 +1175,12 @@ public:
         FstOpe::char_index_size(need_output_, need_state_output);
 
     std::vector<size_t> jump_table(transition_count);
-    std::vector<char> jump_table_labels(transition_count);
     auto need_jump_table = transition_count >= 8;
+
+    // Only states with a jump table carry a label array; avoid the
+    // allocation for the small states that make up the majority.
+    std::vector<char> jump_table_labels;
+    if (need_jump_table) { jump_table_labels.resize(transition_count); }
 
     size_t indexes_sorted_by_bigram_count[256];
 
@@ -1867,22 +1871,9 @@ protected:
         arc = read_arc(ope, p);
       }
 
-      auto delta = 0u;
-      auto hub_next_address = 0u;
-      auto has_hub_next_address = false;
-      if (!ope.data.no_address) {
-        p -= vb_decode_value_reverse(p, delta);
-        if (header_.flags.data.hub_table) {
-          if (delta & 1) {
-            // Odd values are hub table indexes.
-            hub_next_address = header_.hub_address(delta >> 1);
-            has_hub_next_address = true;
-            delta = 0;
-          } else {
-            delta >>= 1;
-          }
-        }
-      }
+      uint32_t delta, hub_next_address;
+      bool has_hub_next_address;
+      read_delta(ope, p, delta, hub_next_address, has_hub_next_address);
 
       auto output_suffix = output_t{};
       if (ope.data.has_output) {
@@ -2014,22 +2005,9 @@ protected:
         arc = read_arc(ope, p);
       }
 
-      auto delta = 0u;
-      auto hub_next_address = 0u;
-      auto has_hub_next_address = false;
-      if (!ope.data.no_address) {
-        p -= vb_decode_value_reverse(p, delta);
-        if (header_.flags.data.hub_table) {
-          if (delta & 1) {
-            // Odd values are hub table indexes.
-            hub_next_address = header_.hub_address(delta >> 1);
-            has_hub_next_address = true;
-            delta = 0;
-          } else {
-            delta >>= 1;
-          }
-        }
-      }
+      uint32_t delta, hub_next_address;
+      bool has_hub_next_address;
+      read_delta(ope, p, delta, hub_next_address, has_hub_next_address);
 
       auto output_suffix = output_t{};
       if (ope.data.has_output) {
@@ -2092,6 +2070,27 @@ protected:
     auto index =
         ope.label_index(header_.need_output, header_.need_state_output);
     return index == 0 ? *p-- : header_.char_index[index];
+  }
+
+  void read_delta(FstOpe ope, const char *&p, uint32_t &delta,
+                  uint32_t &hub_next_address,
+                  bool &has_hub_next_address) const {
+    delta = 0;
+    hub_next_address = 0;
+    has_hub_next_address = false;
+    if (!ope.data.no_address) {
+      p -= vb_decode_value_reverse(p, delta);
+      if (header_.flags.data.hub_table) {
+        if (delta & 1) {
+          // Odd values are hub table indexes.
+          hub_next_address = header_.hub_address(delta >> 1);
+          has_hub_next_address = true;
+          delta = 0;
+        } else {
+          delta >>= 1;
+        }
+      }
+    }
   }
 
   size_t lookup_jump_table(const char *p, size_t index,
