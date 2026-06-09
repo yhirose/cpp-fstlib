@@ -387,6 +387,25 @@ TEST(MapTest, Single_output_value_test) {
   });
 }
 
+#ifdef USE_UINT64_OUTPUT_T
+TEST(MapTest, Large_output_value_round_trip) {
+  // Regression test for #15 (variable byte reverse decode). An output value
+  // that needs more than four 7-bit groups (> ~2^28) overflows if each byte is
+  // shifted as a plain int instead of being widened to the output type first.
+  vector<pair<string, output_t>> input = {
+      {"a", V(5)},
+      {"big", 0x1234567890ABCull},
+      {"z", V(7)},
+  };
+
+  make_map(input, true, [](auto &map) {
+    EXPECT_EQ(0x1234567890ABCull, map["big"]);
+    EXPECT_EQ(V(5), map["a"]);
+    EXPECT_EQ(V(7), map["z"]);
+  });
+}
+#endif
+
 TEST(MapTest, Auto_Index_Dictionary) {
   vector<string> input = {"a", "and", "android"};
 
@@ -692,6 +711,21 @@ TEST(EditDistanceTest, Japanese_edit_distance_search) {
     EXPECT_EQ(u8"一二", ret[1]);
     EXPECT_EQ(u8"一二三", ret[2]);
   }
+}
+
+TEST(EditDistanceTest, Visits_sibling_arc_after_dead_end) {
+  // Regression test for #15 (depth first visit problem). "rangy" and "rani"
+  // share the prefix "ran"; the arc 'g' (rangy) is laid out before the arc 'i'
+  // (rani). For the query "ani", stepping 'g' drives the Levenshtein automaton
+  // to a dead end, but "rani" is still a 1-edit match. depth_first_visit must
+  // keep scanning the remaining sibling arcs instead of breaking out entirely.
+  const vector<string> input = {"rangy", "rani"};
+
+  make_set(input, true, [](const auto &set) {
+    auto ret = set.edit_distance_search("ani", 1);
+    EXPECT_EQ(1, ret.size());
+    EXPECT_EQ("rani", ret[0]);
+  });
 }
 
 TEST(SpellcheckTest, Spellcheck_set) {

@@ -47,3 +47,37 @@ jobs:
       # Execute tests defined by the CMake configuration.
       # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
       run: ctest -C $BUILD_TYPE
+
+  hardened:
+    # Build with the standard library's hardening assertions enabled so that
+    # out-of-bounds std::string_view accesses (e.g. the fuzzy search bounds
+    # bugs fixed in #16) are turned into hard test failures instead of silently
+    # reading past the end of the buffer in a Release build.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Create Build Environment
+      run: cmake -E make_directory ${{runner.workspace}}/build
+
+    - name: Configure CMake
+      shell: bash
+      working-directory: ${{runner.workspace}}/build
+      # _GLIBCXX_ASSERTIONS hardens libstdc++ (Linux); _LIBCPP_HARDENING_MODE
+      # hardens libc++ (macOS). Each macro is ignored by the other standard
+      # library, so the same flags work on both runners.
+      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-D_GLIBCXX_ASSERTIONS -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG"
+
+    - name: Build
+      working-directory: ${{runner.workspace}}/build
+      shell: bash
+      run: cmake --build . --config Debug
+
+    - name: Test
+      working-directory: ${{runner.workspace}}/build
+      shell: bash
+      run: ctest -C Debug --output-on-failure
