@@ -231,6 +231,19 @@ inline bool get_prefix_length(std::string_view s1, std::string_view s2,
 }
 
 //-----------------------------------------------------------------------------
+// hash_bytes (FNV-1a)
+//-----------------------------------------------------------------------------
+
+inline void hash_bytes(uint64_t &h, const void *data, size_t len) {
+  auto p = static_cast<const uint8_t *>(data);
+  for (size_t i = 0; i < len; i++) {
+    h = (h ^ p[i]) * 0x100000001b3ULL;
+  }
+}
+
+constexpr uint64_t kFnvBasis = 0xcbf29ce484222325ULL;
+
+//-----------------------------------------------------------------------------
 // OutputTraits
 //-----------------------------------------------------------------------------
 
@@ -248,6 +261,8 @@ template <> struct OutputTraits<none_t> {
   static bool empty(value_type val) { return val == 0; }
 
   static value_type init_value() { return 0; }
+
+  static void hash_value(uint64_t &h, value_type val) {}
 
   static size_t read_byte_value(const char *p, value_type &val) { return 0; }
 };
@@ -275,6 +290,10 @@ template <> struct OutputTraits<uint32_t> {
     auto p = reinterpret_cast<const char *>(&val);
     buff.insert(buff.begin(), p, p + sizeof(val));
     return sizeof(val);
+  }
+
+  static void hash_value(uint64_t &h, value_type val) {
+    hash_bytes(h, &val, sizeof(val));
   }
 
   static size_t get_byte_value_size(value_type val) {
@@ -313,6 +332,10 @@ template <> struct OutputTraits<uint64_t> {
     auto p = reinterpret_cast<const char *>(&val);
     buff.insert(buff.begin(), p, p + sizeof(val));
     return sizeof(val);
+  }
+
+  static void hash_value(uint64_t &h, value_type val) {
+    hash_bytes(h, &val, sizeof(val));
   }
 
   static size_t get_byte_value_size(value_type val) {
@@ -355,6 +378,10 @@ template <> struct OutputTraits<std::string> {
   template <typename T> static size_t write_value(T &buff, value_type val) {
     buff.insert(buff.begin(), val.data(), val.data() + val.size());
     return val.size();
+  }
+
+  static void hash_value(uint64_t &h, const value_type &val) {
+    hash_bytes(h, val.data(), val.size());
   }
 
   static size_t get_byte_value_size(const value_type &val) {
@@ -517,25 +544,28 @@ private:
 };
 
 template <typename output_t> inline uint64_t State<output_t>::hash() const {
-  std::vector<char> buff;
+  auto h = kFnvBasis;
 
   transitions.for_each([&](char arc, const State::Transition &t) {
-    buff.push_back(arc);
+    hash_bytes(h, &arc, sizeof(arc));
 
     auto val = static_cast<uint32_t>(t.id);
-    auto p = reinterpret_cast<const char *>(&val);
-    buff.insert(buff.begin(), p, p + sizeof(val));
+    hash_bytes(h, &val, sizeof(val));
 
     if (!OutputTraits<output_t>::empty(t.output)) {
-      OutputTraits<output_t>::write_value(buff, t.output);
+      OutputTraits<output_t>::hash_value(h, t.output);
     }
   });
 
   if (final && !OutputTraits<output_t>::empty(state_output)) {
-    OutputTraits<output_t>::write_value(buff, state_output);
+    OutputTraits<output_t>::hash_value(h, state_output);
   }
 
-  return MurmurHash64B(buff.data(), buff.size(), 0);
+  // Final mixing improves the bucket distribution in the dictionary.
+  h ^= h >> 33;
+  h *= 0xff51afd7ed558ccdULL;
+  h ^= h >> 33;
+  return h;
 }
 
 //-----------------------------------------------------------------------------
@@ -551,18 +581,24 @@ public:
   }
 
   State<output_t> *New(size_t state_id = -1) {
+    if (!free_list_.empty()) {
+      auto p = free_list_.back();
+      free_list_.pop_back();
+      p->reuse(state_id);
+      return p;
+    }
     auto p = new State<output_t>(state_id);
-    object_pool_.insert(p);
+    object_pool_.push_back(p);
     return p;
   }
 
-  void Delete(State<output_t> *p) {
-    object_pool_.erase(p);
-    delete p;
-  }
+  // Recycled states keep their transition vector capacities, which saves
+  // a large number of allocations during the build.
+  void Delete(State<output_t> *p) { free_list_.push_back(p); }
 
 private:
-  std::unordered_set<State<output_t> *> object_pool_;
+  std::vector<State<output_t> *> object_pool_;
+  std::vector<State<output_t> *> free_list_;
 };
 
 //-----------------------------------------------------------------------------
@@ -576,14 +612,17 @@ public:
   State<output_t> *get(uint64_t key, State<output_t> *state) {
     auto id = bucket_id(key);
     auto [first, second, third] = buckets_[id];
-    if (first && *first == *state) { return first; }
-    if (second && *second == *state) {
-      buckets_[id] = std::tuple(second, first, third);
-      return second;
+    // Compare the hash keys first to avoid expensive state comparisons.
+    if (first.second && first.first == key && *first.second == *state) {
+      return first.second;
     }
-    if (third && *third == *state) {
+    if (second.second && second.first == key && *second.second == *state) {
+      buckets_[id] = std::tuple(second, first, third);
+      return second.second;
+    }
+    if (third.second && third.first == key && *third.second == *state) {
       buckets_[id] = std::tuple(third, first, second);
-      return third;
+      return third.second;
     }
     return nullptr;
   }
@@ -591,8 +630,8 @@ public:
   void put(uint64_t key, State<output_t> *state) {
     auto id = bucket_id(key);
     auto [first, second, third] = buckets_[id];
-    if (third) { state_pool_.Delete(third); }
-    buckets_[id] = std::tuple(state, first, second);
+    if (third.second) { state_pool_.Delete(third.second); }
+    buckets_[id] = std::tuple(Entry{key, state}, first, second);
   }
 
 private:
@@ -602,8 +641,10 @@ private:
 
   size_t bucket_id(uint64_t key) const { return key % kBucketCount; }
 
-  std::tuple<State<output_t> *, State<output_t> *, State<output_t> *>
-      buckets_[kBucketCount] = {{nullptr, nullptr, nullptr}};
+  using Entry = std::pair<uint64_t, State<output_t> *>;
+
+  std::tuple<Entry, Entry, Entry> buckets_[kBucketCount] = {
+      {{0, nullptr}, {0, nullptr}, {0, nullptr}}};
 };
 
 //-----------------------------------------------------------------------------
@@ -1160,7 +1201,10 @@ public:
           hub_ids_.empty() ? 0
                            : (hub_ids_.size() + 1) * sizeof(uint32_t);
       const size_t total_size = address_ + hub_table_size + char_index_size + sizeof(uint32_t) + sizeof(uint8_t);
-      std::cerr << "# unique char count: " << char_count_.size() << std::endl;
+      const auto unique_char_count =
+          std::count_if(std::begin(char_count_), std::end(char_count_),
+                        [](auto count) { return count > 0; });
+      std::cerr << "# unique char count: " << unique_char_count << std::endl;
       std::cerr << "# state count: " << record_index_map_.size() << std::endl;
       std::cerr << "# record count: " << address_table_.size() << std::endl;
       std::cerr << "# total size: " << total_size << std::endl;
@@ -1371,7 +1415,7 @@ private:
     input([&](const auto &word) {
       char prev = 0;
       for (auto ch : word) {
-        char_count_[ch]++;
+        char_count_[static_cast<uint8_t>(ch)]++;
         bigram_count_[bigram_key(prev, ch)]++;
         prev = ch;
       }
@@ -1388,8 +1432,10 @@ private:
                         std::vector<std::pair<char, size_t>>, second_order>
         que;
 
-    for (auto x : char_count_) {
-      que.push(x);
+    for (auto ch = 0u; ch < 256; ch++) {
+      if (char_count_[ch] > 0) {
+        que.push(std::pair(static_cast<char>(ch), char_count_[ch]));
+      }
     }
 
     auto index = 1u;
@@ -1439,13 +1485,13 @@ private:
   size_t dump_ = true;
   size_t verbose_ = true;
 
-  std::unordered_map<char, size_t> char_count_;
+  size_t char_count_[256] = {0};
   std::vector<size_t> char_index_table_;
 
   uint16_t bigram_key(char prev, char cur) const {
     return static_cast<uint16_t>(prev) << 8 | static_cast<uint16_t>(cur);
   }
-  std::unordered_map<uint16_t, size_t> bigram_count_;
+  std::vector<size_t> bigram_count_ = std::vector<size_t>(65536, 0);
 
   std::unordered_map<size_t, size_t> record_index_map_;
 
