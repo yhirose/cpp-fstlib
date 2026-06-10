@@ -459,6 +459,23 @@ public:
       states_and_outputs.clear();
     }
 
+    // The minimization loop always rewires the most recently added arc.
+    void update_last_transition(State<output_t> *state) {
+      auto &t = states_and_outputs.back();
+      t.id = state->id;
+      t.final = state->final;
+      t.state_output = state->state_output;
+    }
+
+    // The tail initialization always adds a new arc.
+    void add_transition(char arc, State<output_t> *state) {
+      arcs.push_back(arc);
+      auto &t = states_and_outputs.emplace_back(Transition());
+      t.id = state->id;
+      t.final = state->final;
+      t.state_output = state->state_output;
+    }
+
     void set_transition(char arc, State<output_t> *state) {
       auto idx = get_index(arc);
       if (idx == -1) {
@@ -510,6 +527,14 @@ public:
 
   void set_transition(char arc, State<output_t> *state) {
     transitions.set_transition(arc, state);
+  }
+
+  void update_last_transition(State<output_t> *state) {
+    transitions.update_last_transition(state);
+  }
+
+  void add_transition(char arc, State<output_t> *state) {
+    transitions.add_transition(arc, state);
   }
 
   void set_output(char arc, const output_t &output) {
@@ -607,9 +632,34 @@ private:
 
 template <typename output_t> class Dictionary {
 public:
-  Dictionary(StatePool<output_t> &state_pool) : state_pool_(state_pool) {}
+  // With 'keep_all', the dictionary keeps every minimized state in a
+  // growable open addressing table, so no duplicate states are created.
+  // Otherwise it works as a fixed size 3-way LRU cache, which bounds the
+  // memory usage but produces duplicate states on eviction.
+  Dictionary(StatePool<output_t> &state_pool, bool keep_all)
+      : state_pool_(state_pool), keep_all_(keep_all) {
+    if (keep_all_) {
+      table_.resize(kInitialTableSize, {0, nullptr});
+    } else {
+      buckets_.resize(kBucketCount,
+                      {{0, nullptr}, {0, nullptr}, {0, nullptr}});
+    }
+  }
 
   State<output_t> *get(uint64_t key, State<output_t> *state) {
+    if (keep_all_) {
+      auto mask = table_.size() - 1;
+      auto i = key & mask;
+      while (table_[i].second) {
+        // Compare the hash keys first to avoid expensive state comparisons.
+        if (table_[i].first == key && *table_[i].second == *state) {
+          return table_[i].second;
+        }
+        i = (i + 1) & mask;
+      }
+      return nullptr;
+    }
+
     auto id = bucket_id(key);
     auto [first, second, third] = buckets_[id];
     // Compare the hash keys first to avoid expensive state comparisons.
@@ -628,6 +678,18 @@ public:
   }
 
   void put(uint64_t key, State<output_t> *state) {
+    if (keep_all_) {
+      if (count_ * 10 >= table_.size() * 7) { grow_table(); }
+      auto mask = table_.size() - 1;
+      auto i = key & mask;
+      while (table_[i].second) {
+        i = (i + 1) & mask;
+      }
+      table_[i] = {key, state};
+      count_++;
+      return;
+    }
+
     auto id = bucket_id(key);
     auto [first, second, third] = buckets_[id];
     if (third.second) { state_pool_.Delete(third.second); }
@@ -636,15 +698,32 @@ public:
 
 private:
   StatePool<output_t> &state_pool_;
+  bool keep_all_;
 
   static const auto kBucketCount = 10000u;
+  static const auto kInitialTableSize = 1u << 16;
 
   size_t bucket_id(uint64_t key) const { return key % kBucketCount; }
 
   using Entry = std::pair<uint64_t, State<output_t> *>;
 
-  std::tuple<Entry, Entry, Entry> buckets_[kBucketCount] = {
-      {{0, nullptr}, {0, nullptr}, {0, nullptr}}};
+  void grow_table() {
+    std::vector<Entry> old_table(table_.size() * 2, {0, nullptr});
+    table_.swap(old_table);
+    auto mask = table_.size() - 1;
+    for (const auto &entry : old_table) {
+      if (!entry.second) { continue; }
+      auto i = entry.first & mask;
+      while (table_[i].second) {
+        i = (i + 1) & mask;
+      }
+      table_[i] = entry;
+    }
+  }
+
+  std::vector<std::tuple<Entry, Entry, Entry>> buckets_;
+  std::vector<Entry> table_;
+  size_t count_ = 0;
 };
 
 //-----------------------------------------------------------------------------
@@ -685,10 +764,11 @@ enum class Result { Success, EmptyKey, UnsortedKey, DuplicateKey };
 
 template <typename output_t, typename Input, typename Writer>
 inline std::pair<Result, size_t>
-build_fst_core(const Input &input, Writer &writer, bool need_output) {
+build_fst_core(const Input &input, Writer &writer, bool need_output,
+               bool keep_all_states = false) {
   StatePool<output_t> state_pool;
 
-  Dictionary<output_t> dictionary(state_pool);
+  Dictionary<output_t> dictionary(state_pool, keep_all_states);
   auto next_state_id = 0u;
   auto error_input_index = 0u;
   auto result = Result::Success;
@@ -741,7 +821,7 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
         temp_states[i] = state_pool.New();
       }
 
-      temp_states[i - 1]->set_transition(arc, state);
+      temp_states[i - 1]->update_last_transition(state);
     }
 
     // This loop initializes the tail states for the current word
@@ -753,7 +833,7 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
         temp_states[i]->reuse(next_state_id++);
       }
       auto arc = current_word[i - 1];
-      temp_states[i - 1]->set_transition(arc, temp_states[i]);
+      temp_states[i - 1]->add_transition(arc, temp_states[i]);
     }
 
     if (current_word != previous_word) {
@@ -810,6 +890,7 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
   }
 
   // Here we are minimizing the states of the last word
+  State<output_t> *root = nullptr;
   for (auto i = static_cast<int>(previous_word.size()); i >= 0; i--) {
     auto [found, state] = find_minimized<output_t>(temp_states[i], dictionary);
 
@@ -821,8 +902,14 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
       writer.write(*state, arc);
     }
 
-    if (i > 0) { temp_states[i - 1]->set_transition(arc, state); }
+    if (i > 0) {
+      temp_states[i - 1]->update_last_transition(state);
+    } else {
+      root = state;
+    }
   }
+
+  writer.finish(*root);
 
   return std::pair(Result::Success, error_input_index);
 }
@@ -833,7 +920,8 @@ build_fst_core(const Input &input, Writer &writer, bool need_output) {
 
 template <typename output_t, typename Input, typename Writer>
 inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
-                                           bool need_output, bool sorted) {
+                                           bool need_output, bool sorted,
+                                           bool keep_all_states = false) {
   return build_fst_core<output_t>(
       [&](const auto &feeder) {
         if (sorted) {
@@ -860,12 +948,13 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
           }
         }
       },
-      writer, need_output);
+      writer, need_output, keep_all_states);
 }
 
 template <typename Input, typename Writer>
 inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
-                                           bool need_output, bool sorted) {
+                                           bool need_output, bool sorted,
+                                           bool keep_all_states = false) {
   return build_fst_core<uint32_t>(
       [&](const auto &feeder) {
         if (sorted) {
@@ -896,7 +985,7 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
           }
         }
       },
-      writer, need_output);
+      writer, need_output, keep_all_states);
 }
 
 //-----------------------------------------------------------------------------
@@ -1131,37 +1220,20 @@ struct FstHeader {
   }
 };
 
-// First-pass writer which only collects how many times each state is
-// referenced as a transition target. The counts allow the second pass to
-// place the most referenced states (hubs) in an address table, so that
-// references to them are encoded as short table indexes instead of long
-// deltas.
-template <typename output_t> class FstRefCounter {
-public:
-  void write(const State<output_t> &state, char prev_arc) {
-    if (!state.transitions.empty()) {
-      states_with_transitions.insert(state.id);
-    }
-    for (const auto &t : state.transitions.states_and_outputs) {
-      ref_counts[t.id]++;
-    }
-  }
-
-  std::unordered_map<size_t, size_t> ref_counts;
-  std::unordered_set<size_t> states_with_transitions;
-};
-
 template <typename output_t, bool need_state_output> class FstWriter {
 public:
+  // With 'single_pass' (which requires building with 'keep_all_states'),
+  // the writer collects the states during the build and emits all records
+  // in finish(), where the most referenced states (hubs) are known and
+  // placed in an address table, so that references to them are encoded as
+  // short table indexes instead of long deltas.
   template <typename Input>
   FstWriter(std::ostream &os, bool need_output, bool dump, bool verbose,
-            const Input &input,
-            const FstRefCounter<output_t> *ref_counter = nullptr)
-      : os_(os), need_output_(need_output), dump_(dump), verbose_(verbose) {
+            const Input &input, bool single_pass = false)
+      : os_(os), need_output_(need_output), dump_(dump), verbose_(verbose),
+        single_pass_(single_pass && !dump) {
 
     initialize_char_index_table(input);
-
-    if (ref_counter && !dump_) { initialize_hub_ranks(*ref_counter); }
 
     if (dump_) {
       os << "Address\tArc\tN F L\tNxtAddr";
@@ -1205,13 +1277,65 @@ public:
           std::count_if(std::begin(char_count_), std::end(char_count_),
                         [](auto count) { return count > 0; });
       std::cerr << "# unique char count: " << unique_char_count << std::endl;
-      std::cerr << "# state count: " << record_index_map_.size() << std::endl;
+      std::cerr << "# state count: " << written_state_count_ << std::endl;
       std::cerr << "# record count: " << address_table_.size() << std::endl;
       std::cerr << "# total size: " << total_size << std::endl;
     }
   }
 
   void write(const State<output_t> &state, char prev_arc) {
+    if (single_pass_) {
+      // Just collect the state; the records are emitted in finish() once
+      // the reference counts are known. The state object stays alive
+      // because the build keeps all states.
+      if (state.id >= states_by_id_.size()) {
+        states_by_id_.resize(state.id + state.id / 2 + 16, nullptr);
+      }
+      states_by_id_[state.id] = &state;
+      return;
+    }
+
+    write_state_records(state, prev_arc);
+  }
+
+  void finish(const State<output_t> &root) {
+    if (!single_pass_) { return; }
+
+    initialize_hub_ranks();
+
+    // Write the records by a post-order traversal, which reproduces the
+    // order of the incremental write: a target state is always written
+    // before the states that reference it.
+    struct Frame {
+      const State<output_t> *state;
+      size_t transition_index;
+      char arc;
+    };
+
+    std::vector<bool> visited(states_by_id_.size(), false);
+    std::vector<Frame> stack;
+
+    visited[root.id] = true;
+    stack.push_back({&root, 0, 0});
+
+    while (!stack.empty()) {
+      auto &frame = stack.back();
+      if (frame.transition_index < frame.state->transitions.size()) {
+        auto i = frame.transition_index++;
+        const auto &t = frame.state->transitions.states_and_outputs[i];
+        auto child = states_by_id_[t.id];
+        if (child && !visited[t.id] && !child->transitions.empty()) {
+          visited[t.id] = true;
+          stack.push_back({child, 0, frame.state->transitions.arcs[i]});
+        }
+      } else {
+        write_state_records(*frame.state, frame.arc);
+        stack.pop_back();
+      }
+    }
+  }
+
+  void write_state_records(const State<output_t> &state, char prev_arc) {
     auto transition_count = state.transitions.size();
     const auto &[arcs, states_and_outputs] = state.transitions;
 
@@ -1249,11 +1373,12 @@ public:
       auto arc = arcs[arc_i];
       const auto &t = states_and_outputs[arc_i];
 
-      auto recored_index_iter = record_index_map_.find(t.id);
-      auto has_address = recored_index_iter != record_index_map_.end();
+      auto record_index = record_index_of(t.id);
+      auto has_address = record_index >= 0;
       auto last_transition = transition_count - 1 == i;
-      auto no_address = last_transition && has_address &&
-                        record_index_map_[t.id] == address_table_.size() - 1;
+      auto no_address =
+          last_transition && has_address &&
+          record_index == static_cast<int64_t>(address_table_.size() - 1);
 
       // If the state has 6 or more transitions, then generate jump table.
       auto generate_jump_table = (i == 0) && need_jump_table;
@@ -1268,7 +1393,7 @@ public:
       auto next_address = 0u;
       if (!no_address) {
         if (has_address) {
-          auto delta = address_ - address_table_[recored_index_iter->second];
+          auto delta = address_ - address_table_[record_index];
           next_address = address_ - delta;
           rec.delta = delta;
 
@@ -1276,9 +1401,9 @@ public:
             // Real deltas are doubled; references to hub states are encoded
             // as (rank * 2 + 1) when that is not longer than the delta.
             rec.delta = delta * 2;
-            auto hub_iter = hub_rank_.find(t.id);
-            if (hub_iter != hub_rank_.end()) {
-              auto index_value = hub_iter->second * 2 + 1;
+            auto hub_rank = hub_rank_of(t.id);
+            if (hub_rank >= 0) {
+              auto index_value = static_cast<size_t>(hub_rank) * 2 + 1;
               if (vb_encode_value_length(index_value) <=
                   vb_encode_value_length(rec.delta)) {
                 rec.delta = index_value;
@@ -1403,7 +1528,12 @@ public:
     }
 
     if (!state.transitions.empty()) {
-      record_index_map_[state.id] = address_table_.size() - 1;
+      if (state.id >= record_index_map_.size()) {
+        record_index_map_.resize(state.id + state.id / 2 + 16, -1);
+      }
+      record_index_map_[state.id] =
+          static_cast<int64_t>(address_table_.size() - 1);
+      written_state_count_++;
     }
   }
 
@@ -1456,12 +1586,20 @@ private:
     os_.write((char *)table.data(), table.size() * sizeof(T));
   }
 
-  void initialize_hub_ranks(const FstRefCounter<output_t> &ref_counter) {
+  void initialize_hub_ranks() {
+    std::vector<uint32_t> ref_counts(states_by_id_.size(), 0);
+    for (auto state : states_by_id_) {
+      if (!state) { continue; }
+      for (const auto &t : state->transitions.states_and_outputs) {
+        ref_counts[t.id]++;
+      }
+    }
+
     std::vector<std::pair<size_t, size_t>> candidates; // (count, id)
-    for (const auto &[id, count] : ref_counter.ref_counts) {
-      if (count >= 2 &&
-          ref_counter.states_with_transitions.count(id) > 0) {
-        candidates.emplace_back(count, id);
+    for (auto id = 0u; id < states_by_id_.size(); id++) {
+      if (ref_counts[id] >= 2 && states_by_id_[id] &&
+          !states_by_id_[id]->transitions.empty()) {
+        candidates.emplace_back(ref_counts[id], id);
       }
     }
 
@@ -1473,11 +1611,20 @@ private:
 
     if (candidates.size() > kMaxHubCount) { candidates.resize(kMaxHubCount); }
 
+    hub_rank_by_id_.assign(states_by_id_.size(), -1);
     hub_ids_.reserve(candidates.size());
     for (auto i = 0u; i < candidates.size(); i++) {
-      hub_rank_[candidates[i].second] = i;
+      hub_rank_by_id_[candidates[i].second] = static_cast<int32_t>(i);
       hub_ids_.push_back(candidates[i].second);
     }
+  }
+
+  int64_t record_index_of(size_t id) const {
+    return id < record_index_map_.size() ? record_index_map_[id] : -1;
+  }
+
+  int32_t hub_rank_of(size_t id) const {
+    return id < hub_rank_by_id_.size() ? hub_rank_by_id_[id] : -1;
   }
 
   std::ostream &os_;
@@ -1493,57 +1640,47 @@ private:
   }
   std::vector<size_t> bigram_count_ = std::vector<size_t>(65536, 0);
 
-  std::unordered_map<size_t, size_t> record_index_map_;
+  std::vector<int64_t> record_index_map_; // by state id, -1 = absent
+  size_t written_state_count_ = 0;
 
   size_t address_ = 0;
   std::vector<size_t> address_table_;
 
   static constexpr size_t kMaxHubCount = 1024;
-  std::unordered_map<size_t, size_t> hub_rank_;
+  std::vector<int32_t> hub_rank_by_id_; // by state id, -1 = not a hub
   std::vector<size_t> hub_ids_;
+
+  bool single_pass_ = false;
+  std::vector<const State<output_t> *> states_by_id_;
 };
 
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                          bool sorted, bool verbose = false) {
-  // First pass: count how many times each state is referenced, so that the
-  // second pass can place the most referenced states in the hub table.
-  FstRefCounter<output_t> ref_counter;
-  auto [result, error_input_index] =
-      build_fst<output_t>(input, ref_counter, true, sorted);
-  if (result != Result::Success) {
-    return std::pair(result, error_input_index);
-  }
-
   FstWriter<output_t, true> writer(os, true, false, verbose,
                                    [&](const auto &feeder) {
                                      for (const auto &[word, _] : input) {
                                        feeder(word);
                                      }
                                    },
-                                   &ref_counter);
-  return build_fst<output_t>(input, writer, true, sorted);
+                                   /*single_pass=*/true);
+  return build_fst<output_t>(input, writer, true, sorted,
+                             /*keep_all_states=*/true);
 }
 
 template <typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                          bool need_output, bool sorted,
                                          bool verbose = false) {
-  FstRefCounter<uint32_t> ref_counter;
-  auto [result, error_input_index] =
-      build_fst(input, ref_counter, need_output, sorted);
-  if (result != Result::Success) {
-    return std::pair(result, error_input_index);
-  }
-
   FstWriter<uint32_t, false> writer(os, need_output, false, verbose,
                                     [&](const auto &feeder) {
                                       for (const auto &word : input) {
                                         feeder(word);
                                       }
                                     },
-                                    &ref_counter);
-  return build_fst(input, writer, need_output, sorted);
+                                    /*single_pass=*/true);
+  return build_fst(input, writer, need_output, sorted,
+                   /*keep_all_states=*/true);
 }
 
 template <typename output_t, typename Input>
@@ -1608,6 +1745,8 @@ public:
           os_ << "\" fontcolor = red ];" << std::endl;
         });
   }
+
+  void finish(const State<output_t> &root) {}
 
 private:
   std::ostream &os_;
