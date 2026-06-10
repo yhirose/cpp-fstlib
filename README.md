@@ -187,6 +187,20 @@ ratio: 0.504132 key: hello world output: こんにちは世界!
 ratio: 0.0962963 key: world output: 世界!
 ```
 
+## Benchmark
+
+Measured with `benchmark/main.cc` on `/usr/share/dict/words` (235,976 keys, Apple M1 Pro, -O3). Build is the time to compile the dictionary, and the search columns are the total time of looking up all 235,976 keys 5 times.
+
+| Library | Structure | Size | Build | Exact match | Common prefix |
+|---|---|---:|---:|---:|---:|
+| [darts-clone](https://github.com/s-yata/darts-clone) | double array | 8,755,880 | 64 ms | 22 ms | 23 ms |
+| [ux-trie](https://github.com/hillbig/ux-trie) | LOUDS | 895,510 | 67 ms | 1,161 ms | 1,041 ms |
+| [marisa-trie](https://github.com/s-yata/marisa-trie) | LOUDS | 743,368 | 69 ms | 305 ms | 313 ms |
+| **cpp-fstlib (map\<uint32_t\>)** | FST | 1,070,382 | 125 ms | 215 ms | 216 ms |
+| **cpp-fstlib (auto index)** | FST | 985,753 | 118 ms | 220 ms | 220 ms |
+
+The `map<uint32_t>` row stores an arbitrary `uint32_t` value per key, while the `auto index` row assigns sequential ids to the sorted keys, which is what the trie libraries above provide.
+
 License
 -------
 
