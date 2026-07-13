@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <any>
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -1950,6 +1951,8 @@ public:
     }
 
     is_valid_ = true;
+
+    build_root_dispatch();
   }
 
   operator bool() const { return is_valid_; }
@@ -1961,10 +1964,14 @@ public:
   }
 
 protected:
-  bool match(
-      const char *str, size_t len,
-      std::function<void(const output_t &)> outputs = nullptr,
-      std::function<void(size_t, const output_t &)> prefixes = nullptr) const {
+  // The callbacks are template parameters (with std::nullptr_t defaults), so
+  // no std::function is constructed per query and the calls are inlined.
+  template <typename OutputsFn = std::nullptr_t,
+            typename PrefixesFn = std::nullptr_t>
+  bool match(const char *str, size_t len, OutputsFn outputs = nullptr,
+             PrefixesFn prefixes = nullptr) const {
+    constexpr auto has_outputs = !std::is_null_pointer_v<OutputsFn>;
+    constexpr auto has_prefixes = !std::is_null_pointer_v<PrefixesFn>;
 
     if (trace_) {
       std::cout << "Char\tAddress\tArc\tN F L\tNxtAddr\tOutput\tStOuts\tSize"
@@ -1979,6 +1986,16 @@ protected:
     auto address = header_.start_address;
     auto i = 0u;
     auto arc_in_jump_table = false;
+
+    // Every query passes through the root state; resolve the first
+    // character with the precomputed dispatch table instead of the root's
+    // jump table binary search.
+    if (has_root_dispatch_ && len > 0) {
+      address = root_dispatch_[static_cast<uint8_t>(str[0])];
+      if (!address) { return false; }
+      arc_in_jump_table = true;
+    }
+
     while (i < len) {
       auto ch = static_cast<uint8_t>(str[i]);
       auto state_output = output_t{};
@@ -2116,7 +2133,7 @@ protected:
         output += output_suffix;
         i++;
         if (ope.data.final) {
-          if (prefixes) {
+          if constexpr (has_prefixes) {
             if (OutputTraits<output_t>::empty(state_output)) {
               prefixes(i, output);
             } else {
@@ -2125,7 +2142,7 @@ protected:
             ret = true;
           }
           if (i == len) {
-            if (outputs) {
+            if constexpr (has_outputs) {
               if (OutputTraits<output_t>::empty(state_output)) {
                 outputs(output);
               } else {
@@ -2287,12 +2304,47 @@ protected:
     }
   }
 
+  // If the root state has a jump table with labels, precompute a direct
+  // 256 entry 'label -> record address' table for it. The byte code is
+  // not affected; this only trades 1KB of memory per matcher for the
+  // root's binary search on every query.
+  void build_root_dispatch() {
+    auto address = header_.start_address;
+    auto p = byte_code_ + address;
+
+    auto ope = FstOpe(*p--);
+    if (!ope.has_jump_table() || !header_.flags.data.jump_table_labels) {
+      return;
+    }
+
+    auto element_size = ope.jump_table_element_size();
+    size_t count = 0;
+    auto vb_len = vb_decode_value_reverse(p, count);
+    p -= vb_len;
+    p -= count * element_size;
+
+    auto jump_table = p;
+    auto labels = reinterpret_cast<const uint8_t *>(p) + 1 - count;
+    auto jump_table_byte_size = 1 + vb_len + count * element_size + count;
+
+    root_dispatch_.fill(0);
+    for (size_t i = 0; i < count; i++) {
+      auto offset = lookup_jump_table(jump_table, i, element_size);
+      root_dispatch_[labels[i]] =
+          static_cast<uint32_t>(address - (offset + jump_table_byte_size));
+    }
+    has_root_dispatch_ = true;
+  }
+
   const char *byte_code_;
   const size_t byte_code_size_;
 
   FstHeader header_;
   bool is_valid_ = false;
   bool trace_ = false;
+
+  bool has_root_dispatch_ = false;
+  std::array<uint32_t, 256> root_dispatch_{};
 
   // Suggestion
   template <typename T>
@@ -2493,9 +2545,8 @@ public:
                                     [&](const auto &_) { output = _; });
   }
 
-  bool common_prefix_search(
-      std::string_view sv,
-      std::function<void(size_t, const output_t &)> prefixes) const {
+  template <typename PrefixesFn>
+  bool common_prefix_search(std::string_view sv, PrefixesFn prefixes) const {
     return matcher<output_t>::match(sv.data(), sv.size(), nullptr, prefixes);
   }
 
@@ -2590,8 +2641,8 @@ public:
 
   static const bool has_output = false;
 
-  bool common_prefix_search(std::string_view sv,
-                            std::function<void(size_t)> prefixes) const {
+  template <typename PrefixesFn>
+  bool common_prefix_search(std::string_view sv, PrefixesFn prefixes) const {
     return matcher<none_t>::match(
         sv.data(), sv.size(), nullptr,
         [&](size_t len, const none_t &) { prefixes(len); });
