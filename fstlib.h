@@ -2417,8 +2417,9 @@ public:
 
   // depth_first_visit copies the automaton once per arc it visits, so this
   // has to stay cheap: s_ is shared (the decoded query never changes after
-  // construction), leaving only the DP row and the at-most-3-byte codepoint
-  // buffer to actually copy.
+  // construction), leaving only the DP row and the partial-codepoint buffer
+  // (cleared as soon as a codepoint completes, so at most 3 pending bytes
+  // for well-formed UTF-8) to actually copy.
   LevenshteinAutomaton(const LevenshteinAutomaton &rhs) = default;
 
   void step(char c) {
@@ -2430,7 +2431,8 @@ public:
     // The DP row is updated in place, left to right: at iteration i,
     // state_[0..i] already hold their new values and state_[i+1..] still
     // hold the old ones, with prev_old carrying the old state_[i] that the
-    // replace term needs after the insert term has overwritten it. This
+    // replace term needs after that cell was overwritten with its new
+    // value. This
     // avoids allocating a scratch row on every codepoint, which step()
     // otherwise spends most of its time on. Clamping to max_edits_ + 1 as
     // values are written (rather than in one pass at the end) yields
