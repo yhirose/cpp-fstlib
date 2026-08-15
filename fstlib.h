@@ -2417,8 +2417,8 @@ public:
 
   // depth_first_visit copies the automaton once per arc it visits, so this
   // has to stay cheap: s_ is shared (the decoded query never changes after
-  // construction), leaving only the DP row and a 5-byte pending-codepoint
-  // buffer to actually copy.
+  // construction), leaving only the DP row and a small fixed-size
+  // pending-codepoint buffer (no allocation) to actually copy.
   LevenshteinAutomaton(const LevenshteinAutomaton &rhs) = default;
 
   void step(char c) {
@@ -2478,7 +2478,7 @@ private:
   size_t replace_cost_; // TODO: better cost function is needed?
   std::vector<size_t> state_;
   size_t min_ = 0; // smallest cell of state_; the initial row starts at 0
-  char u8buf_[4];  // bytes of a not-yet-complete codepoint
+  char u8buf_[4]{}; // bytes of a not-yet-complete codepoint
   uint8_t u8len_ = 0;
 
   bool decode_codepoint(std::string_view s8, char32_t &cp) const {
@@ -2522,9 +2522,12 @@ private:
       while (i < s8.size() && (s8[i] & 0xc0) == 0x80) {
         i++;
       }
+      // A group that does not decode (an invalid lead byte, or a sequence
+      // the input truncated) is dropped rather than appended: cp is left
+      // untouched on failure, so appending it would read an indeterminate
+      // value and put garbage in the query.
       char32_t cp;
-      decode_codepoint(s8.substr(beg, i - beg), cp);
-      out += cp;
+      if (decode_codepoint(s8.substr(beg, i - beg), cp)) { out += cp; }
     }
     return out;
   }
