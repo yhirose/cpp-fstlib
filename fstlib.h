@@ -2417,50 +2417,58 @@ public:
 
   // depth_first_visit copies the automaton once per arc it visits, so this
   // has to stay cheap: s_ is shared (the decoded query never changes after
-  // construction), leaving only the DP row and the partial-codepoint buffer
-  // (cleared as soon as a codepoint completes, so at most 3 pending bytes
-  // for well-formed UTF-8) to actually copy.
+  // construction), leaving only the DP row and a 5-byte pending-codepoint
+  // buffer to actually copy.
   LevenshteinAutomaton(const LevenshteinAutomaton &rhs) = default;
 
   void step(char c) {
-    u8code_ += c;
+    // Bytes accumulate until a whole codepoint is available, so that a
+    // multi-byte character is never scored as several edits. The buffer stops
+    // at 4 bytes because decode_codepoint only ever inspects the lead byte's
+    // shape: once 4 bytes have failed to decode, no further byte can make it
+    // succeed, and the automaton is permanently non-matching either way.
+    // Refusing the extra bytes just keeps that state bounded, instead of
+    // accumulating the rest of a binary key.
+    if (u8len_ < sizeof(u8buf_)) { u8buf_[u8len_++] = c; }
     char32_t cp;
-    if (!decode_codepoint(u8code_, cp)) { return; }
-    u8code_.clear();
+    if (!decode_codepoint(std::string_view(u8buf_, u8len_), cp)) { return; }
+    u8len_ = 0;
 
     // The DP row is updated in place, left to right: at iteration i,
-    // state_[0..i] already hold their new values and state_[i+1..] still
-    // hold the old ones, with prev_old carrying the old state_[i] that the
-    // replace term needs after that cell was overwritten with its new
-    // value. This
+    // state_[0..i] already hold their new values and state_[i+1..] still hold
+    // the old ones, with prev_old carrying the old state_[i] that the replace
+    // term needs after that cell was overwritten with its new value. This
     // avoids allocating a scratch row on every codepoint, which step()
     // otherwise spends most of its time on. Clamping to max_edits_ + 1 as
     // values are written (rather than in one pass at the end) yields
     // identical rows: min(min(u, cap) + insert_cost_, ..., cap) ==
     // min(u + insert_cost_, ..., cap) for any non-negative cost.
+    //
+    // The row minimum is accumulated here rather than rescanned in
+    // can_match(), which the traversal calls once per arc just like step().
     const auto &s = *s_;
     const auto cap = max_edits_ + 1;
     auto prev_old = state_[0];
     state_[0] = std::min(state_[0] + 1, cap);
+    auto row_min = state_[0];
     for (size_t i = 0; i < s.size(); i++) {
       auto cur_old = state_[i + 1];
       auto cost = (s[i] == cp) ? 0 : replace_cost_;
       auto edits = std::min(
           {state_[i] + insert_cost_, prev_old + cost, cur_old + delete_cost_});
       state_[i + 1] = std::min(edits, cap);
+      row_min = std::min(row_min, state_[i + 1]);
       prev_old = cur_old;
     }
+    min_ = row_min;
   }
 
   bool is_match() const {
-    if (!u8code_.empty()) { return false; }
+    if (u8len_ > 0) { return false; }
     return state_.back() <= max_edits_;
   }
 
-  bool can_match() const {
-    auto it = std::min_element(state_.begin(), state_.end());
-    return *it <= max_edits_;
-  }
+  bool can_match() const { return min_ <= max_edits_; }
 
 private:
   std::shared_ptr<const std::u32string> s_;
@@ -2469,7 +2477,9 @@ private:
   size_t delete_cost_;
   size_t replace_cost_; // TODO: better cost function is needed?
   std::vector<size_t> state_;
-  std::string u8code_;
+  size_t min_ = 0; // smallest cell of state_; the initial row starts at 0
+  char u8buf_[4];  // bytes of a not-yet-complete codepoint
+  uint8_t u8len_ = 0;
 
   bool decode_codepoint(std::string_view s8, char32_t &cp) const {
     auto l = s8.size();
