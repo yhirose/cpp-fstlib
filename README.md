@@ -98,6 +98,11 @@ public:
 
   std::vector<std::tuple<double, std::string, output_t>>
   suggest(std::string_view word) const;
+
+  // T must implement: void step(char), bool is_match() const, bool can_match() const
+  template <typename T>
+  void custom_search(const T &atm,
+                     std::function<void(const std::string &, const output_t &)> callback) const;
 }
 
 class set {
@@ -119,6 +124,11 @@ public:
 
   std::vector<std::pair<double, std::string>>
   suggest(std::string_view word) const;
+
+  // T must implement: void step(char), bool is_match() const, bool can_match() const
+  template <typename T>
+  void custom_search(const T &atm,
+                     std::function<void(const std::string &)> callback) const;
 }
 
 } // namespace fst
@@ -174,6 +184,23 @@ if (result == fst::Result::Success) {
     for (auto [r, k, o]: matcher.suggest("hellow")) {
       std::cout << "ratio: " << r << " key: " << k << " output: " << o << std::endl;
     }
+
+    // Custom automaton: implement step(char), is_match() const, can_match() const,
+    // then plug it into custom_search() to drive the FST traversal with your own logic.
+    // (LevenshteinAutomaton, used internally by edit_distance_search, is a
+    // fuller example of the same contract.)
+    struct MaxLengthAutomaton {
+      size_t max_len;
+      size_t len = 0;
+      void step(char) { len++; }
+      bool is_match() const { return len <= max_len; }
+      bool can_match() const { return len <= max_len; }
+    };
+
+    std::cout << "[Custom search: words up to 6 chars long]" << std::endl;
+    matcher.custom_search(MaxLengthAutomaton{6}, [](const auto &k, const auto &o) {
+      std::cout << "key: " << k << " output: " << o << std::endl;
+    });
   }
 }
 ```
@@ -185,6 +212,9 @@ key: hello output: こんにちは
 ratio: 0.810185 key: hello output: こんにちは
 ratio: 0.504132 key: hello world output: こんにちは世界!
 ratio: 0.0962963 key: world output: 世界!
+[Custom search: words up to 6 chars long]
+key: hello output: こんにちは!
+key: world output: 世界!
 ```
 
 ## Benchmark

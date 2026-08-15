@@ -728,6 +728,52 @@ TEST(EditDistanceTest, Visits_sibling_arc_after_dead_end) {
   });
 }
 
+namespace {
+// A minimal automaton for exercising fst::map/fst::set::custom_search().
+// Matches words whose length does not exceed `max_len`, following the same
+// step()/is_match()/can_match() contract as LevenshteinAutomaton.
+struct MaxLengthAutomaton {
+  size_t max_len;
+  size_t len = 0;
+  void step(char) { len++; }
+  bool is_match() const { return len <= max_len; }
+  bool can_match() const { return len <= max_len; }
+};
+} // namespace
+
+TEST(CustomSearchTest, Custom_search_map) {
+  vector<pair<string, output_t>> input = {
+      {"a", V(1)}, {"ab", V(2)}, {"abc", V(3)}, {"b", V(4)}, {"bb", V(5)},
+  };
+
+  make_map(input, true, [](const auto &matcher) {
+    vector<pair<string, output_t>> ret;
+    matcher.custom_search(MaxLengthAutomaton{2},
+                          [&](const string &word, const output_t &output) {
+                            ret.emplace_back(word, output);
+                          });
+    std::sort(ret.begin(), ret.end());
+
+    vector<pair<string, output_t>> expected = {
+        {"a", V(1)}, {"ab", V(2)}, {"b", V(4)}, {"bb", V(5)}};
+    EXPECT_EQ(expected, ret);
+  });
+}
+
+TEST(CustomSearchTest, Custom_search_set) {
+  vector<string> input = {"a", "ab", "abc", "b", "bb"};
+
+  make_set(input, true, [](const auto &matcher) {
+    vector<string> ret;
+    matcher.custom_search(MaxLengthAutomaton{2},
+                          [&](const string &word) { ret.push_back(word); });
+    std::sort(ret.begin(), ret.end());
+
+    vector<string> expected = {"a", "ab", "b", "bb"};
+    EXPECT_EQ(expected, ret);
+  });
+}
+
 TEST(SpellcheckTest, Spellcheck_set) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",

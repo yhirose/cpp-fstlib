@@ -2619,6 +2619,18 @@ public:
     return matcher<output_t>::suggest_core(word, *this);
   }
 
+  // Traverses the FST with a caller-supplied automaton that implements
+  // step(char), is_match() and can_match() (see LevenshteinAutomaton for an
+  // example), calling `callback` for every accepted word.
+  template <typename T>
+  void custom_search(const T &atm,
+                     std::function<void(const std::string &, const output_t &)>
+                         callback) const {
+    matcher<output_t>::depth_first_visit(
+        matcher<output_t>::header_.start_address, std::string(), output_t{},
+        atm, callback);
+  }
+
   template <typename T> void enumerate(T callback) const {
     matcher<output_t>::depth_first_visit(
         matcher<output_t>::header_.start_address, std::string(), output_t{},
@@ -2703,6 +2715,17 @@ public:
   std::vector<std::pair<double, std::string>>
   suggest(std::string_view word) const {
     return matcher<none_t>::suggest_core(word, *this);
+  }
+
+  // Traverses the FST with a caller-supplied automaton that implements
+  // step(char), is_match() and can_match() (see LevenshteinAutomaton for an
+  // example), calling `callback` for every accepted word.
+  template <typename T>
+  void custom_search(const T &atm,
+                     std::function<void(const std::string &)> callback) const {
+    matcher<none_t>::depth_first_visit(
+        matcher<none_t>::header_.start_address, std::string(), none_t{}, atm,
+        [&](const auto &word, const auto &) { callback(word); });
   }
 
   template <typename T> void enumerate(T callback) const {
