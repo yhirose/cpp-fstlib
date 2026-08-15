@@ -2448,16 +2448,17 @@ public:
     // can_match(), which the traversal calls once per arc just like step().
     const auto &s = *s_;
     const auto cap = max_edits_ + 1;
-    auto prev_old = state_[0];
-    state_[0] = std::min(state_[0] + 1, cap);
-    auto row_min = state_[0];
+    auto *row = state_.data();
+    auto prev_old = row[0];
+    row[0] = std::min(row[0] + 1, cap);
+    auto row_min = row[0];
     for (size_t i = 0; i < s.size(); i++) {
-      auto cur_old = state_[i + 1];
+      auto cur_old = row[i + 1];
       auto cost = (s[i] == cp) ? 0 : replace_cost_;
       auto edits = std::min(
-          {state_[i] + insert_cost_, prev_old + cost, cur_old + delete_cost_});
-      state_[i + 1] = std::min(edits, cap);
-      row_min = std::min(row_min, state_[i + 1]);
+          {row[i] + insert_cost_, prev_old + cost, cur_old + delete_cost_});
+      row[i + 1] = std::min(edits, cap);
+      row_min = std::min(row_min, row[i + 1]);
       prev_old = cur_old;
     }
     min_ = row_min;
@@ -2471,12 +2472,53 @@ public:
   bool can_match() const { return min_ <= max_edits_; }
 
 private:
+  // The DP row. depth_first_visit copies the automaton once per arc, so a
+  // std::vector here would mean a malloc/free pair per arc; a query short
+  // enough to fit -- nearly all of them -- keeps its row inline instead.
+  // Longer queries spill to the heap so the class stays general.
+  //
+  // data() is recomputed from n_ rather than cached in a member pointer, so
+  // there is nothing to fix up after a copy and the copy constructor can stay
+  // defaulted. Copying the whole inline array unconditionally measured faster
+  // than copying only the live cells: a fixed-size copy compiles to a straight
+  // move sequence, while a length-dependent one does not.
+  class Row {
+  public:
+    void resize(size_t n) {
+      n_ = n;
+      if (n > kInline) { heap_.resize(n); }
+    }
+
+    // Callers in a loop should hoist data() rather than indexing repeatedly:
+    // it has to branch on whether the row spilled, and the compiler cannot
+    // prove that stays fixed across writes through the pointer.
+    size_t *data() { return n_ <= kInline ? inline_ : heap_.data(); }
+    const size_t *data() const {
+      return n_ <= kInline ? inline_ : heap_.data();
+    }
+
+    size_t *begin() { return data(); }
+    size_t *end() { return data() + n_; }
+    size_t back() const { return data()[n_ - 1]; }
+
+  private:
+
+    // 16 cells hold a query of 15 codepoints, which covers 97% of
+    // /usr/share/dict/words; anything longer falls back to the heap and
+    // performs as it did before this buffer existed. Value-initialized
+    // because the defaulted copy constructor reads the whole array.
+    static constexpr size_t kInline = 16;
+    size_t n_ = 0;
+    size_t inline_[kInline]{};
+    std::vector<size_t> heap_; // empty unless n_ > kInline
+  };
+
   std::shared_ptr<const std::u32string> s_;
   size_t max_edits_;
   size_t insert_cost_;
   size_t delete_cost_;
   size_t replace_cost_; // TODO: better cost function is needed?
-  std::vector<size_t> state_;
+  Row state_;
   size_t min_ = 0; // smallest cell of state_; the initial row starts at 0
   char u8buf_[4]{}; // bytes of a not-yet-complete codepoint
   uint8_t u8len_ = 0;
