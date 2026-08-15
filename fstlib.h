@@ -2411,7 +2411,7 @@ public:
       : s_(std::make_shared<const std::u32string>(decode(sv))),
         max_edits_(max_edits), insert_cost_(insert_cost),
         delete_cost_(delete_cost), replace_cost_(replace_cost) {
-    state_.resize(s_->size() + 1);
+    state_.init(s_->size() + 1);
     std::iota(state_.begin(), state_.end(), 0);
   }
 
@@ -2435,26 +2435,32 @@ public:
     u8len_ = 0;
 
     // The DP row is updated in place, left to right: at iteration i,
-    // state_[0..i] already hold their new values and state_[i+1..] still hold
-    // the old ones, with prev_old carrying the old state_[i] that the replace
-    // term needs after that cell was overwritten with its new value. This
-    // avoids allocating a scratch row on every codepoint, which step()
-    // otherwise spends most of its time on. Clamping to max_edits_ + 1 as
-    // values are written (rather than in one pass at the end) yields
-    // identical rows: min(min(u, cap) + insert_cost_, ..., cap) ==
+    // row[0..i] already hold their new values and row[i+1..] still hold the
+    // old ones, with prev_old carrying the old row[i] that the replace term
+    // needs after that cell was overwritten with its new value. This avoids
+    // allocating a scratch row on every codepoint, which step() otherwise
+    // spends most of its time on. Clamping to max_edits_ + 1 as values are
+    // written (rather than in one pass at the end) yields identical rows:
+    // min(min(u, cap) + insert_cost_, ..., cap) ==
     // min(u + insert_cost_, ..., cap) for any non-negative cost.
     //
     // The row minimum is accumulated here rather than rescanned in
     // can_match(), which the traversal calls once per arc just like step().
-    const auto &s = *s_;
+    //
+    // row, sp and slen are all hoisted into locals: writing through row is a
+    // size_t store, which the compiler must assume could alias the query
+    // string's own size and data members, so it would otherwise reload them
+    // on every iteration.
+    const auto *sp = s_->data();
+    const auto slen = s_->size();
     const auto cap = max_edits_ + 1;
     auto *row = state_.data();
     auto prev_old = row[0];
     row[0] = std::min(row[0] + 1, cap);
     auto row_min = row[0];
-    for (size_t i = 0; i < s.size(); i++) {
+    for (size_t i = 0; i < slen; i++) {
       auto cur_old = row[i + 1];
-      auto cost = (s[i] == cp) ? 0 : replace_cost_;
+      auto cost = (sp[i] == cp) ? 0 : replace_cost_;
       auto edits = std::min(
           {row[i] + insert_cost_, prev_old + cost, cur_old + delete_cost_});
       row[i + 1] = std::min(edits, cap);
@@ -2482,9 +2488,17 @@ private:
   // defaulted. Copying the whole inline array unconditionally measured faster
   // than copying only the live cells: a fixed-size copy compiles to a straight
   // move sequence, while a length-dependent one does not.
+  //
+  // There are deliberately no move operations. A defaulted move would take
+  // heap_ out of a spilled row while leaving n_ still claiming it, so data()
+  // would return nullptr; LevenshteinAutomaton's user-declared copy
+  // constructor suppresses its own implicit moves, which is what keeps that
+  // unreachable today.
   class Row {
   public:
-    void resize(size_t n) {
+    // Sizes the row once, at construction. Cells are not carried across the
+    // inline/heap boundary, so this is not a general resize.
+    void init(size_t n) {
       n_ = n;
       if (n > kInline) { heap_.resize(n); }
     }
@@ -2492,9 +2506,9 @@ private:
     // Callers in a loop should hoist data() rather than indexing repeatedly:
     // it has to branch on whether the row spilled, and the compiler cannot
     // prove that stays fixed across writes through the pointer.
-    size_t *data() { return n_ <= kInline ? inline_ : heap_.data(); }
+    size_t *data() { return n_ <= kInline ? inline_.data() : heap_.data(); }
     const size_t *data() const {
-      return n_ <= kInline ? inline_ : heap_.data();
+      return n_ <= kInline ? inline_.data() : heap_.data();
     }
 
     size_t *begin() { return data(); }
@@ -2502,14 +2516,13 @@ private:
     size_t back() const { return data()[n_ - 1]; }
 
   private:
-
     // 16 cells hold a query of 15 codepoints, which covers 97% of
-    // /usr/share/dict/words; anything longer falls back to the heap and
-    // performs as it did before this buffer existed. Value-initialized
-    // because the defaulted copy constructor reads the whole array.
+    // /usr/share/dict/words; anything longer falls back to the heap, as it
+    // did before this buffer existed. Value-initialized because the defaulted
+    // copy constructor reads the whole array.
     static constexpr size_t kInline = 16;
     size_t n_ = 0;
-    size_t inline_[kInline]{};
+    std::array<size_t, kInline> inline_{};
     std::vector<size_t> heap_; // empty unless n_ > kInline
   };
 
