@@ -2408,12 +2408,17 @@ public:
   LevenshteinAutomaton(std::string_view sv, size_t max_edits,
                        size_t insert_cost, size_t delete_cost,
                        size_t replace_cost)
-      : s_(decode(sv)), max_edits_(max_edits), insert_cost_(insert_cost),
+      : s_(std::make_shared<const std::u32string>(decode(sv))),
+        max_edits_(max_edits), insert_cost_(insert_cost),
         delete_cost_(delete_cost), replace_cost_(replace_cost) {
-    state_.resize(s_.size() + 1);
+    state_.resize(s_->size() + 1);
     std::iota(state_.begin(), state_.end(), 0);
   }
 
+  // depth_first_visit copies the automaton once per arc it visits, so this
+  // has to stay cheap: s_ is shared (the decoded query never changes after
+  // construction), leaving only the DP row and the at-most-3-byte codepoint
+  // buffer to actually copy.
   LevenshteinAutomaton(const LevenshteinAutomaton &rhs) = default;
 
   void step(char c) {
@@ -2422,17 +2427,27 @@ public:
     if (!decode_codepoint(u8code_, cp)) { return; }
     u8code_.clear();
 
-    std::vector<size_t> new_state{state_[0] + 1};
-
-    for (size_t i = 0; i < state_.size() - 1; i++) {
-      auto cost = (s_[i] == cp) ? 0 : replace_cost_;
-      auto edits = std::min({new_state[i] + insert_cost_, state_[i] + cost,
-                             state_[i + 1] + delete_cost_});
-      new_state.push_back(edits);
+    // The DP row is updated in place, left to right: at iteration i,
+    // state_[0..i] already hold their new values and state_[i+1..] still
+    // hold the old ones, with prev_old carrying the old state_[i] that the
+    // replace term needs after the insert term has overwritten it. This
+    // avoids allocating a scratch row on every codepoint, which step()
+    // otherwise spends most of its time on. Clamping to max_edits_ + 1 as
+    // values are written (rather than in one pass at the end) yields
+    // identical rows: min(min(u, cap) + insert_cost_, ..., cap) ==
+    // min(u + insert_cost_, ..., cap) for any non-negative cost.
+    const auto &s = *s_;
+    const auto cap = max_edits_ + 1;
+    auto prev_old = state_[0];
+    state_[0] = std::min(state_[0] + 1, cap);
+    for (size_t i = 0; i < s.size(); i++) {
+      auto cur_old = state_[i + 1];
+      auto cost = (s[i] == cp) ? 0 : replace_cost_;
+      auto edits = std::min(
+          {state_[i] + insert_cost_, prev_old + cost, cur_old + delete_cost_});
+      state_[i + 1] = std::min(edits, cap);
+      prev_old = cur_old;
     }
-
-    std::transform(new_state.begin(), new_state.end(), state_.begin(),
-                   [=](auto edits) { return std::min(edits, max_edits_ + 1); });
   }
 
   bool is_match() const {
@@ -2446,7 +2461,7 @@ public:
   }
 
 private:
-  std::u32string s_;
+  std::shared_ptr<const std::u32string> s_;
   size_t max_edits_;
   size_t insert_cost_;
   size_t delete_cost_;
