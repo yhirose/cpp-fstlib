@@ -28,6 +28,7 @@
 *.app
 
 *.swp
+*.bin
 build*/
 Debug/
 Release/

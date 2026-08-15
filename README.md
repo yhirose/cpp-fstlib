@@ -196,10 +196,13 @@ Measured with `benchmark/main.cc` on `/usr/share/dict/words` (235,976 keys, Appl
 | [darts-clone](https://github.com/s-yata/darts-clone) | double array | 8,755,880 | 64 ms | 22 ms | 23 ms |
 | [ux-trie](https://github.com/hillbig/ux-trie) | LOUDS | 895,510 | 67 ms | 1,161 ms | 1,041 ms |
 | [marisa-trie](https://github.com/s-yata/marisa-trie) | LOUDS | 743,368 | 69 ms | 305 ms | 313 ms |
+| [BurntSushi/fst](https://github.com/BurntSushi/fst) (Rust) | FST | 1,501,442 | 90 ms | 540 ms | n/a |
 | **cpp-fstlib (map\<uint32_t\>)** | FST | 1,070,382 | 125 ms | 215 ms | 216 ms |
 | **cpp-fstlib (auto index)** | FST | 985,753 | 118 ms | 220 ms | 220 ms |
 
 The `map<uint32_t>` row stores an arbitrary `uint32_t` value per key, while the `auto index` row assigns sequential ids to the sorted keys, which is what the trie libraries above provide.
+
+The BurntSushi/fst row was measured separately with `benchmark/fst-rust` (`cargo run --release`), a small Rust harness that builds a `fst::Map` with sequential ids as values and times `Map::get` the same way. It's a different process/toolchain (Rust, not linked into `benchmark/main.cc`), so treat the comparison as indicative rather than exact; its `Map` type has no built-in common-prefix search, so that column is n/a.
 
 License
 -------
