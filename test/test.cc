@@ -728,6 +728,31 @@ TEST(EditDistanceTest, Visits_sibling_arc_after_dead_end) {
   });
 }
 
+TEST(EditDistanceTest, Zero_insert_or_delete_cost_reaches_off_the_diagonal) {
+  // The DP only visits the diagonal band [depth - max_edits, depth +
+  // max_edits], which is sound because an insert and a delete each cost at
+  // least 1, so a cell |depth - j| off the diagonal costs at least that much.
+  // Drop either cost to 0 and a cell arbitrarily far off the diagonal becomes
+  // free, which is why those searches keep scanning the whole row.
+  const vector<string> input = {"a", "abcdefgh"};
+
+  make_set(input, true, [](const auto &set) {
+    // Free inserts: "a" walks to the end of the query at no cost, so it is a
+    // 0-edit match for a query seven characters longer.
+    auto inserts = set.edit_distance_search("abcdefgh", 0, /*insert_cost=*/0);
+    EXPECT_EQ(2, inserts.size());
+
+    // Free deletes: the mirror image, "abcdefgh" is a 0-edit match for "a".
+    auto deletes =
+        set.edit_distance_search("a", 0, /*insert_cost=*/1, /*delete_cost=*/0);
+    EXPECT_EQ(2, deletes.size());
+
+    // With both at 1 the same two searches are exact matches again.
+    EXPECT_EQ(1, set.edit_distance_search("abcdefgh", 0).size());
+    EXPECT_EQ(1, set.edit_distance_search("a", 0).size());
+  });
+}
+
 namespace {
 // A minimal automaton for exercising fst::map/fst::set::custom_search().
 // Matches words whose length does not exceed `max_len`, following the same
