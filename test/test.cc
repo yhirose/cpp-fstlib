@@ -425,6 +425,20 @@ TEST(MapTest, Auto_Index_Dictionary) {
   });
 }
 
+TEST(MapTest, Auto_Index_Unsorted_With_Prefix_Key) {
+  // Regression test: the unsorted auto-index path fed each key's original
+  // array position as its output value instead of its rank in sorted order.
+  // Values only encode correctly along shared arcs when they are
+  // monotonically increasing in sorted order, so a shorter key that is a
+  // prefix of a later (in input order) key got the wrong value.
+  vector<string> input = {"hello", "hell"};
+
+  make_map_with_auto_index(input, false, [](auto &map) {
+    EXPECT_EQ(0u, map["hell"]);
+    EXPECT_EQ(1u, map["hello"]);
+  });
+}
+
 TEST(SetTest, Normal_Set_test) {
   vector<string> input = {
       "jan", "feb", "mar", "apr", "may", "jun",
@@ -590,18 +604,18 @@ TEST(DecompileTest, Decompile_map_need_output) {
   stringstream out;
   fst::decompile(byte_code, out);
 
-  auto expected = R"(apr	3
-aug	7
-dec	11
-feb	1
-jul	6
-jun	5
-jan	0
-mar	2
-may	4
-nov	10
-oct	9
-sep	8
+  auto expected = R"(apr	0
+aug	1
+dec	2
+feb	3
+jul	5
+jun	6
+jan	4
+mar	7
+may	8
+nov	9
+oct	10
+sep	11
 )";
 
   EXPECT_EQ(expected, out.str());

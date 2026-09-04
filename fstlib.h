@@ -977,12 +977,13 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
                       });
           }
 
+          size_t rank = 0;
           for (auto input_index : sorted_indexes) {
             const auto word = input[input_index];
-            if (!feeder(word, static_cast<uint32_t>(input_index),
-                        input_index)) {
+            if (!feeder(word, static_cast<uint32_t>(rank), input_index)) {
               break;
             }
+            rank++;
           }
         }
       },
