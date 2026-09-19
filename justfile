@@ -29,3 +29,7 @@ benchmark dict="/usr/share/dict/words": build
 # Format C++ sources with clang-format
 fmt:
     clang-format -i fstlib.h cmd/main.cc test/test.cc benchmark/main.cc
+
+# Release a new version (dry run by default; `just release --run` to publish)
+release *args:
+    @./scripts/release.sh {{args}}

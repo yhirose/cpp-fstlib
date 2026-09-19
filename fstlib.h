@@ -7,6 +7,9 @@
 
 #pragma once
 
+#define CPPFSTLIB_VERSION "0.1.0"
+#define CPPFSTLIB_VERSION_NUM "0x000100"
+
 #include <algorithm>
 #include <any>
 #include <array>
