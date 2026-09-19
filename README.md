@@ -222,15 +222,15 @@ key: world output: 世界!
 
 ## Byte code format and corruption
 
-A byte code ends with a trailer that has its size, checksums (XXH64) and a format version.
+A byte code ends with a trailer that has its size, a checksum (XXH64) and a format version.
 
 ```
-[records][header][body size: 8][body xxh64: 8][header xxh64: 8][version: 4]["FST\x07"]
+[records][header][body size: 8][body xxh64: 8][version: 4]["FST\x07"]
 ```
 
-`fst::map` and `fst::set` check the trailer and the header when they open a byte code, and `operator bool()` returns `false` if it is truncated, has extra bytes, is not a byte code, or was made by an incompatible version of this library. This check doesn't read the records, so opening a large memory mapped byte code stays cheap.
+`fst::map` and `fst::set` check the trailer and the header when they open a byte code, and `operator bool()` returns `false` if it is truncated, has extra bytes, is not a byte code, or was made by an incompatible version of this library. This check is O(1) and doesn't read the rest of the byte code, so opening one stays cheap, even when it is large and memory mapped.
 
-`fst::verify` also checks the records against the checksum, which reads the whole byte code. Call it before opening a byte code from a source that you don't trust to keep the bytes intact. Searching a byte code with corrupted records is undefined behavior.
+`fst::verify` also checks the whole byte code against the checksum, which reads all of it. Call it before opening a byte code from a source that you don't trust to keep the bytes intact. Searching a byte code whose contents are corrupted is undefined behavior.
 
 ```cpp
 if (!fst::verify(byte_code.data(), byte_code.size())) {

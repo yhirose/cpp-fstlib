@@ -1017,14 +1017,6 @@ vector<string> compile_all_for_trailer_test() {
           compile_map_with_hub_table()};
 }
 
-// The offset of the header, which is also the byte size of the records.
-size_t header_offset_of(const string &byte_code) {
-  auto body_size = byte_code.size() - fst::FstTrailer::kByteSize;
-  fst::FstHeader header;
-  EXPECT_TRUE(header.read(byte_code.data(), body_size));
-  return body_size - header.byte_size;
-}
-
 template <typename T> bool is_valid(const T &byte_code) {
   return fst::set(byte_code) || fst::map<uint32_t>(byte_code) ||
          fst::map<uint64_t>(byte_code) || fst::map<string>(byte_code) ||
@@ -1101,11 +1093,10 @@ TEST(TrailerTest, Byte_code_with_extra_bytes_is_invalid) {
   EXPECT_FALSE(is_valid(byte_code + byte_code));
 }
 
-TEST(TrailerTest, Flipped_bit_in_records_fails_verify) {
-  for (const auto &original :
-       {compile_set_for_trailer_test(), compile_map_with_hub_table()}) {
-    auto records_size = header_offset_of(original);
-    for (size_t i = 0; i < records_size; i++) {
+TEST(TrailerTest, Flipped_bit_in_body_fails_verify) {
+  for (const auto &original : compile_all_for_trailer_test()) {
+    auto body_size = original.size() - fst::FstTrailer::kByteSize;
+    for (size_t i = 0; i < body_size; i++) {
       auto byte_code = original;
       byte_code[i] ^= 0x10;
       EXPECT_FALSE(fst::verify(byte_code)) << "offset " << i;
@@ -1113,14 +1104,14 @@ TEST(TrailerTest, Flipped_bit_in_records_fails_verify) {
   }
 }
 
-TEST(TrailerTest, Flipped_bit_in_header_or_trailer_is_invalid) {
+TEST(TrailerTest, Flipped_bit_in_trailer_is_invalid) {
   for (const auto &original : compile_all_for_trailer_test()) {
-    auto header_offset = header_offset_of(original);
+    auto trailer_offset = original.size() - fst::FstTrailer::kByteSize;
 
-    // The hash of the records is only checked by verify().
-    auto body_hash_offset = original.size() - fst::FstTrailer::kByteSize + 8;
+    // The body hash is only checked by verify().
+    auto body_hash_offset = trailer_offset + 8;
 
-    for (auto i = header_offset; i < original.size(); i++) {
+    for (auto i = trailer_offset; i < original.size(); i++) {
       for (auto bit = 0; bit < 8; bit++) {
         auto byte_code = original;
         byte_code[i] ^= static_cast<char>(1 << bit);

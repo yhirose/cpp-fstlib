@@ -1137,8 +1137,6 @@ struct FstHeader {
   bool need_output = false;
   bool need_state_output = false;
 
-  size_t byte_size = 0; // including the hub table, set by read()
-
   FstHeader() = default;
 
   FstHeader(OutputType output_type, bool need_state_output,
@@ -1202,10 +1200,7 @@ struct FstHeader {
       if (hub_count == 0) { return false; }
       if (remaining < hub_count * sizeof(uint32_t)) { return false; }
       hub_table = p - (hub_count * sizeof(uint32_t) - 1);
-      remaining -= hub_count * sizeof(uint32_t);
     }
-
-    byte_size = byte_code_size - remaining;
     return true;
   }
 
@@ -1307,15 +1302,16 @@ inline uint64_t xxh64(const char *data, size_t len) {
 //-----------------------------------------------------------------------------
 // FstTrailer
 //
-//   [body][body size: 8][body xxh64: 8][header xxh64: 8][version: 4][magic: 4]
+//   [body][body size: 8][body xxh64: 8][version: 4][magic: 4]
 //
 // 'body' is the records followed by the header. A truncated byte code loses
 // the trailer, and a byte code of another format version doesn't match the
 // version, so both are rejected before any address in them is followed.
+// The hash is only checked by verify(), since it reads the whole body.
 //-----------------------------------------------------------------------------
 
 struct FstTrailer {
-  static constexpr size_t kByteSize = 32;
+  static constexpr size_t kByteSize = 24;
   static constexpr uint32_t kVersion = 1;
 
   // Versions of this library without the trailer read the last byte as the
@@ -1325,7 +1321,6 @@ struct FstTrailer {
 
   uint64_t body_size = 0;
   uint64_t body_hash = 0;
-  uint64_t header_hash = 0;
   uint32_t version = kVersion;
 
   bool read(const char *byte_code, size_t byte_code_size) {
@@ -1334,10 +1329,9 @@ struct FstTrailer {
     auto p = byte_code + (byte_code_size - kByteSize);
     memcpy(&body_size, p, sizeof(body_size));
     memcpy(&body_hash, p + 8, sizeof(body_hash));
-    memcpy(&header_hash, p + 16, sizeof(header_hash));
-    memcpy(&version, p + 24, sizeof(version));
+    memcpy(&version, p + 16, sizeof(version));
 
-    if (memcmp(p + 28, kMagic, sizeof(kMagic)) != 0) { return false; }
+    if (memcmp(p + 20, kMagic, sizeof(kMagic)) != 0) { return false; }
     if (version != kVersion) { return false; }
     return body_size == byte_code_size - kByteSize;
   }
@@ -1345,23 +1339,17 @@ struct FstTrailer {
   void write(std::ostream &os) const {
     os.write(reinterpret_cast<const char *>(&body_size), sizeof(body_size));
     os.write(reinterpret_cast<const char *>(&body_hash), sizeof(body_hash));
-    os.write(reinterpret_cast<const char *>(&header_hash), sizeof(header_hash));
     os.write(reinterpret_cast<const char *>(&version), sizeof(version));
     os.write(kMagic, sizeof(kMagic));
   }
 };
 
-// Reads the trailer and the header, and checks them without touching the
-// records, so that opening a large memory mapped byte code stays O(1).
+// Reads the trailer and the header without touching the records, so that
+// opening a byte code is O(1). The matchers open one on every construction.
 inline bool read_header(const char *byte_code, size_t byte_code_size,
                         FstHeader &header, FstTrailer &trailer) {
   if (!trailer.read(byte_code, byte_code_size)) { return false; }
-
-  auto body_size = static_cast<size_t>(trailer.body_size);
-  if (!header.read(byte_code, body_size)) { return false; }
-
-  auto p = byte_code + (body_size - header.byte_size);
-  return xxh64(p, header.byte_size) == trailer.header_hash;
+  return header.read(byte_code, static_cast<size_t>(trailer.body_size));
 }
 
 template <typename output_t, bool need_state_output> class FstWriter {
@@ -1399,11 +1387,7 @@ public:
     auto output_type =
         need_output_ ? OutputTraits<output_t>::type() : OutputType::none_t;
 
-    size_t header_offset = 0;
-
     if (!dump_) {
-      header_offset = static_cast<size_t>(os_.tellp());
-
       for (auto id : hub_ids_) {
         auto address =
             static_cast<uint32_t>(address_table_[record_index_map_[id]]);
@@ -1422,8 +1406,6 @@ public:
       FstTrailer trailer;
       trailer.body_size = body.size();
       trailer.body_hash = xxh64(body.data(), body.size());
-      trailer.header_hash =
-          xxh64(body.data() + header_offset, body.size() - header_offset);
 
       out_.write(body.data(), body.size());
       trailer.write(out_);
