@@ -196,8 +196,11 @@ if [ "$DRY_RUN" -eq 1 ]; then
 else
   if [ "$NEW_VERSION" != "$CURRENT_VERSION" ]; then
     echo "==> Updating fstlib.h..."
-    sed -i '' "s/#define CPPFSTLIB_VERSION \"[^\"]*\"/#define CPPFSTLIB_VERSION \"$NEW_VERSION\"/" fstlib.h
-    sed -i '' "s/#define CPPFSTLIB_VERSION_NUM \"0x[0-9a-fA-F]*\"/#define CPPFSTLIB_VERSION_NUM \"$VERSION_HEX\"/" fstlib.h
+    # `-i.bak` is the in-place form GNU and BSD sed both accept (`-i ''` is
+    # BSD-only: GNU sed reads the '' as the script).
+    sed -i.bak "s/#define CPPFSTLIB_VERSION \"[^\"]*\"/#define CPPFSTLIB_VERSION \"$NEW_VERSION\"/" fstlib.h
+    sed -i.bak "s/#define CPPFSTLIB_VERSION_NUM \"0x[0-9a-fA-F]*\"/#define CPPFSTLIB_VERSION_NUM \"$VERSION_HEX\"/" fstlib.h
+    rm -f fstlib.h.bak
     echo "    CPPFSTLIB_VERSION     = \"$NEW_VERSION\""
     echo "    CPPFSTLIB_VERSION_NUM = \"$VERSION_HEX\""
 
