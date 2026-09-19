@@ -86,6 +86,16 @@ vector<char> load_byte_code(istream &is) {
   return byte_code;
 }
 
+bool check_byte_code(const vector<char> &byte_code) {
+  if (fst::get_output_type(byte_code) == fst::OutputType::invalid) {
+    cerr << "invalid byte code: it is broken, or was made by another version "
+            "of fst and needs to be compiled again"
+         << endl;
+    return false;
+  }
+  return true;
+}
+
 void show_error_message(fst::Result result, size_t line) {
   string error_message;
 
@@ -507,6 +517,7 @@ int main(int argc, char **argv) {
       if (!fin) { return error(1); }
 
       auto byte_code = load_byte_code(fin);
+      if (!check_byte_code(byte_code)) { return 1; }
 
       std::string word;
       if (args.positional().size() > 2) { word = args.positional().at(2); }
@@ -518,6 +529,7 @@ int main(int argc, char **argv) {
       if (!fin) { return error(1); }
 
       auto byte_code = load_byte_code(fin);
+      if (!check_byte_code(byte_code)) { return 1; }
 
       fst::decompile(byte_code, std::cout, !opt_no);
 

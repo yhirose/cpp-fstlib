@@ -71,6 +71,9 @@ std::pair<Result, size_t /* error input index */> compile(
   bool sorted
 );
 
+// Checks the whole byte code against its checksum (reads all of it)
+bool verify(const char *byte_code, size_t byte_code_size);
+
 template <typename output_t> class map {
 public:
   map(const char *byte_code, size_t byte_code_size);
@@ -216,6 +219,26 @@ ratio: 0.0962963 key: world output: 世界!
 key: hello output: こんにちは!
 key: world output: 世界!
 ```
+
+## Byte code format and corruption
+
+A byte code ends with a trailer that has its size, checksums (XXH64) and a format version.
+
+```
+[records][header][body size: 8][body xxh64: 8][header xxh64: 8][version: 4]["FST\x07"]
+```
+
+`fst::map` and `fst::set` check the trailer and the header when they open a byte code, and `operator bool()` returns `false` if it is truncated, has extra bytes, is not a byte code, or was made by an incompatible version of this library. This check doesn't read the records, so opening a large memory mapped byte code stays cheap.
+
+`fst::verify` also checks the records against the checksum, which reads the whole byte code. Call it before opening a byte code from a source that you don't trust to keep the bytes intact. Searching a byte code with corrupted records is undefined behavior.
+
+```cpp
+if (!fst::verify(byte_code.data(), byte_code.size())) {
+  // corrupted
+}
+```
+
+NOTE: Byte codes made before the trailer was introduced are rejected as invalid. Please compile them again from the original input.
 
 ## Benchmark
 

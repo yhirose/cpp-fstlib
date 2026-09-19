@@ -970,3 +970,201 @@ TEST(ReadmeTest, General) {
     }
   }
 }
+
+//-----------------------------------------------------------------------------
+// TrailerTest
+//-----------------------------------------------------------------------------
+
+namespace {
+
+const vector<string> trailer_test_words = {
+    "apr", "aug", "dec", "feb", "jan", "jul", "jun", "mar",
+};
+
+string compile_set_for_trailer_test() {
+  stringstream ss;
+  auto [result, _] = fst::compile(trailer_test_words, ss, false, true);
+  EXPECT_EQ(fst::Result::Success, result);
+  return ss.str();
+}
+
+string compile_string_map_for_trailer_test() {
+  vector<pair<string, string>> input;
+  for (const auto &word : trailer_test_words) {
+    input.emplace_back(word, word + "!");
+  }
+  stringstream ss;
+  auto [result, _] = fst::compile<string>(input, ss, true);
+  EXPECT_EQ(fst::Result::Success, result);
+  return ss.str();
+}
+
+// A byte code large enough to have a hub table.
+string compile_map_with_hub_table() {
+  vector<pair<string, uint32_t>> input;
+  for (auto i = 0u; i < 5000; i++) {
+    auto word = to_string(i * 7919) + "ing";
+    input.emplace_back(word, i);
+  }
+  stringstream ss;
+  auto [result, _] = fst::compile<uint32_t>(input, ss, false);
+  EXPECT_EQ(fst::Result::Success, result);
+  return ss.str();
+}
+
+size_t header_byte_size(const string &byte_code) {
+  fst::FstHeader header;
+  EXPECT_TRUE(header.read(byte_code.data(),
+                          byte_code.size() - fst::FstTrailer::kByteSize));
+  return header.byte_size;
+}
+
+template <typename T> bool is_valid(const T &byte_code) {
+  return fst::set(byte_code) || fst::map<uint32_t>(byte_code) ||
+         fst::map<uint64_t>(byte_code) || fst::map<string>(byte_code) ||
+         fst::get_output_type(byte_code) != fst::OutputType::invalid;
+}
+
+} // namespace
+
+TEST(TrailerTest, Xxh64) {
+  string bytes;
+  for (auto i = 0; i < 101; i++) {
+    bytes += static_cast<char>(i);
+  }
+  string fox = "The quick brown fox jumps over the lazy dog";
+
+  EXPECT_EQ(0xef46db3751d8e999ULL, fst::xxh64("", 0));
+  EXPECT_EQ(0xd24ec4f1a98c6e5bULL, fst::xxh64("a", 1));
+  EXPECT_EQ(0x44bc2cf5ad770999ULL, fst::xxh64("abc", 3));
+  EXPECT_EQ(0x0b242d361fda71bcULL, fst::xxh64(fox.data(), fox.size()));
+  EXPECT_EQ(0xe99038495f85381eULL, fst::xxh64(bytes.data(), bytes.size()));
+}
+
+TEST(TrailerTest, Round_trip) {
+  {
+    auto byte_code = compile_set_for_trailer_test();
+    EXPECT_TRUE(fst::verify(byte_code));
+    EXPECT_EQ(fst::OutputType::none_t, fst::get_output_type(byte_code));
+
+    fst::set set(byte_code);
+    ASSERT_TRUE(set);
+    for (const auto &word : trailer_test_words) {
+      EXPECT_TRUE(set.contains(word));
+    }
+    EXPECT_FALSE(set.contains("sep"));
+  }
+  {
+    auto byte_code = compile_string_map_for_trailer_test();
+    EXPECT_TRUE(fst::verify(byte_code));
+    EXPECT_EQ(fst::OutputType::string, fst::get_output_type(byte_code));
+
+    fst::map<string> map(byte_code);
+    ASSERT_TRUE(map);
+    EXPECT_EQ("jan!", map["jan"]);
+  }
+  {
+    auto byte_code = compile_map_with_hub_table();
+    EXPECT_TRUE(fst::verify(byte_code));
+
+    fst::FstHeader header;
+    ASSERT_TRUE(header.read(byte_code.data(),
+                            byte_code.size() - fst::FstTrailer::kByteSize));
+    EXPECT_TRUE(header.flags.data.hub_table);
+
+    fst::map<uint32_t> map(byte_code);
+    ASSERT_TRUE(map);
+    EXPECT_EQ(3u, map[to_string(3 * 7919) + "ing"]);
+  }
+}
+
+TEST(TrailerTest, Truncated_byte_code_is_invalid) {
+  for (const auto &byte_code :
+       {compile_set_for_trailer_test(), compile_string_map_for_trailer_test(),
+        compile_map_with_hub_table()}) {
+    for (size_t len = 0; len < byte_code.size(); len++) {
+      // An exact size buffer lets a sanitizer catch any out-of-bounds read.
+      vector<char> truncated(byte_code.begin(), byte_code.begin() + len);
+      EXPECT_FALSE(is_valid(truncated)) << "length " << len;
+      EXPECT_FALSE(fst::verify(truncated)) << "length " << len;
+    }
+  }
+}
+
+TEST(TrailerTest, Byte_code_with_extra_bytes_is_invalid) {
+  auto byte_code = compile_set_for_trailer_test();
+  EXPECT_FALSE(is_valid(byte_code + '\0'));
+  EXPECT_FALSE(is_valid(byte_code + byte_code));
+}
+
+TEST(TrailerTest, Flipped_bit_in_records_fails_verify) {
+  for (const auto &original :
+       {compile_set_for_trailer_test(), compile_map_with_hub_table()}) {
+    auto records_size = original.size() - fst::FstTrailer::kByteSize -
+                        header_byte_size(original);
+    for (size_t i = 0; i < records_size; i++) {
+      auto byte_code = original;
+      byte_code[i] ^= 0x10;
+      EXPECT_FALSE(fst::verify(byte_code)) << "offset " << i;
+    }
+  }
+}
+
+TEST(TrailerTest, Flipped_bit_in_header_or_trailer_is_invalid) {
+  for (const auto &original :
+       {compile_set_for_trailer_test(), compile_string_map_for_trailer_test(),
+        compile_map_with_hub_table()}) {
+    auto header_offset = original.size() - fst::FstTrailer::kByteSize -
+                         header_byte_size(original);
+
+    // The hash of the records is only checked by verify().
+    auto body_hash_offset = original.size() - fst::FstTrailer::kByteSize + 8;
+
+    for (auto i = header_offset; i < original.size(); i++) {
+      for (auto bit = 0; bit < 8; bit++) {
+        auto byte_code = original;
+        byte_code[i] ^= static_cast<char>(1 << bit);
+        EXPECT_FALSE(fst::verify(byte_code)) << "offset " << i;
+        if (i < body_hash_offset || body_hash_offset + 8 <= i) {
+          EXPECT_FALSE(is_valid(byte_code)) << "offset " << i;
+        }
+      }
+    }
+  }
+}
+
+TEST(TrailerTest, Byte_code_without_trailer_is_invalid) {
+  // This is what versions of this library without the trailer made.
+  for (const auto &byte_code :
+       {compile_set_for_trailer_test(), compile_string_map_for_trailer_test(),
+        compile_map_with_hub_table()}) {
+    auto body =
+        byte_code.substr(0, byte_code.size() - fst::FstTrailer::kByteSize);
+    EXPECT_FALSE(is_valid(body));
+    EXPECT_FALSE(fst::verify(body));
+  }
+}
+
+TEST(TrailerTest, Unknown_version_is_invalid) {
+  auto byte_code = compile_set_for_trailer_test();
+  uint32_t version = fst::FstTrailer::kVersion + 1;
+  memcpy(byte_code.data() + byte_code.size() - 8, &version, sizeof(version));
+  EXPECT_FALSE(is_valid(byte_code));
+  EXPECT_FALSE(fst::verify(byte_code));
+}
+
+TEST(TrailerTest, Trailer_ends_with_flags_that_older_versions_reject) {
+  auto byte_code = compile_set_for_trailer_test();
+  fst::FstHeader header;
+  header.flags.byte = static_cast<uint8_t>(byte_code.back());
+  EXPECT_EQ(7u, header.flags.data.output_type);
+  EXPECT_FALSE(header.flags.data.hub_table);
+}
+
+TEST(TrailerTest, Nothing_is_written_on_error) {
+  vector<string> unsorted = {"b", "a"};
+  stringstream ss;
+  auto [result, _] = fst::compile(unsorted, ss, false, true);
+  EXPECT_EQ(fst::Result::UnsortedKey, result);
+  EXPECT_TRUE(ss.str().empty());
+}
