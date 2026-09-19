@@ -999,10 +999,10 @@ string compile_string_map_for_trailer_test() {
   return ss.str();
 }
 
-// A byte code large enough to have a hub table.
+// A byte code whose hub table has more than one entry.
 string compile_map_with_hub_table() {
   vector<pair<string, uint32_t>> input;
-  for (auto i = 0u; i < 5000; i++) {
+  for (auto i = 0u; i < 100; i++) {
     auto word = to_string(i * 7919) + "ing";
     input.emplace_back(word, i);
   }
@@ -1012,11 +1012,17 @@ string compile_map_with_hub_table() {
   return ss.str();
 }
 
-size_t header_byte_size(const string &byte_code) {
+vector<string> compile_all_for_trailer_test() {
+  return {compile_set_for_trailer_test(), compile_string_map_for_trailer_test(),
+          compile_map_with_hub_table()};
+}
+
+// The offset of the header, which is also the byte size of the records.
+size_t header_offset_of(const string &byte_code) {
+  auto body_size = byte_code.size() - fst::FstTrailer::kByteSize;
   fst::FstHeader header;
-  EXPECT_TRUE(header.read(byte_code.data(),
-                          byte_code.size() - fst::FstTrailer::kByteSize));
-  return header.byte_size;
+  EXPECT_TRUE(header.read(byte_code.data(), body_size));
+  return body_size - header.byte_size;
 }
 
 template <typename T> bool is_valid(const T &byte_code) {
@@ -1079,9 +1085,7 @@ TEST(TrailerTest, Round_trip) {
 }
 
 TEST(TrailerTest, Truncated_byte_code_is_invalid) {
-  for (const auto &byte_code :
-       {compile_set_for_trailer_test(), compile_string_map_for_trailer_test(),
-        compile_map_with_hub_table()}) {
+  for (const auto &byte_code : compile_all_for_trailer_test()) {
     for (size_t len = 0; len < byte_code.size(); len++) {
       // An exact size buffer lets a sanitizer catch any out-of-bounds read.
       vector<char> truncated(byte_code.begin(), byte_code.begin() + len);
@@ -1100,8 +1104,7 @@ TEST(TrailerTest, Byte_code_with_extra_bytes_is_invalid) {
 TEST(TrailerTest, Flipped_bit_in_records_fails_verify) {
   for (const auto &original :
        {compile_set_for_trailer_test(), compile_map_with_hub_table()}) {
-    auto records_size = original.size() - fst::FstTrailer::kByteSize -
-                        header_byte_size(original);
+    auto records_size = header_offset_of(original);
     for (size_t i = 0; i < records_size; i++) {
       auto byte_code = original;
       byte_code[i] ^= 0x10;
@@ -1111,11 +1114,8 @@ TEST(TrailerTest, Flipped_bit_in_records_fails_verify) {
 }
 
 TEST(TrailerTest, Flipped_bit_in_header_or_trailer_is_invalid) {
-  for (const auto &original :
-       {compile_set_for_trailer_test(), compile_string_map_for_trailer_test(),
-        compile_map_with_hub_table()}) {
-    auto header_offset = original.size() - fst::FstTrailer::kByteSize -
-                         header_byte_size(original);
+  for (const auto &original : compile_all_for_trailer_test()) {
+    auto header_offset = header_offset_of(original);
 
     // The hash of the records is only checked by verify().
     auto body_hash_offset = original.size() - fst::FstTrailer::kByteSize + 8;
@@ -1135,9 +1135,7 @@ TEST(TrailerTest, Flipped_bit_in_header_or_trailer_is_invalid) {
 
 TEST(TrailerTest, Byte_code_without_trailer_is_invalid) {
   // This is what versions of this library without the trailer made.
-  for (const auto &byte_code :
-       {compile_set_for_trailer_test(), compile_string_map_for_trailer_test(),
-        compile_map_with_hub_table()}) {
+  for (const auto &byte_code : compile_all_for_trailer_test()) {
     auto body =
         byte_code.substr(0, byte_code.size() - fst::FstTrailer::kByteSize);
     EXPECT_FALSE(is_valid(body));

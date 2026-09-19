@@ -1198,6 +1198,8 @@ struct FstHeader {
     remaining -= size;
 
     if (flags.data.hub_table) {
+      // A writer only sets the flag with at least one hub.
+      if (hub_count == 0) { return false; }
       if (remaining < hub_count * sizeof(uint32_t)) { return false; }
       hub_table = p - (hub_count * sizeof(uint32_t) - 1);
       remaining -= hub_count * sizeof(uint32_t);
@@ -2132,7 +2134,6 @@ public:
 
     FstTrailer trailer;
     if (!read_header(byte_code, byte_code_size, header_, trailer)) { return; }
-    byte_code_size_ = static_cast<size_t>(trailer.body_size);
 
     if (static_cast<OutputType>(header_.flags.data.output_type) !=
         OutputTraits<output_t>::type()) {
@@ -2526,7 +2527,7 @@ protected:
   }
 
   const char *byte_code_;
-  size_t byte_code_size_;
+  const size_t byte_code_size_;
 
   FstHeader header_;
   bool is_valid_ = false;
